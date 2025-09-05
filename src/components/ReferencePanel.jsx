@@ -96,15 +96,32 @@ export default function ReferencePanel({
       {/* Preview */}
       {(refs?.length || 0) > 0 && (
         <div className="mt-4">
-          <div className="text-sm text-slate-600 mb-2">Preview (first 24 of {refs.length} refs)</div>
+          <div className="text-sm text-slate-600 mb-2">
+            Preview (first 24 of {refs.length} refs)
+          </div>
           <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-3 max-h-48 overflow-y-auto">
             {refs.slice(0, 24).map((r, i) => (
               <div key={i} className="flex items-center gap-2 p-2 border rounded-lg">
-                <img src={r.url} alt={r.name} className="w-10 h-10 object-contain" />
+                <img
+                  src={r.thumbUrl || r.url}
+                  alt=""                           // ← prevent visible fallback text
+                  title={r.name}
+                  referrerPolicy="no-referrer"
+                  className="w-10 h-10 object-contain"
+                  onError={(e) => {               // fallback to full URL if thumb fails
+                    if (r.url && e.currentTarget.src !== r.url) {
+                      e.currentTarget.src = r.url;
+                    } else {
+                      e.currentTarget.style.display = "none"; // hide broken image box
+                    }
+                  }}
+                />
                 <div className="text-xs truncate" title={r.name}>{r.name}</div>
               </div>
             ))}
-            {refs.length > 24 && <div className="text-xs text-slate-500">+{refs.length - 24} more…</div>}
+            {refs.length > 24 && (
+              <div className="text-xs text-slate-500">+{refs.length - 24} more…</div>
+            )}
           </div>
         </div>
       )}
