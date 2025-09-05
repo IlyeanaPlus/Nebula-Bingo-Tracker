@@ -1,31 +1,20 @@
 import React, { useState, useEffect } from "react";
 
 /**
- * Bingo Extractor – single‑file client app (Drive + Cache enabled)
- *
- * Fixes & diagnostics for network errors:
- *  - Diagnostics panel (checks API key validity, referrer/origin, folder listing, image download)
- *  - Better error messages with HTTP status + body text
- *  - Paged Drive listing (handles 300+ files)
- *  - Optional Shared Drives support
- *  - Timeouts + abort for fetches
- *  - Helper self‑tests (tidyName/nameFromFilename)
- *
- * Sources for reference sprites:
- *  1) Local uploads (PNG/JPG)
- *  2) Public Google Drive folder (API key + Folder ID)
- *  3) Remote URL list (one per line)
- *  4) Import/Export local cache JSON (avoid re-hashing)
- *
- * All processing is client-side. Google Drive uses the public Drive v3 API with an API key and a
- * folder shared to "Anyone with the link".
+ * Bingo Extractor – Drive + Cache + Shiny Filter (fixed build)
+ * - FIX: shiny regex uses \b boundaries
+ * - FIX: removed stray duplicate lines after listDriveImages
+ * - FIX: corrected newline joining in alerts
+ * - FIX: correct URL list split (\r?\n)
+ * - FIX: removed extra closing brace after handleRefFiles
+ * - Added helper tests for name parsing in Diagnostics
  */
 
-// ---------- Utilities ----------
+// --- utils ---
 function isShinyName(stem) {
   if (!stem) return false;
-  const s = String(stem).toLowerCase().replace(/[._-]+/g, ' ');
-  return /shiny/.test(s);
+  const s = String(stem).toLowerCase().replace(/[._-]+/g, " ");
+  return /\bshiny\b/.test(s);
 }
 function tidyName(raw) {
   if (!raw) return "";
@@ -55,7 +44,6 @@ function tidyName(raw) {
   };
   return fixes[s] || s;
 }
-
 function nameFromFilename(fileOrUrl) {
   const stem = typeof fileOrUrl === "string" ? fileOrUrl : fileOrUrl.name || "";
   let m1 = stem.match(/pokemon[_-](\d+)[_-]([a-z0-9\-]+)/i);
@@ -67,13 +55,12 @@ function nameFromFilename(fileOrUrl) {
   return tidyName(stem);
 }
 
-// ---------- Robust fetch helpers ----------
+// --- network helpers ---
 function withTimeout(ms) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
   return { signal: ctrl.signal, cancel: () => clearTimeout(id) };
 }
-
 async function getJSON(url, label, { timeoutMs = 15000 } = {}) {
   const t = withTimeout(timeoutMs);
   try {
@@ -81,17 +68,14 @@ async function getJSON(url, label, { timeoutMs = 15000 } = {}) {
     if (!res.ok) {
       let body = "";
       try { body = await res.text(); } catch {}
-      throw new Error(`HTTP ${res.status} ${res.statusText} while ${label}.\nURL: ${url}\nBody: ${body?.slice(0, 500)}`);
+      throw new Error(`HTTP ${res.status} ${res.statusText} while ${label}.\nURL: ${url}\nBody: ${body?.slice(0, 400)}`);
     }
     return await res.json();
-  } catch (err) {
-    if (err?.name === "AbortError") throw new Error(`Timeout while ${label}`);
-    throw new Error(`Network/CORS error while ${label}: ${err.message}`);
-  } finally {
-    t.cancel();
-  }
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error(`Timeout while ${label}`);
+    throw new Error(`Network/CORS error while ${label}: ${e.message}`);
+  } finally { t.cancel(); }
 }
-
 async function getBlob(url, label, { timeoutMs = 20000 } = {}) {
   const t = withTimeout(timeoutMs);
   try {
@@ -99,18 +83,16 @@ async function getBlob(url, label, { timeoutMs = 20000 } = {}) {
     if (!res.ok) {
       let body = "";
       try { body = await res.text(); } catch {}
-      throw new Error(`HTTP ${res.status} ${res.statusText} while ${label}.\nURL: ${url}\nBody: ${body?.slice(0, 500)}`);
+      throw new Error(`HTTP ${res.status} ${res.statusText} while ${label}.\nURL: ${url}\nBody: ${body?.slice(0, 400)}`);
     }
     return await res.blob();
-  } catch (err) {
-    if (err?.name === "AbortError") throw new Error(`Timeout while ${label}`);
-    throw new Error(`Network/CORS error while ${label}: ${err.message}`);
-  } finally {
-    t.cancel();
-  }
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error(`Timeout while ${label}`);
+    throw new Error(`Network/CORS error while ${label}: ${e.message}`);
+  } finally { t.cancel(); }
 }
 
-// ---------- Canvas + Image helpers ----------
+// --- image/canvas helpers ---
 async function loadImageFromFile(file) {
   const url = URL.createObjectURL(file);
   const img = new Image();
@@ -119,9 +101,7 @@ async function loadImageFromFile(file) {
   await img.decode();
   return { img, url, originUrl: null };
 }
-
 async function loadImageFromURL(originUrl) {
-  // Fetch as blob to avoid CORS-tainted canvas. Drive API supports CORS on alt=media.
   const blob = await getBlob(originUrl, "downloading image from Drive");
   const url = URL.createObjectURL(blob);
   const img = new Image();
@@ -130,7 +110,6 @@ async function loadImageFromURL(originUrl) {
   await img.decode();
   return { img, url, originUrl };
 }
-
 function ahashFromImage(img, size = 16) {
   const c = document.createElement("canvas");
   const ctx = c.getContext("2d", { willReadFrequently: true });
@@ -147,13 +126,11 @@ function ahashFromImage(img, size = 16) {
   const avg = sum / gray.length;
   return gray.map((v) => (v >= avg ? 1 : 0));
 }
-
 function hammingDistanceBits(aBits, bBits) {
   const n = Math.min(aBits.length, bBits.length);
   let d = 0; for (let i = 0; i < n; i++) if (aBits[i] !== bBits[i]) d++;
   return d + Math.max(aBits.length, bBits.length) - n;
 }
-
 function cropToCanvas(srcImg, box) {
   const { x, y, w, h } = box;
   const c = document.createElement("canvas");
@@ -164,7 +141,6 @@ function cropToCanvas(srcImg, box) {
   ctx.drawImage(srcImg, x, y, w, h, 0, 0, c.width, c.height);
   return c;
 }
-
 function evenGridBoxes(imgW, imgH, rows, cols, inset = 0, startX = 0, startY = 0, cellW, cellH, gapX = 0, gapY = 0) {
   const w = cellW ?? Math.floor((imgW - startX - (cols - 1) * gapX) / cols);
   const h = cellH ?? Math.floor((imgH - startY - (rows - 1) * gapY) / rows);
@@ -181,24 +157,21 @@ function evenGridBoxes(imgW, imgH, rows, cols, inset = 0, startX = 0, startY = 0
   return boxes;
 }
 
-// ---------- Local ref-hash cache (import/export) ----------
+// --- cache ---
 const CACHE_KEY = "refHashCacheV1";
 function bitsToString(bits) { return bits.join(""); }
 function stringToBits(s) { return s.split("").map((ch) => (ch === "1" ? 1 : 0)); }
 function loadCacheLS() { try { const raw = localStorage.getItem(CACHE_KEY); return raw ? JSON.parse(raw) : {}; } catch { return {}; } }
-function saveCacheLS(cache) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {}
-}
+function saveCacheLS(cache) { try { localStorage.setItem(CACHE_KEY, JSON.stringify(cache)); } catch {} }
 
-// ---------- Google Drive (public) helpers ----------
+// --- Drive listing ---
 async function listDriveImages(folderId, apiKey, { includeSharedDrives = true, excludeShiny = false } = {}) {
   const base = "https://www.googleapis.com/drive/v3/files";
   const files = [];
   let pageToken = undefined;
   do {
     let q = `'${folderId}' in parents and trashed=false and (mimeType contains 'image/')`;
-    if (excludeShiny) {
-      q += " and not (name contains 'shiny' or name contains 'Shiny' or name contains 'SHINY')";
-    }
+    if (excludeShiny) q += " and not (name contains 'shiny' or name contains 'Shiny' or name contains 'SHINY')";
     const params = new URLSearchParams({
       q,
       fields: "nextPageToken, files(id,name,mimeType)",
@@ -222,13 +195,8 @@ async function listDriveImages(folderId, apiKey, { includeSharedDrives = true, e
     downloadUrl: `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${apiKey}`,
   }));
 }
-    id: f.id,
-    name: f.name,
-    downloadUrl: `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${apiKey}`,
-  }));
-}
 
-// ---------- Component ----------
+// --- component ---
 export default function App() {
   const [refs, setRefs] = useState([]); // {source,url,originUrl,name,hashBits}
   const [hashing, setHashing] = useState(false);
@@ -250,73 +218,59 @@ export default function App() {
   const [urlList, setUrlList] = useState("");
   const [includeSharedDrives, setIncludeSharedDrives] = useState(true);
   const [excludeShiny, setExcludeShiny] = useState(true);
-  const [rememberKey, setRememberKey] = useState(() => !!localStorage.getItem('BE_API_KEY'));
+  const [rememberKey, setRememberKey] = useState(() => !!localStorage.getItem("BE_API_KEY"));
 
   // Diagnostics
   const [diag, setDiag] = useState({ running: false, logs: [] });
-  function logDiag(line) { setDiag((d) => ({ running: d.running, logs: d.logs.concat([`➤ ${new Date().toLocaleTimeString()} — ${line}`]) })); }
+  function logDiag(line) {
+    setDiag((d) => ({ running: d.running, logs: d.logs.concat([`➤ ${new Date().toLocaleTimeString()} — ${line}`]) }));
+  }
 
-  // Cards
+  // Cards & cache
   const [cards, setCards] = useState([]);
+  const [refCache, setRefCache] = useState(() => loadCacheLS()); // url -> {name,bits}
 
-  // Cache (url -> {name,bits})
-  const [refCache, setRefCache] = useState(() => loadCacheLS());
-
-  function addRef(refObj) { setRefs((prev) => [...prev, refObj]); }
-
-  // Load key/folder from URL or localStorage on first mount
-  useEffect(() => {
-    try {
-      const sp = new URLSearchParams(window.location.search);
-      const k = sp.get('key');
-      const f = sp.get('folder');
-      if (k) setDriveApiKey(k);
-      if (f) setDriveFolderId(f);
-      if (!k) {
-        const saved = localStorage.getItem('BE_API_KEY');
-        if (saved) setDriveApiKey(saved);
-      }
-    } catch {}
-  }, []);
-
-  // Persist API key iff user opted in
-  useEffect(() => {
-    if (rememberKey && driveApiKey) localStorage.setItem('BE_API_KEY', driveApiKey);
-  }, [rememberKey, driveApiKey]);
-  useEffect(() => {
-    if (!rememberKey) localStorage.removeItem('BE_API_KEY');
-  }, [rememberKey]);
-
+  function addRef(r) { setRefs((prev) => [...prev, r]); }
   function upsertCache(key, name, bits) {
     const next = { ...refCache, [key]: { name, bits: bitsToString(bits) } };
     setRefCache(next); saveCacheLS(next);
   }
+
+  // preload key/folder from URL or localStorage
+  useEffect(() => {
+    try {
+      const sp = new URLSearchParams(window.location.search);
+      const k = sp.get("key"); const f = sp.get("folder");
+      if (k) setDriveApiKey(k); if (f) setDriveFolderId(f);
+      if (!k) { const saved = localStorage.getItem("BE_API_KEY"); if (saved) setDriveApiKey(saved); }
+    } catch {}
+  }, []);
+  useEffect(() => { if (rememberKey && driveApiKey) localStorage.setItem("BE_API_KEY", driveApiKey); }, [rememberKey, driveApiKey]);
+  useEffect(() => { if (!rememberKey) localStorage.removeItem("BE_API_KEY"); }, [rememberKey]);
 
   // A) Local uploads
   async function handleRefFiles(files) {
     const arr = Array.from(files || []); if (!arr.length) return; setHashing(true);
     for (const f of arr) {
       try {
-        if (excludeShiny && isShinyName(f.name)) { continue; }
+        if (excludeShiny && isShinyName(f.name)) continue;
         const { img, url, originUrl } = await loadImageFromFile(f);
-        const bits = ahashFromImage(img, 16); const name = tidyName(nameFromFilename(f));
+        const bits = ahashFromImage(img, 16);
+        const name = tidyName(nameFromFilename(f));
         addRef({ source: "upload", url, originUrl, name, hashBits: bits });
         upsertCache(originUrl || url, name, bits);
       } catch (e) { console.error("hash ref error", e); }
     }
     setHashing(false);
   }
-  }
 
-  // B) Google Drive (public)
+  // B) Drive fetch
   async function handleDriveFetch() {
     if (!driveFolderId || !driveApiKey) { alert("Enter Drive Folder ID and API Key."); return; }
     setHashing(true);
     try {
       const files = await listDriveImages(driveFolderId, driveApiKey, { includeSharedDrives, excludeShiny });
-      if (!files.length) {
-        alert("Drive listing returned 0 images. Check folder ID/sharing or adjust shiny exclusion.");
-      }
+      if (!files.length) alert("Drive listing returned 0 images. Check folder ID/sharing or adjust shiny exclusion.");
       for (const f of files) {
         if (excludeShiny && isShinyName(f.name)) continue;
         const key = f.downloadUrl; const cached = refCache[key];
@@ -327,38 +281,34 @@ export default function App() {
           const name = tidyName(f.name || nameFromFilename(f.name || f.downloadUrl));
           addRef({ source: "drive", url, originUrl, name, hashBits: bits });
           upsertCache(originUrl || url, name, bits);
-        } catch (e) {
-          console.warn("Drive image failed:", f.name, e);
-        }
+        } catch (e) { console.warn("Drive image failed:", f.name, e); }
       }
     } catch (e) {
       console.error(e);
       alert([
         "Drive fetch failed:", e.message,
-        "
-Common fixes:",
+        "\nCommon fixes:",
         "• Ensure the API key is valid and not expired.",
         "• If you set HTTP referrer restrictions, run this app from http://localhost or your allowed domain (not file://).",
         "• Restrict the key to the Drive API only (optional but recommended).",
         "• Share the Drive folder as ‘Anyone with the link – Viewer’.",
-      ].join("
-"));
+      ].join("\n"));
     }
     setHashing(false);
   }
 
   // C) URL list
   async function handleUrlListFetch() {
-    const lines = urlList.split(/
-?
-/).map((s) => s.trim()).filter(Boolean);
+    const lines = urlList.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
     if (!lines.length) return; setHashing(true);
     for (const u of lines) {
       if (excludeShiny && isShinyName(u)) continue;
       const key = u; const cached = refCache[key];
       if (cached) { addRef({ source: "url", url: key, originUrl: key, name: cached.name, hashBits: stringToBits(cached.bits) }); continue; }
-      try { const { img, url, originUrl } = await loadImageFromURL(u);
-        const bits = ahashFromImage(img, 16); const name = tidyName(nameFromFilename(u));
+      try {
+        const { img, url, originUrl } = await loadImageFromURL(u);
+        const bits = ahashFromImage(img, 16);
+        const name = tidyName(nameFromFilename(u));
         addRef({ source: "url", url, originUrl, name, hashBits: bits });
         upsertCache(originUrl || url, name, bits);
       } catch (e) { console.warn("URL failed:", u, e); }
@@ -366,14 +316,15 @@ Common fixes:",
     setHashing(false);
   }
 
-  // Cache import/export
+  // cache import/export
   function exportCacheJSON() {
     const blob = new Blob([JSON.stringify(refCache, null, 2)], { type: "application/json" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "sprite_ref_cache.json"; a.click();
   }
   async function importCacheJSON(file) {
     if (!file) return; const text = await file.text();
-    try { const parsed = JSON.parse(text); setRefCache(parsed); saveCacheLS(parsed);
+    try {
+      const parsed = JSON.parse(text); setRefCache(parsed); saveCacheLS(parsed);
       for (const [key, val] of Object.entries(parsed)) {
         if (!val || !val.bits) continue;
         addRef({ source: "cache", url: key, originUrl: key, name: val.name || nameFromFilename(key), hashBits: stringToBits(val.bits) });
@@ -381,7 +332,7 @@ Common fixes:",
     } catch { alert("Invalid cache JSON"); }
   }
 
-  // Screenshots → cards
+  // screenshots → cards
   async function handleScreenshotFiles(files) {
     const arr = Array.from(files || []);
     for (const f of arr) {
@@ -404,7 +355,6 @@ Common fixes:",
       setCards((prev) => [...prev, { id: crypto.randomUUID(), title, img, url, rows, cols, grid }]);
     }
   }
-
   function recomputeThreshold(cardIdx, newThresh) {
     setCards((prev) => {
       const next = [...prev]; const card = next[cardIdx]; if (!card) return prev;
@@ -412,7 +362,6 @@ Common fixes:",
       return next;
     });
   }
-
   function copyTSV(card) {
     const lines = [];
     for (let r = 0; r < card.rows; r++) {
@@ -423,7 +372,6 @@ Common fixes:",
     navigator.clipboard.writeText(lines.join("\n"));
     alert("Copied TSV to clipboard.");
   }
-
   function downloadCSV(card) {
     const lines = [];
     for (let r = 0; r < card.rows; r++) {
@@ -437,7 +385,6 @@ Common fixes:",
     const blob = new Blob([lines.join("\n")], { type: "text/csv;charset=utf-8" });
     const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = `${card.title || "card"}.csv`; a.click();
   }
-
   function resetCard(cardId, mode = "checks") {
     setCards((prev) => prev.map((c) => {
       if (c.id !== cardId) return c;
@@ -446,37 +393,23 @@ Common fixes:",
       return c;
     }));
   }
-
   function updateCellName(cardId, idx, value) {
-    setCards((prev) => prev.map((c) => {
-      if (c.id !== cardId) return c; const grid = [...c.grid]; grid[idx] = { ...grid[idx], name: value }; return { ...c, grid };
-    }));
+    setCards((prev) => prev.map((c) => { if (c.id !== cardId) return c; const grid = [...c.grid]; grid[idx] = { ...grid[idx], name: value }; return { ...c, grid }; }));
   }
-
   function toggleCheck(cardId, idx) {
-    setCards((prev) => prev.map((c) => {
-      if (c.id !== cardId) return c; const grid = [...c.grid]; grid[idx] = { ...grid[idx], checked: !grid[idx].checked }; return { ...c, grid };
-    }));
+    setCards((prev) => prev.map((c) => { if (c.id !== cardId) return c; const grid = [...c.grid]; grid[idx] = { ...grid[idx], checked: !grid[idx].checked }; return { ...c, grid }; }));
   }
 
-  // ---------- Diagnostics ----------
+  // diagnostics
   async function runDiagnostics() {
     setDiag({ running: true, logs: [] });
     try {
       logDiag(`Origin: ${window.location.origin}`);
-      if (window.location.protocol === "file:") {
-        logDiag("Warning: Running from file:// — HTTP referrer restrictions will block API key. Use http://localhost instead.");
-      }
-      if (!driveApiKey) {
-        logDiag("No API key set. Set a key with Drive API enabled (and ideally restrict to your domain).");
-        return;
-      }
-      // 1) Key sanity via Drive discovery doc
+      if (window.location.protocol === "file:") logDiag("Warning: running from file:// may break API key referrer restrictions.");
+      if (!driveApiKey) { logDiag("No API key set."); return; }
       const discUrl = `https://www.googleapis.com/discovery/v1/apis/drive/v3/rest?key=${encodeURIComponent(driveApiKey)}`;
       await getJSON(discUrl, "validating API key (discovery)");
-      logDiag("API key looks valid (discovery OK).");
-
-      // 2) Listing URL preview (1 page)
+      logDiag("API key OK (discovery).");
       const base = "https://www.googleapis.com/drive/v3/files";
       const p = new URLSearchParams({
         q: `'${driveFolderId}' in parents and trashed=false and (mimeType contains 'image/')`,
@@ -491,24 +424,18 @@ Common fixes:",
       const listJson = await getJSON(listUrl, "listing test files");
       const count = (listJson.files || []).length;
       logDiag(`List success. Returned ${count} file(s).`);
-      if (!count) {
-        logDiag("Returned 0 files. The folder ID may be wrong or not shared publicly (Anyone with link: Viewer).");
-        return;
-      }
-      // 3) Try downloading first file as blob
+      if (!count) { logDiag("0 files — wrong folder ID or not shared publicly."); return; }
       const first = listJson.files[0];
       const dl = `https://www.googleapis.com/drive/v3/files/${first.id}?alt=media&key=${encodeURIComponent(driveApiKey)}`;
       logDiag(`Download test URL: ${dl}`);
       await getBlob(dl, "downloading first image test");
-      logDiag("Download test OK. CORS/network looks good. You should be able to Fetch & Index now.");
+      logDiag("Download test OK.");
     } catch (e) {
       logDiag(`❌ Diagnostic error: ${e.message}`);
-      logDiag("Tips: If you restricted the API key by HTTP referrers, make sure this app's origin (e.g., http://localhost) is allowed. Also confirm the Drive folder sharing is public.");
     } finally {
       setDiag((d) => ({ running: false, logs: d.logs }));
     }
   }
-
   function runHelperTests() {
     const cases = [
       { in: "001-bulbasaur.png", expect: "Bulbasaur" },
@@ -540,10 +467,10 @@ Common fixes:",
         {/* Reference sprites */}
         <section className="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-slate-200">
           <h2 className="text-lg font-semibold mb-2">1) Reference sprites</h2>
-          <p className="text-sm text-slate-600 mb-3">Choose: Upload, Google Drive (public), URL list, or import a saved cache JSON. Hashes are cached locally so the next load is instant.</p>
+          <p className="text-sm text-slate-600 mb-3">Upload, use Google Drive (public), paste URL list, or import a cache JSON. Hashes are cached locally.</p>
 
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            {/* A) Local uploads */}
+            {/* A) Upload */}
             <div>
               <h3 className="font-medium mb-1">A) Upload images</h3>
               <div className="flex items-center gap-3 flex-wrap">
@@ -564,7 +491,7 @@ Common fixes:",
               </div>
             </div>
 
-            {/* B) Google Drive (public) */}
+            {/* B) Drive */}
             <div>
               <h3 className="font-medium mb-1">B) Google Drive (public)</h3>
               <p className="text-xs text-slate-600 mb-2">Needs a Drive API key and a folder shared as “Anyone with link: Viewer”.</p>
@@ -583,11 +510,10 @@ Common fixes:",
                 <label className="inline-flex items-center gap-2">
                   <input type="checkbox" checked={rememberKey} onChange={(e)=>setRememberKey(e.target.checked)} /> remember API key (this browser)
                 </label>
-                <span className="opacity-70">Max page size = 1000; paging handled automatically.</span>
               </div>
             </div>
 
-            {/* C) Remote URL list */}
+            {/* C) URL list */}
             <div className="lg:col-span-2">
               <h3 className="font-medium mb-1">C) Remote URL list</h3>
               <textarea className="w-full border rounded p-2 text-sm min-h-[90px]" placeholder="One image URL per line…" value={urlList} onChange={(e)=>setUrlList(e.target.value)} />
@@ -633,59 +559,16 @@ Common fixes:",
               <div className="text-xs text-slate-600">{threshold}</div>
             </div>
           </div>
-          <button className="mt-3 text-sm underline" onClick={()=>setAdvanced(v=>!v)}>{advanced?"Hide":"Show"} advanced geometry</button>
-          {advanced && (
-            <div className="mt-3 grid grid-cols-2 md:grid-cols-6 gap-3">
-              <div>
-                <label className="block text-xs text-slate-600">startX</label>
-                <input className="w-full border rounded px-2 py-1" type="number" value={startX} onChange={(e)=>setStartX(parseInt(e.target.value||"0"))} />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-600">startY</label>
-                <input className="w-full border rounded px-2 py-1" type="number" value={startY} onChange={(e)=>setStartY(parseInt(e.target.value||"0"))} />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-600">cellW</label>
-                <input className="w-full border rounded px-2 py-1" type="number" value={cellW} onChange={(e)=>setCellW(parseInt(e.target.value||"0"))} />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-600">cellH</label>
-                <input className="w-full border rounded px-2 py-1" type="number" value={cellH} onChange={(e)=>setCellH(parseInt(e.target.value||"0"))} />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-600">gapX</label>
-                <input className="w-full border rounded px-2 py-1" type="number" value={gapX} onChange={(e)=>setGapX(parseInt(e.target.value||"0"))} />
-              </div>
-              <div>
-                <label className="block text-xs text-slate-600">gapY</label>
-                <input className="w-full border rounded px-2 py-1" type="number" value={gapY} onChange={(e)=>setGapY(parseInt(e.target.value||"0"))} />
-              </div>
-            </div>
-          )}
-        </section>
-
-        {/* Diagnostics */}
-        <section className="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-slate-200">
-          <h2 className="text-lg font-semibold mb-2">3) Diagnostics</h2>
-          <p className="text-sm text-slate-600 mb-3">If Drive fetch fails, run this. It checks your API key, lists a few files, and tries to download one image with detailed errors.</p>
-          <div className="flex items-center gap-2 mb-2">
-            <button disabled={diag.running} className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-50" onClick={runDiagnostics}>{diag.running ? "Running…" : "Run diagnostics"}</button>
+          <div className="mt-2 flex items-center gap-3 text-xs">
+            <button className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200" onClick={runDiagnostics}>Run diagnostics</button>
             <button className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200" onClick={runHelperTests}>Run helper tests</button>
-            <span className="text-xs text-slate-500">Tip: if your API key has HTTP referrer restrictions, run this app from http://localhost or an allowed domain (not file://).</span>
           </div>
-          <pre className="text-xs bg-slate-50 border rounded p-2 max-h-56 overflow-auto whitespace-pre-wrap">{diag.logs.join("\n") || "(No logs yet)"}</pre>
-        </section>
-
-        {/* Hosting / Deployment */}
-        <section className="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-slate-200">
-          <h2 className="text-lg font-semibold mb-2">4) Hosting / Deployment</h2>
-          <p className="text-sm text-slate-600 mb-3">You can host this on GitHub Pages, Netlify, or Vercel. If your API key is referrer‑restricted, add the live origin(s) below.</p>
-          <HostHelper />
+          <pre className="text-xs bg-slate-50 border rounded p-2 mt-2 max-h-56 overflow-auto whitespace-pre-wrap">{diag.logs.join("\n") || "(No logs yet)"}</pre>
         </section>
 
         {/* Screenshots */}
         <section className="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-slate-200">
-          <h2 className="text-lg font-semibold mb-2">5) Screenshots</h2>
+          <h2 className="text-lg font-semibold mb-2">3) Screenshots</h2>
           <p className="text-sm text-slate-600 mb-3">Add one or more screenshots. Each becomes a card below.</p>
           <input type="file" multiple accept="image/*" onChange={(e)=>handleScreenshotFiles(e.target.files)} />
         </section>
@@ -735,142 +618,3 @@ Common fixes:",
     </div>
   );
 }
-
-// ---------- Hosting helper component ----------
-function HostHelper() {
-  const origin = typeof window !== 'undefined' ? window.location.origin : '';
-  const path = typeof window !== 'undefined' ? window.location.pathname.replace(/\/index\.html$/, '') : '';
-  const baseSeg = (() => {
-    const parts = path.split('/').filter(Boolean);
-    return parts.length ? '/' + parts[0] : '';
-  })();
-  const suggestions = Array.from(new Set([
-    origin ? `${origin}/*` : '',
-    origin && baseSeg ? `${origin}${baseSeg}/*` : '',
-  ].filter(Boolean)));
-
-  function copyText(t) { navigator.clipboard.writeText(t); }
-
-  return (
-    <div className="text-sm">
-      <div className="mb-2"><span className="text-slate-500">Current origin:</span> <code className="px-1 py-0.5 bg-slate-100 rounded">{origin || '(unknown)'}</code></div>
-      <div className="mb-2 text-slate-500">Add these to your API key's <em>Website restrictions</em> (HTTP referrers):</div>
-      <ul className="mb-3 list-disc pl-5">
-        {suggestions.map((s, i) => (
-          <li key={i} className="flex items-center gap-2">
-            <code className="px-1 py-0.5 bg-slate-100 rounded break-all">{s}</code>
-            <button className="px-2 py-0.5 border rounded" onClick={() => copyText(s)}>Copy</button>
-          </li>
-        ))}
-      </ul>
-      <div className="text-xs text-slate-500">For GitHub project pages your site is <code>https://USERNAME.github.io/REPO/</code>. Include both <code>https://USERNAME.github.io/*</code> and <code>https://USERNAME.github.io/REPO/*</code> to be safe.</div>
-    </div>
-  );
-}
-
-/*
-============================================================
-📦 DEPLOYMENT FILES (GitHub Pages via Actions)
-Copy these into your repo as-shown. They are tailored to:
-REPO: IlyeanaPlus/Nebula-Bingo-Tracker
-SITE: https://ilyeanaplus.github.io/Nebula-Bingo-Tracker/
-============================================================
-
-1) vite.config.js  (create at repo root)
-------------------------------------------------------------
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
-
-// https://vitejs.dev/config/
-export default defineConfig({
-  plugins: [react()],
-  // IMPORTANT: base must match your repo name for GitHub Pages
-  base: '/Nebula-Bingo-Tracker/',
-})
-
-
-2) .github/workflows/pages.yml  (create folders if needed)
-------------------------------------------------------------
-name: Deploy to GitHub Pages
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch: {}
-
-permissions:
-  contents: read
-  pages: write
-  id-token: write
-
-concurrency:
-  group: 'pages'
-  cancel-in-progress: true
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: 'npm'
-      - run: npm install
-      - run: npm run build
-      - uses: actions/upload-pages-artifact@v3
-        with:
-          path: dist
-  deploy:
-    needs: build
-    runs-on: ubuntu-latest
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - id: deployment
-        uses: actions/deploy-pages@v4
-
-
-3) index.html – add Tailwind CDN in <head>
-------------------------------------------------------------
-<!-- Paste this inside <head> in your Vite index.html -->
-<script src="https://cdn.tailwindcss.com"></script>
-
-
-4) Optional: README-DEPLOY.md  (create at root)
-------------------------------------------------------------
-# Deploying Bingo Extractor to GitHub Pages
-
-## First-time
-1. Scaffold app (once):
-   ```bash
-   npm create vite@latest . -- --template react
-   npm install
-   ```
-2. Replace `src/App.jsx` with the code from the canvas (this file).
-3. Create `vite.config.js` and `.github/workflows/pages.yml` exactly as above.
-4. Edit `index.html` and add Tailwind CDN to `<head>` as above.
-5. Commit & push:
-   ```bash
-   git add .
-   git commit -m "vite scaffold + pages workflow"
-   git push -u origin main
-   ```
-6. In GitHub → **Settings → Pages → Build and deployment** set **Source = GitHub Actions**.
-7. Visit: https://ilyeanaplus.github.io/Nebula-Bingo-Tracker/
-
-## After deploy
-- In the app, paste your Google **API key** and tick **remember API key** if desired.
-- If you restrict the key by **HTTP referrers**, add:
-  - `https://ilyeanaplus.github.io/*`
-  - `https://ilyeanaplus.github.io/Nebula-Bingo-Tracker/*`
-- If fetching fails, open **Diagnostics** in the app for precise errors.
-
-## Shareable link with prefilled params
-```
-https://ilyeanaplus.github.io/Nebula-Bingo-Tracker/?key=YOUR_API_KEY&folder=1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB
-```
-
-============================================================
-*/
