@@ -1,7 +1,6 @@
-import React from 'react';
+import React from "react";
 
 export default function Cards({ cards, copyTSV, downloadCSV, resetCard, updateCellName, toggleCheck }) {
-  if (!cards.length) return (<section className="space-y-6"><div className="text-sm text-slate-500">No cards yet. Upload a screenshot to create one.</div></section>);
   return (
     <section className="space-y-6">
       {cards.map((card) => (
@@ -11,10 +10,11 @@ export default function Cards({ cards, copyTSV, downloadCSV, resetCard, updateCe
             <div className="ml-auto flex gap-2">
               <button className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200" onClick={()=>copyTSV(card)}>Copy TSV</button>
               <button className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200" onClick={()=>downloadCSV(card)}>Download CSV</button>
-              <button className="px-3 py-1 rounded bg-amber-100 hover:bg-amber-200" onClick={()=>resetCard(card.id,"checks")}>Reset checks</button>
-              <button className="px-3 py-1 rounded bg-rose-100 hover:bg-rose-200" onClick={()=>resetCard(card.id,"all")}>Clear names</button>
+              <button className="px-3 py-1 rounded bg-amber-100 hover:bg-amber-200" onClick={()=>resetCard(card.id, "checks")}>Reset checks</button>
+              <button className="px-3 py-1 rounded bg-rose-100 hover:bg-rose-200" onClick={()=>resetCard(card.id, "all")}>Clear names</button>
             </div>
           </div>
+
           <div className="grid" style={{ gridTemplateColumns: `repeat(${card.cols}, minmax(0, 1fr))`, gap: "8px" }}>
             {card.grid.map((cell, i) => {
               const r = Math.floor(i / card.cols) + 1; const c = (i % card.cols) + 1;
@@ -39,6 +39,8 @@ export default function Cards({ cards, copyTSV, downloadCSV, resetCard, updateCe
           </div>
         </div>
       ))}
+
+      {cards.length === 0 && (<div className="text-sm text-slate-500">No cards yet. Upload a screenshot to create one.</div>)}
     </section>
   );
 }

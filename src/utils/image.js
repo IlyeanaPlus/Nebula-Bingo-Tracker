@@ -1,4 +1,4 @@
-import { getBlob } from './net';
+import { getBlob } from './net.js';
 
 export async function loadImageFromFile(file) {
   const url = URL.createObjectURL(file);
@@ -8,6 +8,7 @@ export async function loadImageFromFile(file) {
   await img.decode();
   return { img, url, originUrl: null };
 }
+
 export async function loadImageFromURL(originUrl) {
   const blob = await getBlob(originUrl, "downloading image from Drive");
   const url = URL.createObjectURL(blob);
@@ -34,11 +35,13 @@ export function ahashFromImage(img, size = 16) {
   const avg = sum / gray.length;
   return gray.map((v) => (v >= avg ? 1 : 0));
 }
+
 export function hammingDistanceBits(aBits, bBits) {
   const n = Math.min(aBits.length, bBits.length);
   let d = 0; for (let i = 0; i < n; i++) if (aBits[i] !== bBits[i]) d++;
   return d + Math.max(aBits.length, bBits.length) - n;
 }
+
 export function cropToCanvas(srcImg, box) {
   const { x, y, w, h } = box;
   const c = document.createElement("canvas");
@@ -49,6 +52,7 @@ export function cropToCanvas(srcImg, box) {
   ctx.drawImage(srcImg, x, y, w, h, 0, 0, c.width, c.height);
   return c;
 }
+
 export function evenGridBoxes(imgW, imgH, rows, cols, inset = 0, startX = 0, startY = 0, cellW, cellH, gapX = 0, gapY = 0) {
   const w = cellW ?? Math.floor((imgW - startX - (cols - 1) * gapX) / cols);
   const h = cellH ?? Math.floor((imgH - startY - (rows - 1) * gapY) / rows);

@@ -1,6 +1,15 @@
-import React from 'react';
+import React from "react";
 
-export default function Controls({ rows, setRows, cols, setCols, inset, setInset, threshold, onThresholdChange }) {
+export default function Controls({
+  rows, setRows,
+  cols, setCols,
+  inset, setInset,
+  threshold, onThresholdChange,
+  advancedProps
+}) {
+  const { startX, setStartX, startY, setStartY, cellW, setCellW, cellH, setCellH, gapX, setGapX, gapY, setGapY } = advancedProps;
+  const [showAdv, setShowAdv] = React.useState(false);
+
   return (
     <section id="controls" className="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-slate-200">
       <h2 className="text-lg font-semibold mb-2">2) Controls</h2>
@@ -23,6 +32,35 @@ export default function Controls({ rows, setRows, cols, setCols, inset, setInset
           <div className="text-xs text-slate-600">{threshold}</div>
         </div>
       </div>
+      <button className="mt-3 text-sm underline" onClick={()=>setShowAdv(v=>!v)}>{showAdv?"Hide":"Show"} advanced geometry</button>
+      {showAdv && (
+        <div className="mt-3 grid grid-cols-2 md:grid-cols-6 gap-3">
+          <div>
+            <label className="block text-xs text-slate-600">startX</label>
+            <input className="w-full border rounded px-2 py-1" type="number" value={startX} onChange={(e)=>setStartX(parseInt(e.target.value||"0"))} />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600">startY</label>
+            <input className="w-full border rounded px-2 py-1" type="number" value={startY} onChange={(e)=>setStartY(parseInt(e.target.value||"0"))} />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600">cellW</label>
+            <input className="w-full border rounded px-2 py-1" type="number" value={cellW} onChange={(e)=>setCellW(parseInt(e.target.value||"0"))} />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600">cellH</label>
+            <input className="w-full border rounded px-2 py-1" type="number" value={cellH} onChange={(e)=>setCellH(parseInt(e.target.value||"0"))} />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600">gapX</label>
+            <input className="w-full border rounded px-2 py-1" type="number" value={gapX} onChange={(e)=>setGapX(parseInt(e.target.value||"0"))} />
+          </div>
+          <div>
+            <label className="block text-xs text-slate-600">gapY</label>
+            <input className="w-full border rounded px-2 py-1" type="number" value={gapY} onChange={(e)=>setGapY(parseInt(e.target.value||"0"))} />
+          </div>
+        </div>
+      )}
     </section>
   );
 }

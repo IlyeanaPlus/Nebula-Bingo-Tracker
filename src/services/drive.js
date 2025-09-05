@@ -1,80 +1,19 @@
-// src/services/drive.js
-import { getJSON, getBlob } from "../utils/net.js";
+import { getJSON, getBlob } from '../utils/net.js';
+import { isShinyName } from '../utils/names.js';
 
 /**
- * List all image files in a folder (and recursively in subfolders if desired).
- * Returns: [{ id, name, downloadUrl }]
+ * listDriveImagesDeep
+ * Recursively lists images in a Drive folder and subfolders.
+ * Requires: public folder + API key (read-only).
  */
-export async function listDriveImagesDeep(
-  folderId,
-  apiKey,
-  { includeSharedDrives = true, excludeShiny = false, recurse = true, max = Infinity } = {}
-) {
-  const images = [];
-  const toVisit = [folderId];
-
-  while (toVisit.length && images.length < max) {
-    const fid = toVisit.shift();
-
-    // 1) List images in this folder
-    const imgQ = `'${fid}' in parents and trashed=false and (mimeType contains 'image/')`;
-    const imgFiles = await listPaged(fid, apiKey, imgQ, includeSharedDrives);
-    for (const f of imgFiles) {
-      if (excludeShiny && isShinyName(f.name)) continue;
-      images.push({
-        id: f.id,
-        name: f.name,
-        downloadUrl: `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${apiKey}`,
-      });
-      if (images.length >= max) break;
-    }
-    if (!recurse || images.length >= max) continue;
-
-    // 2) Enqueue subfolders
-    const folQ = `'${fid}' in parents and trashed=false and mimeType='application/vnd.google-apps.folder'`;
-    const folders = await listPaged(fid, apiKey, folQ, includeSharedDrives);
-    for (const sf of folders) toVisit.push(sf.id);
-  }
-
-  return images;
-}
-
-/**
- * Find a specific file by exact name within a folder (public read via API key).
- * Returns minimal file object or null.
- */
-export async function findFileInFolderPublic(folderId, apiKey, name, includeSharedDrives = true) {
+export async function listDriveImagesDeep(folderId, apiKey, {
+  includeSharedDrives = true,
+  excludeShiny = false,
+  onPage = () => {}
+} = {}) {
   const base = "https://www.googleapis.com/drive/v3/files";
-  const q = `'${folderId}' in parents and trashed=false and name='${name.replace(/'/g, "\\'")}'`;
-  const params = new URLSearchParams({
-    q,
-    fields: "files(id,name,modifiedTime,size)",
-    pageSize: "1",
-    key: apiKey,
-  });
-  if (includeSharedDrives) {
-    params.set("supportsAllDrives", "true");
-    params.set("includeItemsFromAllDrives", "true");
-  }
-  const url = `${base}?${params.toString()}`;
-  const json = await getJSON(url, "searching cache.json in Drive");
-  return json.files?.[0] || null;
-}
 
-/** Download a text file (public) by id using API key. */
-export async function downloadTextPublic(fileId, apiKey) {
-  const url = `https://www.googleapis.com/drive/v3/files/${fileId}?alt=media&key=${encodeURIComponent(apiKey)}`;
-  const blob = await getBlob(url, "downloading cache.json");
-  return blob.text();
-}
-
-// ---------- internal helpers ----------
-
-async function listPaged(_folderId, apiKey, q, includeSharedDrives) {
-  const base = "https://www.googleapis.com/drive/v3/files";
-  const all = [];
-  let pageToken;
-  do {
+  async function listOnce(q, pageToken) {
     const params = new URLSearchParams({
       q,
       fields: "nextPageToken, files(id,name,mimeType)",
@@ -87,16 +26,73 @@ async function listPaged(_folderId, apiKey, q, includeSharedDrives) {
     }
     if (pageToken) params.set("pageToken", pageToken);
     const url = `${base}?${params.toString()}`;
-    const json = await getJSON(url, "listing Drive files");
-    all.push(...(json.files || []));
-    pageToken = json.nextPageToken;
-  } while (pageToken);
-  return all;
+    return await getJSON(url, "listing Drive files");
+  }
+
+  let stack = [folderId];
+  const out = [];
+  let seenCount = 0;
+
+  while (stack.length) {
+    const fid = stack.pop();
+    // List files in this folder
+    let pageToken = undefined;
+    do {
+      const q = `'${fid}' in parents and trashed=false and (mimeType contains 'image/' or mimeType='application/vnd.google-apps.folder')`;
+      const json = await listOnce(q, pageToken);
+      const files = json.files || [];
+      for (const f of files) {
+        if (f.mimeType === 'application/vnd.google-apps.folder') {
+          stack.push(f.id);
+        } else {
+          if (excludeShiny && isShinyName(f.name)) continue;
+          out.push({
+            id: f.id,
+            name: f.name,
+            downloadUrl: `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${apiKey}`,
+          });
+        }
+      }
+      seenCount += files.length;
+      onPage(seenCount);
+      pageToken = json.nextPageToken;
+    } while (pageToken);
+  }
+
+  return out;
 }
 
-// Minimal shiny filter helper (same semantics as in names.js, but kept local to avoid circular deps)
-function isShinyName(stem) {
-  if (!stem) return false;
-  const s = String(stem).toLowerCase().replace(/[._-]+/g, " ");
-  return /\bshiny\b/.test(s);
+/**
+ * loadDriveCacheJSON
+ * Looks for sprite_ref_cache.json in the root folder (non-recursive for safety/perf).
+ * Returns parsed JSON or null.
+ */
+export async function loadDriveCacheJSON(folderId, apiKey, { includeSharedDrives = true } = {}) {
+  const base = "https://www.googleapis.com/drive/v3/files";
+  const params = new URLSearchParams({
+    q: `'${folderId}' in parents and trashed=false and name='sprite_ref_cache.json' and mimeType='application/json'`,
+    fields: "files(id,name)",
+    pageSize: "1",
+    key: apiKey,
+  });
+  if (includeSharedDrives) {
+    params.set("supportsAllDrives", "true");
+    params.set("includeItemsFromAllDrives", "true");
+  }
+  const url = `${base}?${params.toString()}`;
+  const meta = await getJSON(url, "searching for cache json");
+  const hit = (meta.files || [])[0];
+  if (!hit) return null;
+  const dl = `https://www.googleapis.com/drive/v3/files/${hit.id}?alt=media&key=${encodeURIComponent(apiKey)}`;
+  const blob = await getBlob(dl, "downloading cache json");
+  const text = await blob.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
+
+// NOTE: Uploading/writing to Drive requires OAuth; API key alone cannot write.
+// You can implement OAuth (Google Identity Services) and then POST multipart/form-data
+// to files.create with uploadType=multipart using the OAuth access token.

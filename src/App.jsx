@@ -5,40 +5,21 @@ import Controls from './components/Controls.jsx';
 import Diagnostics from './components/Diagnostics.jsx';
 import Cards from './components/Cards.jsx';
 
-import { listDriveImagesDeep, findFileInFolderPublic, downloadTextPublic } from './services/drive.js';
-import { ensureOAuthToken, uploadOrUpdateJSON } from './services/drive_oauth.js';
+import { listDriveImagesDeep, loadDriveCacheJSON } from './services/drive.js';
 import { getJSON, getBlob } from './utils/net.js';
 import { loadImageFromFile, loadImageFromURL, ahashFromImage, cropToCanvas, evenGridBoxes, hammingDistanceBits } from './utils/image.js';
 import { isShinyName, tidyName, nameFromFilename } from './utils/names.js';
 import { bitsToString, stringToBits, loadCacheLS, saveCacheLS } from './utils/cache.js';
 
-// Simple concurrency pool
-async function mapPool(limit, items, worker) {
-  const results = new Array(items.length);
-  let i = 0;
-  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
-    while (true) {
-      const idx = i++;
-      if (idx >= items.length) break;
-      results[idx] = await worker(items[idx], idx);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
 export default function App() {
   const [refs, setRefs] = useState([]);
   const [hashing, setHashing] = useState(false);
-  const [progress, setProgress] = useState(null); // {phase,total,done}
-
-  // Matching/grid controls
+  const [progress, setProgress] = useState({ phase: "idle", listed: 0, hashed: 0, total: 0 });
   const [threshold, setThreshold] = useState(12);
   const [rows, setRows] = useState(5);
   const [cols, setCols] = useState(5);
   const [inset, setInset] = useState(2);
 
-  // Advanced geometry
   const [startX, setStartX] = useState(0);
   const [startY, setStartY] = useState(0);
   const [cellW, setCellW] = useState(0);
@@ -46,26 +27,15 @@ export default function App() {
   const [gapX, setGapX] = useState(0);
   const [gapY, setGapY] = useState(0);
 
-  // Drive settings
   const [driveFolderId, setDriveFolderId] = useState("1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB");
   const [driveApiKey, setDriveApiKey] = useState("");
   const [includeSharedDrives, setIncludeSharedDrives] = useState(true);
   const [excludeShiny, setExcludeShiny] = useState(true);
   const [rememberKey, setRememberKey] = useState(() => !!localStorage.getItem("BE_API_KEY"));
 
-  // Diagnostics & cards
   const [diag, setDiag] = useState({ running: false, logs: [] });
   const [cards, setCards] = useState([]);
-  const [refCache, setRefCache] = useState(() => loadCacheLS()); // url -> {name,bits}
-
-  // Drive-backed cache (write requires OAuth)
-  const [oauthClientId, setOauthClientId] = useState(localStorage.getItem("BE_OAUTH_CID") || "");
-  const [rememberCID, setRememberCID] = useState(!!localStorage.getItem("BE_OAUTH_CID"));
-  const CACHE_FILENAME = "sprite_ref_cache.json";
-
-  // NEW: autoload toggle + one-shot guard
-  const [autoLoadCache, setAutoLoadCache] = useState(localStorage.getItem("BE_AUTO_CACHE") !== "0"); // default ON
-  const cacheAutoloadedRef = React.useRef(false);
+  const [refCache, setRefCache] = useState(() => loadCacheLS());
 
   function addRef(r) { setRefs((prev) => [...prev, r]); }
   function upsertCache(key, name, bits) {
@@ -73,7 +43,6 @@ export default function App() {
     setRefCache(next); saveCacheLS(next);
   }
 
-  // Prefill API key/folder
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
@@ -84,133 +53,86 @@ export default function App() {
   }, []);
   useEffect(() => { if (rememberKey && driveApiKey) localStorage.setItem("BE_API_KEY", driveApiKey); }, [rememberKey, driveApiKey]);
   useEffect(() => { if (!rememberKey) localStorage.removeItem("BE_API_KEY"); }, [rememberKey]);
-  useEffect(() => {
-    if (rememberCID && oauthClientId) localStorage.setItem("BE_OAUTH_CID", oauthClientId);
-    if (!rememberCID) localStorage.removeItem("BE_OAUTH_CID");
-  }, [oauthClientId, rememberCID]);
-  useEffect(() => {
-    localStorage.setItem("BE_AUTO_CACHE", autoLoadCache ? "1" : "0");
-  }, [autoLoadCache]);
 
-  // NEW: Auto-load cache.json from Drive on startup (public read via API key)
-  useEffect(() => {
-    if (cacheAutoloadedRef.current) return;
-    if (!autoLoadCache) return;
-    if (!driveFolderId || !driveApiKey) return;
-
-    (async () => {
+  async function handleRefFiles(files) {
+    const arr = Array.from(files || []); if (!arr.length) return; setHashing(true);
+    setProgress({ phase: "hashing uploads", listed: arr.length, hashed: 0, total: arr.length });
+    let i = 0;
+    for (const f of arr) {
       try {
-        const f = await findFileInFolderPublic(
-          driveFolderId,
-          driveApiKey,
-          CACHE_FILENAME,
-          includeSharedDrives
-        );
-        if (!f) { cacheAutoloadedRef.current = true; return; }
+        if (excludeShiny && isShinyName(f.name)) continue;
+        const { img, url, originUrl } = await loadImageFromFile(f);
+        const bits = ahashFromImage(img, 16);
+        const name = tidyName(nameFromFilename(f));
+        addRef({ source: "upload", url, originUrl, name, hashBits: bits });
+        upsertCache(originUrl || url, name, bits);
+      } catch (e) { console.error("hash ref error", e); }
+      i++; setProgress(p => ({ ...p, hashed: i }));
+    }
+    setHashing(false); setProgress({ phase: "idle", listed: 0, hashed: 0, total: 0 });
+  }
 
-        const txt = await downloadTextPublic(f.id, driveApiKey);
-        const parsed = JSON.parse(txt);
-
-        // Save to localStorage cache for future sessions
-        setRefCache(parsed);
-        saveCacheLS(parsed);
-
-        // Hydrate current session refs so matching works immediately
-        let added = 0;
-        for (const [key, val] of Object.entries(parsed)) {
-          if (!val?.bits) continue;
+  async function tryLoadCacheFromDrive() {
+    if (!driveFolderId || !driveApiKey) return;
+    try {
+      const json = await loadDriveCacheJSON(driveFolderId, driveApiKey, { includeSharedDrives });
+      if (json && typeof json === "object") {
+        setRefCache(json); saveCacheLS(json);
+        for (const [key, val] of Object.entries(json)) {
+          if (!val || !val.bits) continue;
           addRef({ source: "cache", url: key, originUrl: key, name: val.name || nameFromFilename(key), hashBits: stringToBits(val.bits) });
-          added++;
         }
-        console.log(`Auto-loaded ${added} refs from ${CACHE_FILENAME}.`);
-      } catch (e) {
-        console.warn("Auto-load of cache.json failed:", e);
-      } finally {
-        cacheAutoloadedRef.current = true;
+        return true;
       }
-    })();
-  }, [autoLoadCache, driveFolderId, driveApiKey, includeSharedDrives]);
+    } catch (e) { console.warn("Drive cache load failed:", e.message); }
+    return false;
+  }
 
-  // DRIVE: fetch + hash (with cache reuse + progress)
   async function handleDriveFetch() {
     if (!driveFolderId || !driveApiKey) { alert("Enter Drive Folder ID and API Key."); return; }
     setHashing(true);
-    setProgress({ phase: "Listing Drive…", total: 0, done: 0 });
+    setProgress({ phase: "listing", listed: 0, hashed: 0, total: 0 });
     try {
-      const files = await listDriveImagesDeep(driveFolderId, driveApiKey, {
-        includeSharedDrives,
-        excludeShiny,
-        recurse: true,
-        max: Infinity,
-      });
+      await tryLoadCacheFromDrive(); // optional
 
-      if (!files.length) {
-        alert("Drive listing returned 0 images. Check folder ID/sharing or shiny exclusion.");
-        setProgress(null);
-        setHashing(false);
-        return;
-      }
-
-      const seen = new Set(refs.map(r => r.url));
-      const toHash = [];
-      let restored = 0;
-
+      const files = await listDriveImagesDeep(
+        driveFolderId, driveApiKey,
+        { includeSharedDrives, excludeShiny, onPage: (countSoFar)=>setProgress(p=>({...p, listed: countSoFar})) }
+      );
+      if (!files.length) alert("Drive listing returned 0 images. Check folder ID/sharing or adjust shiny exclusion.");
+      setProgress(p => ({ ...p, phase: "hashing", total: files.length }));
+      let hashed = 0;
       for (const f of files) {
         if (excludeShiny && isShinyName(f.name)) continue;
-        const key = f.downloadUrl;
-        if (seen.has(key)) continue;
-
-        const cached = refCache[key];
-        if (cached && cached.bits) {
-          addRef({
-            source: "drive",
-            url: key,
-            originUrl: key,
-            name: cached.name || tidyName(f.name || nameFromFilename(f.name || key)),
-            hashBits: stringToBits(cached.bits),
-          });
-          seen.add(key);
-          restored++;
+        const key = f.downloadUrl; const cached = refCache[key];
+        if (cached) {
+          addRef({ source: "drive", url: key, originUrl: key, name: cached.name, hashBits: stringToBits(cached.bits) });
         } else {
-          toHash.push({ key, name: f.name });
-          seen.add(key);
+          try {
+            const { img, url, originUrl } = await loadImageFromURL(f.downloadUrl);
+            const bits = ahashFromImage(img, 16);
+            const name = tidyName(f.name || nameFromFilename(f.name || f.downloadUrl));
+            addRef({ source: "drive", url, originUrl, name, hashBits: bits });
+            upsertCache(originUrl || url, name, bits);
+          } catch (e) { console.warn("Drive image failed:", f.name, e); }
         }
+        hashed++; if (hashed % 10 === 0) setProgress(p => ({ ...p, hashed }));
       }
-
-      setProgress({ phase: "Hashing images…", total: toHash.length, done: 0 });
-
-      await mapPool(8, toHash, async ({ key, name }) => {
-        try {
-          const { img, url, originUrl } = await loadImageFromURL(key);
-          const bits = ahashFromImage(img, 16);
-          const pretty = tidyName(name || nameFromFilename(name || key));
-          addRef({ source: "drive", url, originUrl, name: pretty, hashBits: bits });
-          upsertCache(originUrl || url, pretty, bits);
-        } catch (e) {
-          console.warn("Drive image failed:", name || key, e);
-        } finally {
-          setProgress(p => p ? { ...p, done: p.done + 1 } : p);
-        }
-      });
-
-      setProgress({ phase: "Done", total: toHash.length, done: toHash.length });
-      console.log(`Drive indexing complete. restored from cache: ${restored}, newly hashed: ${toHash.length}`);
+      setProgress(p => ({ ...p, hashed }));
     } catch (e) {
       console.error(e);
       alert([
         "Drive fetch failed:", e.message,
-        "",
-        "Common fixes:",
+        "\nCommon fixes:",
         "• Ensure the API key is valid and not expired.",
         "• If you set HTTP referrer restrictions, run this app from http://localhost or your allowed domain (not file://).",
+        "• Restrict the key to the Drive API only (optional but recommended).",
         "• Share the Drive folder as ‘Anyone with the link – Viewer’.",
       ].join("\n"));
     }
-    setHashing(false);
-    setTimeout(() => setProgress(null), 800);
+    setHashing(false); setProgress({ phase: "idle", listed: 0, hashed: 0, total: 0 });
   }
 
-  // Screenshots → cards
   async function handleScreenshotFiles(files) {
     const arr = Array.from(files || []);
     for (const f of arr) {
@@ -242,7 +164,6 @@ export default function App() {
       return next;
     });
   }
-
   function copyTSV(card) {
     const lines = [];
     for (let r = 0; r < card.rows; r++) {
@@ -281,7 +202,6 @@ export default function App() {
     setCards((prev) => prev.map((c) => { if (c.id !== cardId) return c; const grid = [...c.grid]; grid[idx] = { ...grid[idx], checked: !grid[idx].checked }; return { ...c, grid }; }));
   }
 
-  // Diagnostics
   async function runDiagnostics() {
     setDiag({ running: true, logs: [] });
     try {
@@ -349,13 +269,14 @@ export default function App() {
         <ReferencePanel
           refs={refs}
           hashing={hashing}
+          progress={progress}
           excludeShiny={excludeShiny} setExcludeShiny={setExcludeShiny}
+          handleRefFiles={handleRefFiles}
           driveFolderId={driveFolderId} setDriveFolderId={setDriveFolderId}
           driveApiKey={driveApiKey} setDriveApiKey={setDriveApiKey}
           includeSharedDrives={includeSharedDrives} setIncludeSharedDrives={setIncludeSharedDrives}
           rememberKey={rememberKey} setRememberKey={setRememberKey}
           handleDriveFetch={handleDriveFetch}
-          progress={progress}
           exportCacheJSON={()=>{
             const blob = new Blob([JSON.stringify(refCache, null, 2)], { type: "application/json" });
             const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "sprite_ref_cache.json"; a.click();
@@ -373,13 +294,6 @@ export default function App() {
               } catch { alert("Invalid cache JSON"); }
             });
           }}
-
-          oauthClientId={oauthClientId} setOauthClientId={setOauthClientId}
-          rememberCID={rememberCID} setRememberCID={setRememberCID}
-          loadCacheFromDrive={loadCacheFromDrive}
-          saveCacheToDrive={saveCacheToDrive}
-          // NEW:
-          autoLoadCache={autoLoadCache} setAutoLoadCache={setAutoLoadCache}
         />
 
         <Controls
@@ -387,6 +301,9 @@ export default function App() {
           cols={cols} setCols={setCols}
           inset={inset} setInset={setInset}
           threshold={threshold} onThresholdChange={(v)=>{ setThreshold(v); cards.forEach((_,i)=>recomputeThreshold(i, v)); }}
+          advancedProps={{
+            startX, setStartX, startY, setStartY, cellW, setCellW, cellH, setCellH, gapX, setGapX, gapY, setGapY
+          }}
         />
 
         <Diagnostics diag={diag} runDiagnostics={runDiagnostics} runHelperTests={runHelperTests} />

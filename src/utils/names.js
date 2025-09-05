@@ -1,8 +1,9 @@
 export function isShinyName(stem) {
   if (!stem) return false;
-  const s = String(stem).toLowerCase().replace(/[._-]+/g, " ");
+  const s = String(stem).toLowerCase().replace(/[._-]+/g, ' ');
   return /\bshiny\b/.test(s);
 }
+
 export function tidyName(raw) {
   if (!raw) return "";
   let s = raw
@@ -31,6 +32,7 @@ export function tidyName(raw) {
   };
   return fixes[s] || s;
 }
+
 export function nameFromFilename(fileOrUrl) {
   const stem = typeof fileOrUrl === "string" ? fileOrUrl : fileOrUrl.name || "";
   let m1 = stem.match(/pokemon[_-](\d+)[_-]([a-z0-9\-]+)/i);
