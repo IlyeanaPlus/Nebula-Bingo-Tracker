@@ -18,6 +18,9 @@ export default function ReferencePanel({
   rememberCID, setRememberCID,
   loadCacheFromDrive,
   saveCacheToDrive,
+
+  // NEW: autoload toggle
+  autoLoadCache, setAutoLoadCache,
 }) {
   const pct = progress && progress.total > 0
     ? Math.min(100, Math.round((progress.done / progress.total) * 100))
@@ -93,9 +96,17 @@ export default function ReferencePanel({
               <button className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-sm" onClick={loadCacheFromDrive}>Load from Drive</button>
               <button className="px-3 py-1 rounded bg-indigo-100 hover:bg-indigo-200 text-sm" onClick={saveCacheToDrive}>Save/Update to Drive</button>
             </div>
-            <label className="inline-flex items-center gap-2 text-xs text-slate-600 mt-2">
-              <input type="checkbox" checked={rememberCID} onChange={(e)=>setRememberCID(e.target.checked)} /> remember OAuth Client ID (this browser)
-            </label>
+
+            <div className="mt-2 flex flex-col gap-1 text-xs text-slate-600">
+              <label className="inline-flex items-center gap-2">
+                <input type="checkbox" checked={rememberCID} onChange={(e)=>setRememberCID(e.target.checked)} /> remember OAuth Client ID (this browser)
+              </label>
+              {/* NEW: autoload toggle */}
+              <label className="inline-flex items-center gap-2">
+                <input type="checkbox" checked={autoLoadCache} onChange={(e)=>setAutoLoadCache(e.target.checked)} /> auto-load <code>sprite_ref_cache.json</code> on startup
+              </label>
+            </div>
+
             <div className="text-[11px] text-slate-500 mt-2">
               Reading only needs API key + public sharing. Writing requires OAuth (Google will prompt once).
             </div>
