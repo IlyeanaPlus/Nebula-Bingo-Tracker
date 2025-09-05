@@ -3,8 +3,8 @@ import React, { useState, useEffect } from "react";
 /**
  * Bingo Extractor – single‑file client app (Drive + Cache enabled)
  *
- * Fixes & diagnostics for "TypeError: NetworkError when attempting to fetch resource":
- *  - Adds a full Diagnostics panel (checks API key validity, referrer/origin, folder listing, image download)
+ * Fixes & diagnostics for network errors:
+ *  - Diagnostics panel (checks API key validity, referrer/origin, folder listing, image download)
  *  - Better error messages with HTTP status + body text
  *  - Paged Drive listing (handles 300+ files)
  *  - Optional Shared Drives support
@@ -247,10 +247,7 @@ export default function App() {
   const [refCache, setRefCache] = useState(() => loadCacheLS());
 
   function addRef(refObj) { setRefs((prev) => [...prev, refObj]); }
-  function upsertCache(key, name, bits) {
-    const next = { ...refCache, [key]: { name, bits: bitsToString(bits) } };
-    setRefCache(next); saveCacheLS(next);
-  }
+
   // Load key/folder from URL or localStorage on first mount
   useEffect(() => {
     try {
@@ -270,10 +267,14 @@ export default function App() {
   useEffect(() => {
     if (rememberKey && driveApiKey) localStorage.setItem('BE_API_KEY', driveApiKey);
   }, [rememberKey, driveApiKey]);
-
   useEffect(() => {
     if (!rememberKey) localStorage.removeItem('BE_API_KEY');
   }, [rememberKey]);
+
+  function upsertCache(key, name, bits) {
+    const next = { ...refCache, [key]: { name, bits: bitsToString(bits) } };
+    setRefCache(next); saveCacheLS(next);
+  }
 
   // A) Local uploads
   async function handleRefFiles(files) {
@@ -714,7 +715,7 @@ function HostHelper() {
   const baseSeg = (() => {
     const parts = path.split('/').filter(Boolean);
     return parts.length ? '/' + parts[0] : '';
-    })();
+  })();
   const suggestions = Array.from(new Set([
     origin ? `${origin}/*` : '',
     origin && baseSeg ? `${origin}${baseSeg}/*` : '',
@@ -845,4 +846,3 @@ https://ilyeanaplus.github.io/Nebula-Bingo-Tracker/?key=YOUR_API_KEY&folder=1lAI
 
 ============================================================
 */
-
