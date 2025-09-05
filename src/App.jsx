@@ -22,6 +22,11 @@ import React, { useState, useEffect } from "react";
  */
 
 // ---------- Utilities ----------
+function isShinyName(stem) {
+  if (!stem) return false;
+  const s = String(stem).toLowerCase().replace(/[._-]+/g, ' ');
+  return /shiny/.test(s);
+}
 function tidyName(raw) {
   if (!raw) return "";
   let s = raw
@@ -185,13 +190,17 @@ function saveCacheLS(cache) { try { localStorage.setItem(CACHE_KEY, JSON.stringi
 }
 
 // ---------- Google Drive (public) helpers ----------
-async function listDriveImages(folderId, apiKey, { includeSharedDrives = true } = {}) {
+async function listDriveImages(folderId, apiKey, { includeSharedDrives = true, excludeShiny = false } = {}) {
   const base = "https://www.googleapis.com/drive/v3/files";
   const files = [];
   let pageToken = undefined;
   do {
+    let q = `'${folderId}' in parents and trashed=false and (mimeType contains 'image/')`;
+    if (excludeShiny) {
+      q += " and not (name contains 'shiny' or name contains 'Shiny' or name contains 'SHINY')";
+    }
     const params = new URLSearchParams({
-      q: `'${folderId}' in parents and trashed=false and (mimeType contains 'image/')`,
+      q,
       fields: "nextPageToken, files(id,name,mimeType)",
       pageSize: "1000",
       key: apiKey,
@@ -206,7 +215,13 @@ async function listDriveImages(folderId, apiKey, { includeSharedDrives = true } 
     files.push(...(json.files || []));
     pageToken = json.nextPageToken;
   } while (pageToken);
-  return files.map((f) => ({
+  const filtered = excludeShiny ? files.filter((f) => !isShinyName(f.name)) : files;
+  return filtered.map((f) => ({
+    id: f.id,
+    name: f.name,
+    downloadUrl: `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${apiKey}`,
+  }));
+}
     id: f.id,
     name: f.name,
     downloadUrl: `https://www.googleapis.com/drive/v3/files/${f.id}?alt=media&key=${apiKey}`,
@@ -234,6 +249,7 @@ export default function App() {
   const [driveApiKey, setDriveApiKey] = useState("");
   const [urlList, setUrlList] = useState("");
   const [includeSharedDrives, setIncludeSharedDrives] = useState(true);
+  const [excludeShiny, setExcludeShiny] = useState(true);
   const [rememberKey, setRememberKey] = useState(() => !!localStorage.getItem('BE_API_KEY'));
 
   // Diagnostics
@@ -280,7 +296,9 @@ export default function App() {
   async function handleRefFiles(files) {
     const arr = Array.from(files || []); if (!arr.length) return; setHashing(true);
     for (const f of arr) {
-      try { const { img, url, originUrl } = await loadImageFromFile(f);
+      try {
+        if (excludeShiny && isShinyName(f.name)) { continue; }
+        const { img, url, originUrl } = await loadImageFromFile(f);
         const bits = ahashFromImage(img, 16); const name = tidyName(nameFromFilename(f));
         addRef({ source: "upload", url, originUrl, name, hashBits: bits });
         upsertCache(originUrl || url, name, bits);
@@ -288,17 +306,19 @@ export default function App() {
     }
     setHashing(false);
   }
+  }
 
   // B) Google Drive (public)
   async function handleDriveFetch() {
     if (!driveFolderId || !driveApiKey) { alert("Enter Drive Folder ID and API Key."); return; }
     setHashing(true);
     try {
-      const files = await listDriveImages(driveFolderId, driveApiKey, { includeSharedDrives });
+      const files = await listDriveImages(driveFolderId, driveApiKey, { includeSharedDrives, excludeShiny });
       if (!files.length) {
-        alert("Drive listing succeeded but returned 0 images. Check folder ID and sharing (Anyone with link: Viewer).");
+        alert("Drive listing returned 0 images. Check folder ID/sharing or adjust shiny exclusion.");
       }
       for (const f of files) {
+        if (excludeShiny && isShinyName(f.name)) continue;
         const key = f.downloadUrl; const cached = refCache[key];
         if (cached) { addRef({ source: "drive", url: key, originUrl: key, name: cached.name, hashBits: stringToBits(cached.bits) }); continue; }
         try {
@@ -313,26 +333,28 @@ export default function App() {
       }
     } catch (e) {
       console.error(e);
-      alert(
-        [
-          "Drive fetch failed:",
-          e.message,
-          "\nCommon fixes:",
-          "• Ensure the API key is valid and not expired.",
-          "• If you set HTTP referrer restrictions, run this app from http://localhost or your allowed domain (not file://).",
-          "• Restrict the key to the Drive API only (optional but recommended).",
-          "• Share the Drive folder as ‘Anyone with the link – Viewer’.",
-        ].join("\n")
-      );
+      alert([
+        "Drive fetch failed:", e.message,
+        "
+Common fixes:",
+        "• Ensure the API key is valid and not expired.",
+        "• If you set HTTP referrer restrictions, run this app from http://localhost or your allowed domain (not file://).",
+        "• Restrict the key to the Drive API only (optional but recommended).",
+        "• Share the Drive folder as ‘Anyone with the link – Viewer’.",
+      ].join("
+"));
     }
     setHashing(false);
   }
 
   // C) URL list
   async function handleUrlListFetch() {
-    const lines = urlList.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+    const lines = urlList.split(/
+?
+/).map((s) => s.trim()).filter(Boolean);
     if (!lines.length) return; setHashing(true);
     for (const u of lines) {
+      if (excludeShiny && isShinyName(u)) continue;
       const key = u; const cached = refCache[key];
       if (cached) { addRef({ source: "url", url: key, originUrl: key, name: cached.name, hashBits: stringToBits(cached.bits) }); continue; }
       try { const { img, url, originUrl } = await loadImageFromURL(u);
@@ -525,6 +547,9 @@ export default function App() {
             <div>
               <h3 className="font-medium mb-1">A) Upload images</h3>
               <div className="flex items-center gap-3 flex-wrap">
+                <label className="inline-flex items-center gap-2 text-xs text-slate-600">
+                  <input type="checkbox" checked={excludeShiny} onChange={(e)=>setExcludeShiny(e.target.checked)} /> exclude shiny variants
+                </label>
                 <input type="file" multiple accept="image/*" onChange={(e) => handleRefFiles(e.target.files)} />
                 {hashing ? (
                   <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-700">Hashing…</span>
@@ -551,6 +576,9 @@ export default function App() {
               <div className="mt-2 flex items-center gap-3 text-xs text-slate-600">
                 <label className="inline-flex items-center gap-2">
                   <input type="checkbox" checked={includeSharedDrives} onChange={(e)=>setIncludeSharedDrives(e.target.checked)} /> include Shared Drives
+                </label>
+                <label className="inline-flex items-center gap-2">
+                  <input type="checkbox" checked={excludeShiny} onChange={(e)=>setExcludeShiny(e.target.checked)} /> exclude shiny variants
                 </label>
                 <label className="inline-flex items-center gap-2">
                   <input type="checkbox" checked={rememberKey} onChange={(e)=>setRememberKey(e.target.checked)} /> remember API key (this browser)
