@@ -7,9 +7,27 @@ import Cards from './components/Cards.jsx';
 
 import { listDriveImagesDeep } from './services/drive.js';
 import { getJSON, getBlob } from './utils/net.js';
-import { loadImageFromFile, loadImageFromURL, ahashFromImage, cropToCanvas, evenGridBoxes, hammingDistanceBits } from './utils/image.js';
+import {
+  loadImageFromFile, loadImageFromURL, ahashFromImage,
+  cropToCanvas, evenGridBoxes, hammingDistanceBits
+} from './utils/image.js';
 import { isShinyName, tidyName, nameFromFilename } from './utils/names.js';
 import { bitsToString, stringToBits, loadCacheLS, saveCacheLS } from './utils/cache.js';
+
+// ---- small concurrency helper for smooth hashing of large folders ----
+async function mapPool(limit, items, worker) {
+  const results = new Array(items.length);
+  let i = 0;
+  const workers = new Array(Math.min(limit, items.length)).fill(0).map(async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= items.length) break;
+      results[idx] = await worker(items[idx], idx);
+    }
+  });
+  await Promise.all(workers);
+  return results;
+}
 
 export default function App() {
   const [refs, setRefs] = useState([]);
@@ -36,6 +54,10 @@ export default function App() {
   const [diag, setDiag] = useState({ running: false, logs: [] });
   const [cards, setCards] = useState([]);
   const [refCache, setRefCache] = useState(() => loadCacheLS());
+
+  // NEW: progress bar state
+  // { phase: 'Listing Drive…' | 'Hashing images…' | 'Done', total: number, done: number }
+  const [progress, setProgress] = useState(null);
 
   function addRef(r) { setRefs((prev) => [...prev, r]); }
   function upsertCache(key, name, bits) {
@@ -69,34 +91,79 @@ export default function App() {
     setHashing(false);
   }
 
+  // UPDATED: Drive fetch with dedupe + caching + PROGRESS BAR
   async function handleDriveFetch() {
     if (!driveFolderId || !driveApiKey) { alert("Enter Drive Folder ID and API Key."); return; }
     setHashing(true);
+    setProgress({ phase: "Listing Drive…", total: 0, done: 0 });
     try {
-      const files = await listDriveImagesDeep(driveFolderId, driveApiKey, 
-        { includeSharedDrives, 
-          excludeShiny,
-          recurse: true,   // set to false if you only want the top-level
-          max: Infinity,   // or e.g. 5000 as a safety cap
-        });
-      if (!files.length) alert("Drive listing returned 0 images. Check folder ID/sharing or adjust shiny exclusion.");
+      // 1) List all items recursively
+      const files = await listDriveImagesDeep(driveFolderId, driveApiKey, {
+        includeSharedDrives,
+        excludeShiny,
+        recurse: true,
+        max: Infinity,
+      });
+
+      if (!files.length) {
+        alert("Drive listing returned 0 images. Check folder ID/sharing or adjust shiny exclusion.");
+        setProgress(null);
+        setHashing(false);
+        return;
+      }
+
+      // 2) Dedupe and restore from cache
+      const seen = new Set(refs.map(r => r.url));
+      const toHash = [];
+      let restored = 0;
+
       for (const f of files) {
         if (excludeShiny && isShinyName(f.name)) continue;
-        const key = f.downloadUrl; const cached = refCache[key];
-        if (cached) { addRef({ source: "drive", url: key, originUrl: key, name: cached.name, hashBits: stringToBits(cached.bits) }); continue; }
-        try {
-          const { img, url, originUrl } = await loadImageFromURL(f.downloadUrl);
-          const bits = ahashFromImage(img, 16);
-          const name = tidyName(f.name || nameFromFilename(f.name || f.downloadUrl));
-          addRef({ source: "drive", url, originUrl, name, hashBits: bits });
-          upsertCache(originUrl || url, name, bits);
-        } catch (e) { console.warn("Drive image failed:", f.name, e); }
+        const key = f.downloadUrl;
+        if (seen.has(key)) continue;
+
+        const cached = refCache[key];
+        if (cached && cached.bits) {
+          addRef({
+            source: "drive",
+            url: key,
+            originUrl: key,
+            name: cached.name || tidyName(f.name || nameFromFilename(f.name || key)),
+            hashBits: stringToBits(cached.bits),
+          });
+          seen.add(key);
+          restored++;
+        } else {
+          toHash.push({ key, name: f.name });
+          seen.add(key);
+        }
       }
+
+      // 3) Hash the rest with progress
+      setProgress({ phase: "Hashing images…", total: toHash.length, done: 0 });
+
+      await mapPool(8, toHash, async ({ key, name }) => {
+        try {
+          const { img, url, originUrl } = await loadImageFromURL(key);
+          const bits = ahashFromImage(img, 16);
+          const pretty = tidyName(name || nameFromFilename(name || key));
+          addRef({ source: "drive", url, originUrl, name: pretty, hashBits: bits });
+          upsertCache(originUrl || url, pretty, bits);
+        } catch (e) {
+          console.warn("Drive image failed:", name || key, e);
+        } finally {
+          setProgress(p => p ? { ...p, done: p.done + 1 } : p);
+        }
+      });
+
+      setProgress({ phase: "Done", total: toHash.length, done: toHash.length });
+      console.log(`Drive indexing complete. Files: ${files.length}, restored from cache: ${restored}, newly hashed: ${toHash.length}`);
     } catch (e) {
       console.error(e);
       alert([
         "Drive fetch failed:", e.message,
-        "\nCommon fixes:",
+        "",
+        "Common fixes:",
         "• Ensure the API key is valid and not expired.",
         "• If you set HTTP referrer restrictions, run this app from http://localhost or your allowed domain (not file://).",
         "• Restrict the key to the Drive API only (optional but recommended).",
@@ -104,6 +171,8 @@ export default function App() {
       ].join("\n"));
     }
     setHashing(false);
+    // hide the progress after a short moment
+    setTimeout(() => setProgress(null), 800);
   }
 
   async function handleUrlListFetch() {
@@ -269,6 +338,8 @@ export default function App() {
           handleDriveFetch={handleDriveFetch}
           urlList={urlList} setUrlList={setUrlList}
           handleUrlListFetch={handleUrlListFetch}
+          // NEW: show progress bar during fetch/hash
+          progress={progress}
           exportCacheJSON={()=>{
             const blob = new Blob([JSON.stringify(refCache, null, 2)], { type: "application/json" });
             const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "sprite_ref_cache.json"; a.click();
