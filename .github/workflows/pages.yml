@@ -1,41 +1,39 @@
-  (
-  echo name: Deploy to GitHub Pages
-    echo.
-  echo on:
-  echo   push:
-  echo     branches: [ main ]
-  echo   workflow_dispatch: {}
-    echo.
-  echo permissions:
-  echo   contents: read
-  echo   pages: write
-  echo   id-token: write
-    echo.
-  echo concurrency:
-  echo   group: "pages"
-  echo   cancel-in-progress: true
-    echo.
-  echo jobs:
-  echo   build:
-  echo     runs-on: ubuntu-latest
-  echo     steps:
-  echo       - uses: actions/checkout@v4
-  echo       - uses: actions/setup-node@v4
-  echo         with:
-  echo           node-version: 20
-  echo           cache: "npm"
-  echo       - run: npm ci ^|^| npm install
-  echo       - run: npm run build
-  echo       - uses: actions/upload-pages-artifact@v3
-  echo         with:
-  echo           path: dist
-  echo   deploy:
-  echo     needs: build
-  echo     runs-on: ubuntu-latest
-  echo     environment:
-  echo       name: github-pages
-  echo       url: ${{ steps.deployment.outputs.page_url }}
-  echo     steps:
-  echo       - id: deployment
-  echo         uses: actions/deploy-pages@v4
-    ) > .github\workflows\pages.yml
+name: Deploy Vite to GitHub Pages
+
+on:
+    push:
+        branches: [ main ]
+    workflow_dispatch: {}
+
+permissions:
+    contents: read
+    pages: write
+    id-token: write
+
+concurrency:
+    group: "pages"
+    cancel-in-progress: true
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v4
+            - uses: actions/setup-node@v4
+              with:
+                  node-version: 20
+                  cache: "npm"
+            - run: npm install
+            - run: npm run build
+            - uses: actions/upload-pages-artifact@v3
+              with:
+                  path: dist
+    deploy:
+        needs: build
+        runs-on: ubuntu-latest
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        steps:
+            - id: deployment
+              uses: actions/deploy-pages@v4
