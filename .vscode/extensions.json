@@ -1,0 +1,8 @@
+{
+  "recommendations": [
+    "vivaxy.vscode-conventional-commits",
+    "eamodio.gitlens",
+    "mhutchie.git-graph",
+    "github.vscode-pull-request-github"
+  ]
+}
