@@ -14,7 +14,7 @@ import {
 import { isShinyName, tidyName, nameFromFilename } from './utils/names.js';
 import { bitsToString, stringToBits, loadCacheLS, saveCacheLS } from './utils/cache.js';
 
-// Limit concurrency for large Drive folders (keeps the UI responsive)
+// Concurrency limiter for hashing many drive images
 async function mapPool(limit, items, worker) {
   const results = new Array(items.length);
   let i = 0;
@@ -30,13 +30,17 @@ async function mapPool(limit, items, worker) {
 }
 
 export default function App() {
-  const [refs, setRefs] = useState([]);
-  const [hashing, setHashing] = useState(false);
+  const [refs, setRefs] = useState([]);                    // {source,url,originUrl,name,hashBits}
+  const [hashing, setHashing] = useState(false);           // drive hashing state
+  const [progress, setProgress] = useState(null);          // { phase, total, done }
+
+  // Matching/grid controls
   const [threshold, setThreshold] = useState(12);
   const [rows, setRows] = useState(5);
   const [cols, setCols] = useState(5);
   const [inset, setInset] = useState(2);
 
+  // Advanced geometry
   const [startX, setStartX] = useState(0);
   const [startY, setStartY] = useState(0);
   const [cellW, setCellW] = useState(0);
@@ -44,19 +48,17 @@ export default function App() {
   const [gapX, setGapX] = useState(0);
   const [gapY, setGapY] = useState(0);
 
+  // Drive + options
   const [driveFolderId, setDriveFolderId] = useState("1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB");
   const [driveApiKey, setDriveApiKey] = useState("");
   const [includeSharedDrives, setIncludeSharedDrives] = useState(true);
   const [excludeShiny, setExcludeShiny] = useState(true);
   const [rememberKey, setRememberKey] = useState(() => !!localStorage.getItem("BE_API_KEY"));
 
+  // Diagnostics & cards
   const [diag, setDiag] = useState({ running: false, logs: [] });
   const [cards, setCards] = useState([]);
-  const [refCache, setRefCache] = useState(() => loadCacheLS());
-
-  // Progress for Drive fetch/hash
-  // { phase: 'Listing Drive…' | 'Hashing images…' | 'Done', total: number, done: number }
-  const [progress, setProgress] = useState(null);
+  const [refCache, setRefCache] = useState(() => loadCacheLS()); // url -> {name,bits}
 
   function addRef(r) { setRefs((prev) => [...prev, r]); }
   function upsertCache(key, name, bits) {
@@ -64,6 +66,7 @@ export default function App() {
     setRefCache(next); saveCacheLS(next);
   }
 
+  // Prefill API key/folder from URL or saved key
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
@@ -75,22 +78,7 @@ export default function App() {
   useEffect(() => { if (rememberKey && driveApiKey) localStorage.setItem("BE_API_KEY", driveApiKey); }, [rememberKey, driveApiKey]);
   useEffect(() => { if (!rememberKey) localStorage.removeItem("BE_API_KEY"); }, [rememberKey]);
 
-  async function handleRefFiles(files) {
-    const arr = Array.from(files || []); if (!arr.length) return; setHashing(true);
-    for (const f of arr) {
-      try {
-        if (excludeShiny && isShinyName(f.name)) continue;
-        const { img, url, originUrl } = await loadImageFromFile(f);
-        const bits = ahashFromImage(img, 16);
-        const name = tidyName(nameFromFilename(f));
-        addRef({ source: "upload", url, originUrl, name, hashBits: bits });
-        upsertCache(originUrl || url, name, bits);
-      } catch (e) { console.error("hash ref error", e); }
-    }
-    setHashing(false);
-  }
-
-  // Drive fetch with dedupe + caching + progress
+  // DRIVE ONLY: fetch + hash (with cache + progress)
   async function handleDriveFetch() {
     if (!driveFolderId || !driveApiKey) { alert("Enter Drive Folder ID and API Key."); return; }
     setHashing(true);
@@ -104,7 +92,7 @@ export default function App() {
       });
 
       if (!files.length) {
-        alert("Drive listing returned 0 images. Check folder ID/sharing or adjust shiny exclusion.");
+        alert("Drive listing returned 0 images. Check folder ID/sharing or shiny exclusion.");
         setProgress(null);
         setHashing(false);
         return;
@@ -162,7 +150,6 @@ export default function App() {
         "Common fixes:",
         "• Ensure the API key is valid and not expired.",
         "• If you set HTTP referrer restrictions, run this app from http://localhost or your allowed domain (not file://).",
-        "• Restrict the key to the Drive API only (optional but recommended).",
         "• Share the Drive folder as ‘Anyone with the link – Viewer’.",
       ].join("\n"));
     }
@@ -170,6 +157,7 @@ export default function App() {
     setTimeout(() => setProgress(null), 800);
   }
 
+  // Screenshots → cards
   async function handleScreenshotFiles(files) {
     const arr = Array.from(files || []);
     for (const f of arr) {
@@ -201,6 +189,7 @@ export default function App() {
       return next;
     });
   }
+
   function copyTSV(card) {
     const lines = [];
     for (let r = 0; r < card.rows; r++) {
@@ -304,16 +293,15 @@ export default function App() {
 
       <main className="mx-auto max-w-6xl px-4 py-6">
         <ReferencePanel
+          // references (Drive + Cache only)
           refs={refs}
           hashing={hashing}
           excludeShiny={excludeShiny} setExcludeShiny={setExcludeShiny}
-          handleRefFiles={handleRefFiles}
           driveFolderId={driveFolderId} setDriveFolderId={setDriveFolderId}
           driveApiKey={driveApiKey} setDriveApiKey={setDriveApiKey}
           includeSharedDrives={includeSharedDrives} setIncludeSharedDrives={setIncludeSharedDrives}
           rememberKey={rememberKey} setRememberKey={setRememberKey}
           handleDriveFetch={handleDriveFetch}
-          // NEW: show progress bar during fetch/hash
           progress={progress}
           exportCacheJSON={()=>{
             const blob = new Blob([JSON.stringify(refCache, null, 2)], { type: "application/json" });

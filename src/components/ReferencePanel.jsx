@@ -4,7 +4,6 @@ export default function ReferencePanel({
   refs,
   hashing,
   excludeShiny, setExcludeShiny,
-  handleRefFiles,
   driveFolderId, setDriveFolderId,
   driveApiKey, setDriveApiKey,
   includeSharedDrives, setIncludeSharedDrives,
@@ -22,34 +21,13 @@ export default function ReferencePanel({
     <section className="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-slate-200">
       <h2 className="text-lg font-semibold mb-2">1) Reference sprites</h2>
       <p className="text-sm text-slate-600 mb-3">
-        Upload or use Google Drive (public). Hashes are cached locally.
+        Sources: <b>Google Drive (public)</b> and <b>Cache JSON</b>. Uploads/URL list are disabled.
       </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* A) Upload */}
+        {/* A) Google Drive */}
         <div>
-          <h3 className="font-medium mb-1">A) Upload images</h3>
-          <div className="flex items-center gap-3 flex-wrap">
-            <label className="inline-flex items-center gap-2 text-xs text-slate-600">
-              <input type="checkbox" checked={excludeShiny} onChange={(e)=>setExcludeShiny(e.target.checked)} /> exclude shiny variants
-            </label>
-            <input type="file" multiple accept="image/*" onChange={(e) => handleRefFiles(e.target.files)} />
-            {hashing ? (
-              <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-700">Hashing…</span>
-            ) : (
-              <span className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-700">Indexed: {refs.length}</span>
-            )}
-            <button className="text-xs px-2 py-1 rounded border" onClick={exportCacheJSON}>Export cache JSON</button>
-            <label className="text-xs px-2 py-1 rounded border cursor-pointer">
-              Import cache JSON
-              <input type="file" accept="application/json" className="hidden" onChange={(e)=>importCacheJSON(e.target.files?.[0])} />
-            </label>
-          </div>
-        </div>
-
-        {/* B) Drive */}
-        <div>
-          <h3 className="font-medium mb-1">B) Google Drive (public)</h3>
+          <h3 className="font-medium mb-1">A) Google Drive (public)</h3>
           <p className="text-xs text-slate-600 mb-2">Needs a Drive API key and a folder shared as “Anyone with link: Viewer”.</p>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
             <input className="border rounded px-2 py-1 text-sm" placeholder="Drive Folder ID" value={driveFolderId} onChange={(e)=>setDriveFolderId(e.target.value)} />
@@ -67,6 +45,11 @@ export default function ReferencePanel({
             <label className="inline-flex items-center gap-2">
               <input type="checkbox" checked={rememberKey} onChange={(e)=>setRememberKey(e.target.checked)} /> remember API key (this browser)
             </label>
+            {hashing ? (
+              <span className="text-xs px-2 py-1 rounded bg-amber-100 text-amber-700">Indexing…</span>
+            ) : (
+              <span className="text-xs px-2 py-1 rounded bg-emerald-100 text-emerald-700">Indexed: {refs.length}</span>
+            )}
           </div>
 
           {progress && (
@@ -83,6 +66,19 @@ export default function ReferencePanel({
               </div>
             </div>
           )}
+        </div>
+
+        {/* B) Cache JSON */}
+        <div>
+          <h3 className="font-medium mb-1">B) Cache JSON</h3>
+          <p className="text-xs text-slate-600 mb-2">Export after a successful Drive index to skip re-hashing next time.</p>
+          <div className="flex items-center gap-2 flex-wrap">
+            <button className="text-xs px-2 py-1 rounded border" onClick={exportCacheJSON}>Export cache JSON</button>
+            <label className="text-xs px-2 py-1 rounded border cursor-pointer">
+              Import cache JSON
+              <input type="file" accept="application/json" className="hidden" onChange={(e)=>importCacheJSON(e.target.files?.[0])} />
+            </label>
+          </div>
         </div>
       </div>
 
