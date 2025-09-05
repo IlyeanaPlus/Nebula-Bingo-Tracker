@@ -10,11 +10,8 @@ export default function ReferencePanel({
   includeSharedDrives, setIncludeSharedDrives,
   rememberKey, setRememberKey,
   handleDriveFetch,
-  urlList, setUrlList,
-  handleUrlListFetch,
   exportCacheJSON,
   importCacheJSON,
-  // NEW:
   progress, // {phase,total,done} | null
 }) {
   const pct = progress && progress.total > 0
@@ -24,7 +21,9 @@ export default function ReferencePanel({
   return (
     <section className="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-slate-200">
       <h2 className="text-lg font-semibold mb-2">1) Reference sprites</h2>
-      <p className="text-sm text-slate-600 mb-3">Upload, use Google Drive (public), paste URL list, or import a cache JSON. Hashes are cached locally.</p>
+      <p className="text-sm text-slate-600 mb-3">
+        Upload or use Google Drive (public). Hashes are cached locally.
+      </p>
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* A) Upload */}
@@ -70,12 +69,11 @@ export default function ReferencePanel({
             </label>
           </div>
 
-          {/* NEW: Progress bar */}
           {progress && (
             <div className="mt-3">
               <div className="flex justify-between text-xs text-slate-600 mb-1">
                 <span>{progress.phase}</span>
-                {progress.total > 0 && <span>{Math.min(progress.done, progress.total)} / {progress.total} ({Math.round((progress.done/progress.total)*100)}%)</span>}
+                {progress.total > 0 && <span>{Math.min(progress.done, progress.total)} / {progress.total} ({pct}%)</span>}
               </div>
               <div className="h-2 bg-slate-200 rounded overflow-hidden">
                 <div
@@ -85,13 +83,6 @@ export default function ReferencePanel({
               </div>
             </div>
           )}
-        </div>
-
-        {/* C) URL list */}
-        <div className="lg:col-span-2">
-          <h3 className="font-medium mb-1">C) Remote URL list</h3>
-          <textarea className="w-full border rounded p-2 text-sm min-h-[90px]" placeholder="One image URL per line…" value={urlList} onChange={(e)=>setUrlList(e.target.value)} />
-          <div className="mt-2"><button className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-sm" onClick={handleUrlListFetch}>Fetch & Index</button></div>
         </div>
       </div>
 

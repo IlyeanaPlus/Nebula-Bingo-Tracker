@@ -14,7 +14,7 @@ import {
 import { isShinyName, tidyName, nameFromFilename } from './utils/names.js';
 import { bitsToString, stringToBits, loadCacheLS, saveCacheLS } from './utils/cache.js';
 
-// ---- small concurrency helper for smooth hashing of large folders ----
+// Limit concurrency for large Drive folders (keeps the UI responsive)
 async function mapPool(limit, items, worker) {
   const results = new Array(items.length);
   let i = 0;
@@ -46,7 +46,6 @@ export default function App() {
 
   const [driveFolderId, setDriveFolderId] = useState("1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB");
   const [driveApiKey, setDriveApiKey] = useState("");
-  const [urlList, setUrlList] = useState("");
   const [includeSharedDrives, setIncludeSharedDrives] = useState(true);
   const [excludeShiny, setExcludeShiny] = useState(true);
   const [rememberKey, setRememberKey] = useState(() => !!localStorage.getItem("BE_API_KEY"));
@@ -55,7 +54,7 @@ export default function App() {
   const [cards, setCards] = useState([]);
   const [refCache, setRefCache] = useState(() => loadCacheLS());
 
-  // NEW: progress bar state
+  // Progress for Drive fetch/hash
   // { phase: 'Listing Drive…' | 'Hashing images…' | 'Done', total: number, done: number }
   const [progress, setProgress] = useState(null);
 
@@ -91,13 +90,12 @@ export default function App() {
     setHashing(false);
   }
 
-  // UPDATED: Drive fetch with dedupe + caching + PROGRESS BAR
+  // Drive fetch with dedupe + caching + progress
   async function handleDriveFetch() {
     if (!driveFolderId || !driveApiKey) { alert("Enter Drive Folder ID and API Key."); return; }
     setHashing(true);
     setProgress({ phase: "Listing Drive…", total: 0, done: 0 });
     try {
-      // 1) List all items recursively
       const files = await listDriveImagesDeep(driveFolderId, driveApiKey, {
         includeSharedDrives,
         excludeShiny,
@@ -112,7 +110,6 @@ export default function App() {
         return;
       }
 
-      // 2) Dedupe and restore from cache
       const seen = new Set(refs.map(r => r.url));
       const toHash = [];
       let restored = 0;
@@ -139,7 +136,6 @@ export default function App() {
         }
       }
 
-      // 3) Hash the rest with progress
       setProgress({ phase: "Hashing images…", total: toHash.length, done: 0 });
 
       await mapPool(8, toHash, async ({ key, name }) => {
@@ -157,7 +153,7 @@ export default function App() {
       });
 
       setProgress({ phase: "Done", total: toHash.length, done: toHash.length });
-      console.log(`Drive indexing complete. Files: ${files.length}, restored from cache: ${restored}, newly hashed: ${toHash.length}`);
+      console.log(`Drive indexing complete. restored from cache: ${restored}, newly hashed: ${toHash.length}`);
     } catch (e) {
       console.error(e);
       alert([
@@ -171,26 +167,7 @@ export default function App() {
       ].join("\n"));
     }
     setHashing(false);
-    // hide the progress after a short moment
     setTimeout(() => setProgress(null), 800);
-  }
-
-  async function handleUrlListFetch() {
-    const lines = urlList.split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
-    if (!lines.length) return; setHashing(true);
-    for (const u of lines) {
-      if (excludeShiny && isShinyName(u)) continue;
-      const key = u; const cached = refCache[key];
-      if (cached) { addRef({ source: "url", url: key, originUrl: key, name: cached.name, hashBits: stringToBits(cached.bits) }); continue; }
-      try {
-        const { img, url, originUrl } = await loadImageFromURL(u);
-        const bits = ahashFromImage(img, 16);
-        const name = tidyName(nameFromFilename(u));
-        addRef({ source: "url", url, originUrl, name, hashBits: bits });
-        upsertCache(originUrl || url, name, bits);
-      } catch (e) { console.warn("URL failed:", u, e); }
-    }
-    setHashing(false);
   }
 
   async function handleScreenshotFiles(files) {
@@ -336,8 +313,6 @@ export default function App() {
           includeSharedDrives={includeSharedDrives} setIncludeSharedDrives={setIncludeSharedDrives}
           rememberKey={rememberKey} setRememberKey={setRememberKey}
           handleDriveFetch={handleDriveFetch}
-          urlList={urlList} setUrlList={setUrlList}
-          handleUrlListFetch={handleUrlListFetch}
           // NEW: show progress bar during fetch/hash
           progress={progress}
           exportCacheJSON={()=>{
