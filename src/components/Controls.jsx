@@ -1,15 +1,19 @@
-import React from "react";
+// components/Controls.jsx
+import React, { useState } from "react";
 
 export default function Controls({
   rows, setRows,
   cols, setCols,
   inset, setInset,
   threshold, onThresholdChange,
-  advancedProps
+  advanced, setAdvanced,
+  startX, setStartX,
+  startY, setStartY,
+  cellW, setCellW,
+  cellH, setCellH,
+  gapX, setGapX,
+  gapY, setGapY,
 }) {
-  const { startX, setStartX, startY, setStartY, cellW, setCellW, cellH, setCellH, gapX, setGapX, gapY, setGapY } = advancedProps;
-  const [showAdv, setShowAdv] = React.useState(false);
-
   return (
     <section id="controls" className="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-slate-200">
       <h2 className="text-lg font-semibold mb-2">2) Controls</h2>
@@ -32,8 +36,8 @@ export default function Controls({
           <div className="text-xs text-slate-600">{threshold}</div>
         </div>
       </div>
-      <button className="mt-3 text-sm underline" onClick={()=>setShowAdv(v=>!v)}>{showAdv?"Hide":"Show"} advanced geometry</button>
-      {showAdv && (
+      <button className="mt-3 text-sm underline" onClick={()=>setAdvanced(v=>!v)}>{advanced ? "Hide" : "Show"} advanced geometry</button>
+      {advanced && (
         <div className="mt-3 grid grid-cols-2 md:grid-cols-6 gap-3">
           <div>
             <label className="block text-xs text-slate-600">startX</label>

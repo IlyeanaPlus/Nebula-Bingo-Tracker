@@ -1,6 +1,14 @@
+// components/Cards.jsx
 import React from "react";
 
-export default function Cards({ cards, copyTSV, downloadCSV, resetCard, updateCellName, toggleCheck }) {
+export default function Cards({
+  cards,
+  copyTSV,
+  downloadCSV,
+  resetCard,
+  updateCellName,
+  toggleCheck,
+}) {
   return (
     <section className="space-y-6">
       {cards.map((card) => (

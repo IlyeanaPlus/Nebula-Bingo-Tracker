@@ -1,16 +1,8 @@
-import { getBlob } from './net.js';
-
-export async function loadImageFromFile(file) {
-  const url = URL.createObjectURL(file);
-  const img = new Image();
-  img.decoding = "async";
-  img.src = url;
-  await img.decode();
-  return { img, url, originUrl: null };
-}
+// utils/image.js
+import { getBlob } from "./net";
 
 export async function loadImageFromURL(originUrl) {
-  const blob = await getBlob(originUrl, "downloading image from Drive");
+  const blob = await getBlob(originUrl, "downloading image");
   const url = URL.createObjectURL(blob);
   const img = new Image();
   img.decoding = "async";

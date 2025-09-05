@@ -1,10 +1,11 @@
-function withTimeout(ms) {
+// utils/net.js
+export function withTimeout(ms) {
   const ctrl = new AbortController();
   const id = setTimeout(() => ctrl.abort(), ms);
   return { signal: ctrl.signal, cancel: () => clearTimeout(id) };
 }
 
-export async function getJSON(url, label, { timeoutMs = 15000 } = {}) {
+export async function getJSON(url, label, { timeoutMs = 20000 } = {}) {
   const t = withTimeout(timeoutMs);
   try {
     const res = await fetch(url, { mode: "cors", cache: "no-store", signal: t.signal });
@@ -14,13 +15,13 @@ export async function getJSON(url, label, { timeoutMs = 15000 } = {}) {
       throw new Error(`HTTP ${res.status} ${res.statusText} while ${label}.\nURL: ${url}\nBody: ${body?.slice(0, 500)}`);
     }
     return await res.json();
-  } catch (err) {
-    if (err?.name === "AbortError") throw new Error(`Timeout while ${label}`);
-    throw new Error(`Network/CORS error while ${label}: ${err.message}`);
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error(`Timeout while ${label}`);
+    throw new Error(`Network/CORS error while ${label}: ${e.message}`);
   } finally { t.cancel(); }
 }
 
-export async function getBlob(url, label, { timeoutMs = 20000 } = {}) {
+export async function getBlob(url, label, { timeoutMs = 30000 } = {}) {
   const t = withTimeout(timeoutMs);
   try {
     const res = await fetch(url, { mode: "cors", cache: "no-store", signal: t.signal });
@@ -30,8 +31,8 @@ export async function getBlob(url, label, { timeoutMs = 20000 } = {}) {
       throw new Error(`HTTP ${res.status} ${res.statusText} while ${label}.\nURL: ${url}\nBody: ${body?.slice(0, 500)}`);
     }
     return await res.blob();
-  } catch (err) {
-    if (err?.name === "AbortError") throw new Error(`Timeout while ${label}`);
-    throw new Error(`Network/CORS error while ${label}: ${err.message}`);
+  } catch (e) {
+    if (e?.name === "AbortError") throw new Error(`Timeout while ${label}`);
+    throw new Error(`Network/CORS error while ${label}: ${e.message}`);
   } finally { t.cancel(); }
 }

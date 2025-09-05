@@ -1,12 +1,13 @@
+// utils/names.js
 export function isShinyName(stem) {
   if (!stem) return false;
-  const s = String(stem).toLowerCase().replace(/[._-]+/g, ' ');
+  const s = String(stem).toLowerCase().replace(/[._-]+/g, " ");
   return /\bshiny\b/.test(s);
 }
 
 export function tidyName(raw) {
   if (!raw) return "";
-  let s = raw
+  let s = String(raw)
     .replace(/\?.*$/, "")
     .replace(/[#?].*$/, "")
     .replace(/.*\//, "")
@@ -34,7 +35,7 @@ export function tidyName(raw) {
 }
 
 export function nameFromFilename(fileOrUrl) {
-  const stem = typeof fileOrUrl === "string" ? fileOrUrl : fileOrUrl.name || "";
+  const stem = typeof fileOrUrl === "string" ? fileOrUrl : fileOrUrl?.name || "";
   let m1 = stem.match(/pokemon[_-](\d+)[_-]([a-z0-9\-]+)/i);
   if (m1) return tidyName(m1[2]);
   let m2 = stem.match(/^(\d{1,4})[_-]([a-z0-9\-]+)\./i);
