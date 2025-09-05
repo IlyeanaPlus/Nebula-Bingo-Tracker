@@ -1,57 +1,21 @@
-// src/App.jsx
 import React, { useState, useEffect } from "react";
 
-import ReferencePanel from "./components/ReferencePanel.jsx";
-import Controls from "./components/Controls.jsx";
-import Cards from "./components/Cards.jsx";
+import ReferencePanel from './components/ReferencePanel.jsx';
+import Controls from './components/Controls.jsx';
+import Diagnostics from './components/Diagnostics.jsx';
+import Cards from './components/Cards.jsx';
 
-import { listDriveImagesTop } from "./services/drive.js";
-import { loadImageFromURL, ahashFromImage, cropToCanvas, evenGridBoxes, hammingDistanceBits } from "./utils/image.js";
-import { isShinyName, tidyName, nameFromFilename } from "./utils/names.js";
-import { bitsToString, stringToBits, loadCacheLS, saveCacheLS } from "./utils/cache.js";
-
-// ---------- small helpers ----------
-function clamp(n, lo, hi) { return Math.max(lo, Math.min(hi, n)); }
-
-// Parallel worker pool (limits concurrency)
-async function pLimitMap(arr, limit, worker) {
-  const out = new Array(arr.length);
-  let i = 0, running = 0, done = 0;
-  return await new Promise((resolve) => {
-    const pump = () => {
-      while (running < limit && i < arr.length) {
-        const cur = i++;
-        running++;
-        Promise.resolve(worker(arr[cur], cur))
-          .then((v) => { out[cur] = v; })
-          .catch(() => {}) // ignore item failures
-          .finally(() => { running--; done++; pump(); });
-      }
-      if (done >= arr.length) resolve(out);
-    };
-    pump();
-  });
-}
-
-// Try hashing a Drive entry using thumbnail first (fast), fall back to full download.
-async function hashFromDriveEntry(entry) {
-  const tryUrls = [entry.thumbUrl, entry.downloadUrl].filter(Boolean);
-  let lastErr = null;
-  for (const u of tryUrls) {
-    try {
-      const { img, url, originUrl } = await loadImageFromURL(u);
-      const bits = ahashFromImage(img, 16); // drop to 12 for more speed if accuracy stays good
-      return { bits, url, originUrl: originUrl || u };
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr || new Error("No usable URL for hashing");
-}
+import { listDriveImagesTop } from './services/drive.js';
+import { getJSON, getBlob } from './utils/net.js';
+import {
+  loadImageFromFile, loadImageFromURL, ahashFromImage,
+  cropToCanvas, evenGridBoxes, hammingDistanceBits
+} from './utils/image.js';
+import { isShinyName, tidyName, nameFromFilename } from './utils/names.js';
+import { bitsToString, stringToBits, loadCacheLS, saveCacheLS } from './utils/cache.js';
 
 export default function App() {
-  // Reference index
-  const [refs, setRefs] = useState([]); // {source,url,originUrl,name,hashBits}
+  const [refs, setRefs] = useState([]);              // {source,url,originUrl,name,hashBits,thumbUrl?}
   const [hashing, setHashing] = useState(false);
   const [progress, setProgress] = useState({ stage: "idle", total: 0, done: 0, msg: "" });
 
@@ -60,8 +24,6 @@ export default function App() {
   const [rows, setRows] = useState(5);
   const [cols, setCols] = useState(5);
   const [inset, setInset] = useState(2);
-
-  // Advanced geometry
   const [startX, setStartX] = useState(0);
   const [startY, setStartY] = useState(0);
   const [cellW, setCellW] = useState(0);
@@ -69,16 +31,19 @@ export default function App() {
   const [gapX, setGapX] = useState(0);
   const [gapY, setGapY] = useState(0);
 
-  // Drive settings
+  // Drive / cache settings
   const [driveFolderId, setDriveFolderId] = useState("1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB");
   const [driveApiKey, setDriveApiKey] = useState("");
   const [includeSharedDrives, setIncludeSharedDrives] = useState(true);
   const [excludeShiny, setExcludeShiny] = useState(true);
   const [rememberKey, setRememberKey] = useState(() => !!localStorage.getItem("BE_API_KEY"));
 
-  // Cards + cache
+  // Cards and ref-cache
   const [cards, setCards] = useState([]);
-  const [refCache, setRefCache] = useState(() => loadCacheLS()); // key=url -> {name,bits}
+  const [refCache, setRefCache] = useState(() => loadCacheLS());
+
+  // NEW: queued screenshots (build on demand)
+  const [queued, setQueued] = useState([]);          // {id,title,img,url}
 
   function addRef(r) { setRefs((prev) => [...prev, r]); }
   function upsertCache(key, name, bits) {
@@ -86,123 +51,150 @@ export default function App() {
     setRefCache(next); saveCacheLS(next);
   }
 
-  // read API key/folder from URL or localStorage
+  // Load key/folder from URL or saved key
   useEffect(() => {
     try {
       const sp = new URLSearchParams(window.location.search);
       const k = sp.get("key"); const f = sp.get("folder");
-      if (k) setDriveApiKey(k);
-      if (f) setDriveFolderId(f);
-      if (!k) {
-        const saved = localStorage.getItem("BE_API_KEY");
-        if (saved) setDriveApiKey(saved);
-      }
+      if (k) setDriveApiKey(k); if (f) setDriveFolderId(f);
+      if (!k) { const saved = localStorage.getItem("BE_API_KEY"); if (saved) setDriveApiKey(saved); }
     } catch {}
   }, []);
   useEffect(() => { if (rememberKey && driveApiKey) localStorage.setItem("BE_API_KEY", driveApiKey); }, [rememberKey, driveApiKey]);
   useEffect(() => { if (!rememberKey) localStorage.removeItem("BE_API_KEY"); }, [rememberKey]);
 
-  // ============ DRIVE FETCH (fast) ============
+  // ---------- Reference ingestion ----------
+
+  // Drive (top-level only; fast)
   async function handleDriveFetch() {
-    if (!driveFolderId || !driveApiKey) {
-      alert("Enter Drive Folder ID and API Key.");
-      return;
-    }
+    if (!driveFolderId || !driveApiKey) { alert("Enter Drive Folder ID and API Key."); return; }
     setHashing(true);
-    setProgress({ stage: "listing", total: 0, done: 0, msg: "Listing Drive…" });
-
+    setProgress({ stage: "list", total: 0, done: 0, msg: "Listing Drive…" });
     try {
-      // Top-level only (no recursion) & server-side shiny filter in query
-      const files = await listDriveImagesTop(driveFolderId, driveApiKey, {
-        includeSharedDrives,
-        excludeShiny,
-      });
+      const files = await listDriveImagesTop(driveFolderId, driveApiKey, { includeSharedDrives, excludeShiny });
+      if (!files.length) alert("Drive listing returned 0 images. Check folder ID/sharing or adjust shiny exclusion.");
 
-      if (!files.length) {
-        alert("Drive listing returned 0 images. Check folder ID/sharing or shiny exclusion.");
-        setHashing(false);
-        setProgress({ stage: "idle", total: 0, done: 0, msg: "" });
-        return;
-      }
-
-      // Fast path: use cache immediately
-      const uncached = [];
+      // Hash thumbnails first (fast); fall back to full download if needed
+      setProgress({ stage: "hash", total: files.length, done: 0, msg: "Hashing thumbnails…" });
+      let done = 0;
       for (const f of files) {
+        if (excludeShiny && isShinyName(f.name)) { done++; setProgress(p => ({ ...p, done })); continue; }
+
         const key = f.downloadUrl;
         const cached = refCache[key];
         if (cached) {
-          addRef({
-            source: "drive",
-            url: key,
-            originUrl: key,
-            name: cached.name || tidyName(f.name || nameFromFilename(f.name || key)),
-            hashBits: stringToBits(cached.bits),
-          });
-        } else {
-          uncached.push(f);
+          addRef({ source: "drive", url: key, originUrl: key, name: cached.name, hashBits: stringToBits(cached.bits), thumbUrl: f.thumbUrl });
+          done++; setProgress(p => ({ ...p, done }));
+          continue;
         }
-      }
 
-      // Process remaining with concurrency + thumbnail-first hashing
-      const TOTAL = uncached.length;
-      let done = 0;
-      setProgress({ stage: "indexing", total: TOTAL, done, msg: "Hashing…" });
-
-      const CONCURRENCY = 12; // tune 8–16 based on CPU/network
-      await pLimitMap(uncached, CONCURRENCY, async (f) => {
-        if (excludeShiny && isShinyName(f.name)) { done++; setProgress(p => ({ ...p, done })); return; }
         try {
-          const { bits, url, originUrl } = await hashFromDriveEntry(f);
-          const name = tidyName(f.name || nameFromFilename(f.name || f.downloadUrl));
-          addRef({ source: "drive", url, originUrl, name, hashBits: bits });
-          upsertCache(f.downloadUrl, name, bits); // persist in local cache
+          // Try thumb first
+          if (f.thumbUrl) {
+            const { img, url } = await loadImageFromURL(f.thumbUrl);
+            const bits = ahashFromImage(img, 16);
+            const name = tidyName(f.name || nameFromFilename(f.name || key));
+            addRef({ source: "drive", url: key, originUrl: key, name, hashBits: bits, thumbUrl: f.thumbUrl });
+            upsertCache(key, name, bits);
+          } else {
+            const { img } = await loadImageFromURL(key);
+            const bits = ahashFromImage(img, 16);
+            const name = tidyName(f.name || nameFromFilename(f.name || key));
+            addRef({ source: "drive", url: key, originUrl: key, name, hashBits: bits });
+            upsertCache(key, name, bits);
+          }
         } catch (e) {
           console.warn("Drive image failed:", f.name, e);
         } finally {
-          done++;
-          setProgress((p) => ({ ...p, done: clamp(done, 0, TOTAL) }));
+          done++; setProgress(p => ({ ...p, done }));
         }
-      });
+      }
     } catch (e) {
       console.error(e);
       alert([
         "Drive fetch failed:", e.message,
-        "",
-        "Common fixes:",
+        "\nCommon fixes:",
         "• Ensure the API key is valid and not expired.",
-        "• If you set HTTP referrer restrictions, run this app from http(s)://localhost or your allowed domain (not file://).",
+        "• If you set HTTP referrer restrictions, run this app from http://localhost or your allowed domain (not file://).",
         "• Share the Drive folder as ‘Anyone with the link – Viewer’.",
       ].join("\n"));
+    } finally {
+      setHashing(false);
+      setProgress({ stage: "idle", total: 0, done: 0, msg: "" });
     }
-
-    setHashing(false);
-    setProgress({ stage: "idle", total: 0, done: 0, msg: "" });
   }
 
-  // ============ SCREENSHOT → CARDS ============
-  async function handleScreenshotFiles(files) {
+  // Cache import/export
+  function exportCacheJSON() {
+    const blob = new Blob([JSON.stringify(refCache, null, 2)], { type: "application/json" });
+    const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "sprite_ref_cache.json"; a.click();
+  }
+  function importCacheJSON(file) {
+    if (!file) return;
+    file.text().then((text)=>{
+      try {
+        const parsed = JSON.parse(text);
+        setRefCache(parsed); saveCacheLS(parsed);
+        for (const [key, val] of Object.entries(parsed)) {
+          if (!val || !val.bits) continue;
+          addRef({ source: "cache", url: key, originUrl: key, name: val.name || nameFromFilename(key), hashBits: stringToBits(val.bits) });
+        }
+      } catch { alert("Invalid cache JSON"); }
+    });
+  }
+
+  // ---------- NEW: Screenshot queue + Build buttons ----------
+
+  async function queueScreenshotFiles(files) {
     const arr = Array.from(files || []);
     for (const f of arr) {
-      const { img, url } = await (await import("./utils/image.js")).loadImageFromFile(f); // lazy load helper
-      const imgW = img.naturalWidth, imgH = img.naturalHeight;
-      const boxes = evenGridBoxes(imgW, imgH, rows, cols, inset, startX, startY, cellW || undefined, cellH || undefined, gapX, gapY);
-      const grid = [];
-      for (const b of boxes) {
-        const crop = cropToCanvas(img, b);
-        const bits = ahashFromImage(crop, 16);
-        let best = { name: "", dist: Infinity, refUrl: null };
-        for (const rRef of refs) {
-          const d = hammingDistanceBits(bits, rRef.hashBits);
-          if (d < best.dist) best = { name: rRef.name, dist: d, refUrl: rRef.url };
-        }
-        const ok = best.dist <= threshold;
-        grid.push({ name: ok ? best.name : "", dist: best.dist, refUrl: ok ? best.refUrl : null, checked: false });
-      }
+      const { img, url } = await loadImageFromFile(f);
       const title = f.name.replace(/\.[^.]+$/, "");
-      setCards((prev) => [...prev, { id: crypto.randomUUID(), title, img, url, rows, cols, grid }]);
+      setQueued(prev => [...prev, { id: crypto.randomUUID(), title, img, url }]);
     }
   }
 
+  function removeQueued(id) {
+    setQueued(prev => prev.filter(q => q.id !== id));
+  }
+
+  function buildCardFromQueued(q) {
+    if (!refs.length) {
+      alert("No reference sprites are indexed yet. Fetch & Index (Drive) or import cache first.");
+      return;
+    }
+    const img = q.img;
+    const imgW = img.naturalWidth, imgH = img.naturalHeight;
+    const boxes = evenGridBoxes(imgW, imgH, rows, cols, inset, startX, startY, cellW || undefined, cellH || undefined, gapX, gapY);
+    const grid = [];
+    for (const b of boxes) {
+      const crop = cropToCanvas(img, b);
+      const bits = ahashFromImage(crop, 16);
+      let best = { name: "", dist: Infinity, refUrl: null };
+      for (const rRef of refs) {
+        const d = hammingDistanceBits(bits, rRef.hashBits);
+        if (d < best.dist) best = { name: rRef.name, dist: d, refUrl: rRef.url };
+      }
+      const ok = best.dist <= threshold;
+      grid.push({ name: ok ? best.name : "", dist: best.dist, refUrl: ok ? best.refUrl : null, checked: false });
+    }
+    setCards(prev => [...prev, { id: crypto.randomUUID(), title: q.title, img, url: q.url, rows, cols, grid }]);
+  }
+
+  function buildQueued(id) {
+    const q = queued.find(x => x.id === id);
+    if (!q) return;
+    buildCardFromQueued(q);
+    removeQueued(id);
+  }
+
+  function buildAllQueued() {
+    const list = [...queued];
+    for (const q of list) buildCardFromQueued(q);
+    setQueued([]);
+  }
+
+  // ---------- Threshold live recompute ----------
   function recomputeThreshold(cardIdx, newThresh) {
     setThreshold(newThresh);
     setCards((prev) => {
@@ -210,12 +202,13 @@ export default function App() {
       card.grid = card.grid.map((cell) => ({
         ...cell,
         name: cell.dist <= newThresh ? (cell.name || "") : "",
-        refUrl: cell.dist <= newThresh ? cell.refUrl : null,
+        refUrl: cell.dist <= newThresh ? cell.refUrl : null
       }));
       return next;
     });
   }
 
+  // Copy/download/reset/update/toggle — unchanged
   function copyTSV(card) {
     const lines = [];
     for (let r = 0; r < card.rows; r++) {
@@ -254,6 +247,7 @@ export default function App() {
     setCards((prev) => prev.map((c) => { if (c.id !== cardId) return c; const grid = [...c.grid]; grid[idx] = { ...grid[idx], checked: !grid[idx].checked }; return { ...c, grid }; }));
   }
 
+  // ---------- UI ----------
   return (
     <div className="min-h-screen w-full bg-slate-50 text-slate-900">
       <header className="sticky top-0 z-10 backdrop-blur bg-white/70 border-b border-slate-200">
@@ -267,53 +261,73 @@ export default function App() {
 
       <main className="mx-auto max-w-6xl px-4 py-6">
         <ReferencePanel
-          // reference state
           refs={refs}
           hashing={hashing}
           progress={progress}
           excludeShiny={excludeShiny} setExcludeShiny={setExcludeShiny}
-          // drive controls
           driveFolderId={driveFolderId} setDriveFolderId={setDriveFolderId}
           driveApiKey={driveApiKey} setDriveApiKey={setDriveApiKey}
           includeSharedDrives={includeSharedDrives} setIncludeSharedDrives={setIncludeSharedDrives}
           rememberKey={rememberKey} setRememberKey={setRememberKey}
-          // actions
           handleDriveFetch={handleDriveFetch}
-          // cache import/export
-          exportCacheJSON={()=>{
-            const blob = new Blob([JSON.stringify(refCache, null, 2)], { type: "application/json" });
-            const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = "sprite_ref_cache.json"; a.click();
-          }}
-          importCacheJSON={(file)=>{
-            if (!file) return;
-            file.text().then((text)=>{
-              try {
-                const parsed = JSON.parse(text);
-                setRefCache(parsed); saveCacheLS(parsed);
-                for (const [key, val] of Object.entries(parsed)) {
-                  if (!val || !val.bits) continue;
-                  addRef({ source: "cache", url: key, originUrl: key, name: val.name || nameFromFilename(key), hashBits: stringToBits(val.bits) });
-                }
-              } catch { alert("Invalid cache JSON"); }
-            });
-          }}
+          exportCacheJSON={exportCacheJSON}
+          importCacheJSON={importCacheJSON}
         />
 
         <Controls
           rows={rows} setRows={setRows}
           cols={cols} setCols={setCols}
           inset={inset} setInset={setInset}
-          threshold={threshold} onThresholdChange={(v)=>{ const nv = clamp(v, 4, 24); setThreshold(nv); cards.forEach((_,i)=>recomputeThreshold(i, nv)); }}
+          threshold={threshold} onThresholdChange={(v)=>{ setThreshold(v); cards.forEach((_,i)=>recomputeThreshold(i, v)); }}
+          // expose advanced geometry via Controls if your component supports it;
+          // otherwise keep using your own inputs
         />
 
+        {/* Screenshots – queue first, then build */}
         <section className="mb-6 p-4 bg-white rounded-2xl shadow-sm border border-slate-200">
           <h2 className="text-lg font-semibold mb-2">3) Screenshots</h2>
-          <p className="text-sm text-slate-600 mb-3">Add one or more screenshots. Each becomes a card below.</p>
-          <input type="file" multiple accept="image/*" onChange={(e)=>{
-            const files = e.target.files;
-            const arr = Array.from(files || []);
-            (async () => { await handleScreenshotFiles(arr); })();
-          }} />
+          <p className="text-sm text-slate-600 mb-3">
+            Add screenshots to the queue. Adjust geometry / threshold, then click <b>Build card</b>.
+          </p>
+
+          <input
+            type="file"
+            multiple
+            accept="image/*"
+            onChange={(e)=>{ const files = e.target.files; if (files?.length) queueScreenshotFiles(files); e.target.value = ""; }}
+          />
+
+          {queued.length > 0 && (
+            <div className="mt-4">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="text-sm text-slate-600">Queued: {queued.length}</div>
+                <button className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-sm" onClick={buildAllQueued}>
+                  Build all queued
+                </button>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {queued.map(q => (
+                  <div key={q.id} className="p-2 border rounded-xl bg-white">
+                    <div className="flex items-center gap-2">
+                      <img src={q.url} alt="" className="w-16 h-16 object-contain border rounded"/>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-medium truncate" title={q.title}>{q.title}</div>
+                        <div className="text-xs text-slate-500">({rows}×{cols}, inset {inset}px)</div>
+                      </div>
+                    </div>
+                    <div className="mt-2 flex gap-2">
+                      <button className="px-3 py-1 rounded bg-emerald-100 hover:bg-emerald-200 text-sm" onClick={()=>buildQueued(q.id)}>
+                        Build card
+                      </button>
+                      <button className="px-3 py-1 rounded bg-rose-100 hover:bg-rose-200 text-sm" onClick={()=>removeQueued(q.id)}>
+                        Remove
+                      </button>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
         </section>
 
         <Cards
