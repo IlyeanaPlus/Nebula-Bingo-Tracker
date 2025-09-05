@@ -5,7 +5,7 @@ import Controls from './components/Controls.jsx';
 import Diagnostics from './components/Diagnostics.jsx';
 import Cards from './components/Cards.jsx';
 
-import { listDriveImages } from './services/drive.js';
+import { listDriveImagesDeep } from './services/drive.js';
 import { getJSON, getBlob } from './utils/net.js';
 import { loadImageFromFile, loadImageFromURL, ahashFromImage, cropToCanvas, evenGridBoxes, hammingDistanceBits } from './utils/image.js';
 import { isShinyName, tidyName, nameFromFilename } from './utils/names.js';
@@ -73,7 +73,12 @@ export default function App() {
     if (!driveFolderId || !driveApiKey) { alert("Enter Drive Folder ID and API Key."); return; }
     setHashing(true);
     try {
-      const files = await listDriveImages(driveFolderId, driveApiKey, { includeSharedDrives, excludeShiny });
+      const files = await listDriveImagesDeep(driveFolderId, driveApiKey, 
+        { includeSharedDrives, 
+          excludeShiny,
+          recurse: true,   // set to false if you only want the top-level
+          max: Infinity,   // or e.g. 5000 as a safety cap
+        });
       if (!files.length) alert("Drive listing returned 0 images. Check folder ID/sharing or adjust shiny exclusion.");
       for (const f of files) {
         if (excludeShiny && isShinyName(f.name)) continue;
