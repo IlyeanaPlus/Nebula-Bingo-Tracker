@@ -11,7 +11,13 @@ export default function ReferencePanel({
   handleDriveFetch,
   exportCacheJSON,
   importCacheJSON,
-  progress, // {phase,total,done} | null
+  progress, // { phase, total, done } | null
+
+  // Drive-backed cache
+  oauthClientId, setOauthClientId,
+  rememberCID, setRememberCID,
+  loadCacheFromDrive,
+  saveCacheToDrive,
 }) {
   const pct = progress && progress.total > 0
     ? Math.min(100, Math.round((progress.done / progress.total) * 100))
@@ -71,13 +77,28 @@ export default function ReferencePanel({
         {/* B) Cache JSON */}
         <div>
           <h3 className="font-medium mb-1">B) Cache JSON</h3>
-          <p className="text-xs text-slate-600 mb-2">Export after a successful Drive index to skip re-hashing next time.</p>
-          <div className="flex items-center gap-2 flex-wrap">
+          <p className="text-xs text-slate-600 mb-2">Export after a successful Drive index to skip re-hashing next time, or store cache.json in Drive.</p>
+          <div className="flex items-center gap-2 flex-wrap mb-2">
             <button className="text-xs px-2 py-1 rounded border" onClick={exportCacheJSON}>Export cache JSON</button>
             <label className="text-xs px-2 py-1 rounded border cursor-pointer">
               Import cache JSON
               <input type="file" accept="application/json" className="hidden" onChange={(e)=>importCacheJSON(e.target.files?.[0])} />
             </label>
+          </div>
+
+          <div className="mt-2 p-2 border rounded-lg">
+            <div className="text-xs font-medium mb-1">Drive-backed cache.json</div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+              <input className="border rounded px-2 py-1 text-sm" placeholder="OAuth Client ID (for writing)" value={oauthClientId} onChange={(e)=>setOauthClientId(e.target.value)} />
+              <button className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200 text-sm" onClick={loadCacheFromDrive}>Load from Drive</button>
+              <button className="px-3 py-1 rounded bg-indigo-100 hover:bg-indigo-200 text-sm" onClick={saveCacheToDrive}>Save/Update to Drive</button>
+            </div>
+            <label className="inline-flex items-center gap-2 text-xs text-slate-600 mt-2">
+              <input type="checkbox" checked={rememberCID} onChange={(e)=>setRememberCID(e.target.checked)} /> remember OAuth Client ID (this browser)
+            </label>
+            <div className="text-[11px] text-slate-500 mt-2">
+              Reading only needs API key + public sharing. Writing requires OAuth (Google will prompt once).
+            </div>
           </div>
         </div>
       </div>

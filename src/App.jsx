@@ -5,16 +5,14 @@ import Controls from './components/Controls.jsx';
 import Diagnostics from './components/Diagnostics.jsx';
 import Cards from './components/Cards.jsx';
 
-import { listDriveImagesDeep } from './services/drive.js';
+import { listDriveImagesDeep, findFileInFolderPublic, downloadTextPublic } from './services/drive.js';
+import { ensureOAuthToken, uploadOrUpdateJSON } from './services/drive_oauth.js';
 import { getJSON, getBlob } from './utils/net.js';
-import {
-  loadImageFromFile, loadImageFromURL, ahashFromImage,
-  cropToCanvas, evenGridBoxes, hammingDistanceBits
-} from './utils/image.js';
+import { loadImageFromFile, loadImageFromURL, ahashFromImage, cropToCanvas, evenGridBoxes, hammingDistanceBits } from './utils/image.js';
 import { isShinyName, tidyName, nameFromFilename } from './utils/names.js';
 import { bitsToString, stringToBits, loadCacheLS, saveCacheLS } from './utils/cache.js';
 
-// Concurrency limiter for hashing many drive images
+// Simple concurrency pool for hashing many images quickly without freezing UI
 async function mapPool(limit, items, worker) {
   const results = new Array(items.length);
   let i = 0;
@@ -31,8 +29,8 @@ async function mapPool(limit, items, worker) {
 
 export default function App() {
   const [refs, setRefs] = useState([]);                    // {source,url,originUrl,name,hashBits}
-  const [hashing, setHashing] = useState(false);           // drive hashing state
-  const [progress, setProgress] = useState(null);          // { phase, total, done }
+  const [hashing, setHashing] = useState(false);
+  const [progress, setProgress] = useState(null);          // {phase,total,done}
 
   // Matching/grid controls
   const [threshold, setThreshold] = useState(12);
@@ -48,7 +46,7 @@ export default function App() {
   const [gapX, setGapX] = useState(0);
   const [gapY, setGapY] = useState(0);
 
-  // Drive + options
+  // Drive settings
   const [driveFolderId, setDriveFolderId] = useState("1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB");
   const [driveApiKey, setDriveApiKey] = useState("");
   const [includeSharedDrives, setIncludeSharedDrives] = useState(true);
@@ -59,6 +57,11 @@ export default function App() {
   const [diag, setDiag] = useState({ running: false, logs: [] });
   const [cards, setCards] = useState([]);
   const [refCache, setRefCache] = useState(() => loadCacheLS()); // url -> {name,bits}
+
+  // Drive-backed cache (write requires OAuth)
+  const [oauthClientId, setOauthClientId] = useState(localStorage.getItem("BE_OAUTH_CID") || "");
+  const [rememberCID, setRememberCID] = useState(!!localStorage.getItem("BE_OAUTH_CID"));
+  const CACHE_FILENAME = "sprite_ref_cache.json";
 
   function addRef(r) { setRefs((prev) => [...prev, r]); }
   function upsertCache(key, name, bits) {
@@ -78,7 +81,12 @@ export default function App() {
   useEffect(() => { if (rememberKey && driveApiKey) localStorage.setItem("BE_API_KEY", driveApiKey); }, [rememberKey, driveApiKey]);
   useEffect(() => { if (!rememberKey) localStorage.removeItem("BE_API_KEY"); }, [rememberKey]);
 
-  // DRIVE ONLY: fetch + hash (with cache + progress)
+  useEffect(() => {
+    if (rememberCID && oauthClientId) localStorage.setItem("BE_OAUTH_CID", oauthClientId);
+    if (!rememberCID) localStorage.removeItem("BE_OAUTH_CID");
+  }, [oauthClientId, rememberCID]);
+
+  // DRIVE: fetch + hash (with cache reuse + progress)
   async function handleDriveFetch() {
     if (!driveFolderId || !driveApiKey) { alert("Enter Drive Folder ID and API Key."); return; }
     setHashing(true);
@@ -228,6 +236,7 @@ export default function App() {
     setCards((prev) => prev.map((c) => { if (c.id !== cardId) return c; const grid = [...c.grid]; grid[idx] = { ...grid[idx], checked: !grid[idx].checked }; return { ...c, grid }; }));
   }
 
+  // Diagnostics
   async function runDiagnostics() {
     setDiag({ running: true, logs: [] });
     try {
@@ -280,6 +289,39 @@ export default function App() {
     alert(["Helper tests:", ...lines].join("\n"));
   }
 
+  // Drive-backed cache.json
+  async function loadCacheFromDrive() {
+    if (!driveFolderId || !driveApiKey) { alert("Set Drive Folder ID and API Key first."); return; }
+    try {
+      const f = await findFileInFolderPublic(driveFolderId, driveApiKey, CACHE_FILENAME, includeSharedDrives);
+      if (!f) { alert(`No ${CACHE_FILENAME} found in that folder.`); return; }
+      const txt = await downloadTextPublic(f.id, driveApiKey);
+      const parsed = JSON.parse(txt);
+      setRefCache(parsed); saveCacheLS(parsed);
+      let added = 0;
+      for (const [key, val] of Object.entries(parsed)) {
+        if (!val?.bits) continue;
+        addRef({ source: "cache", url: key, originUrl: key, name: val.name || nameFromFilename(key), hashBits: stringToBits(val.bits) });
+        added++;
+      }
+      alert(`Loaded ${added} references from ${CACHE_FILENAME}.`);
+    } catch (e) {
+      alert(`Failed to load cache from Drive: ${e.message}`);
+    }
+  }
+  async function saveCacheToDrive() {
+    if (!driveFolderId) { alert("Set Drive Folder ID."); return; }
+    if (!oauthClientId) { alert("Enter your OAuth Client ID."); return; }
+    try {
+      await ensureOAuthToken(oauthClientId, "https://www.googleapis.com/auth/drive.file");
+      const jsonText = JSON.stringify(refCache, null, 2);
+      const res = await uploadOrUpdateJSON(driveFolderId, CACHE_FILENAME, jsonText);
+      alert(`Saved ${CACHE_FILENAME} to Drive (fileId: ${res.id}).`);
+    } catch (e) {
+      alert(`Save to Drive failed: ${e.message}`);
+    }
+  }
+
   return (
     <div className="min-h-screen w-full bg-slate-50 text-slate-900">
       <header className="sticky top-0 z-10 backdrop-blur bg-white/70 border-b border-slate-200">
@@ -293,7 +335,6 @@ export default function App() {
 
       <main className="mx-auto max-w-6xl px-4 py-6">
         <ReferencePanel
-          // references (Drive + Cache only)
           refs={refs}
           hashing={hashing}
           excludeShiny={excludeShiny} setExcludeShiny={setExcludeShiny}
@@ -320,6 +361,11 @@ export default function App() {
               } catch { alert("Invalid cache JSON"); }
             });
           }}
+
+          oauthClientId={oauthClientId} setOauthClientId={setOauthClientId}
+          rememberCID={rememberCID} setRememberCID={setRememberCID}
+          loadCacheFromDrive={loadCacheFromDrive}
+          saveCacheToDrive={saveCacheToDrive}
         />
 
         <Controls
