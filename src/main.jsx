@@ -1,15 +1,9 @@
-// /src/main.jsx
-import React from 'react';
-import ReactDOM from 'react-dom/client';
-import App from './App.jsx';
-// If you use global CSS, import it here: import './index.css';
+import React from "react";
+import {createRoot} from "react-dom/client";
+import App from "./App.jsx";
 
-if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => {
-    const base = (import.meta && import.meta.env && import.meta.env.BASE_URL) || '/';
-    const swUrl = `${base}sw.js`;
-    navigator.serviceWorker.register(swUrl).catch(console.warn);
-  });
+createRoot(document.getElementById("root")).render(<App/>);
+
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>navigator.serviceWorker.register("/sw.js").catch(()=>{}));
 }
-
-ReactDOM.createRoot(document.getElementById('root')).render(<App />);
