@@ -1,6 +1,8 @@
 // public/sw.js
+// Base-aware SW for GitHub Pages project sites
+const BASE = new URL(self.registration.scope).pathname; // e.g. "/Nebula-Bingo-Tracker/"
 const CACHE = "nebula-bingo-v3";
-const ASSETS = ["/", "/index.html"]; // removed /drive_cache.json
+const ASSETS = [BASE, BASE + "index.html"]; // do NOT precache drive_cache.json
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
@@ -19,22 +21,23 @@ self.addEventListener("activate", (e) => {
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
 
-  // Network-first for the sprite manifest so updates are immediate
-  if (url.pathname === "/drive_cache.json") {
+  // Only handle same-origin files under our BASE
+  const sameOrigin = url.origin === self.location.origin && url.pathname.startsWith(BASE);
+
+  // Network-first JUST for the manifest
+  if (sameOrigin && url.pathname === BASE + "drive_cache.json") {
     e.respondWith(
-      fetch(e.request)
-        .then((r) => {
-          const copy = r.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy));
-          return r;
-        })
-        .catch(() => caches.match(e.request))
+      fetch(e.request).then((r) => {
+        const copy = r.clone();
+        caches.open(CACHE).then((c) => c.put(e.request, copy));
+        return r;
+      }).catch(() => caches.match(e.request))
     );
     return;
   }
 
-  // Cache-first for everything else (same-origin GET)
-  if (e.request.method === "GET" && url.origin === self.location.origin) {
+  // Cache-first for other same-origin GETs under BASE
+  if (sameOrigin && e.request.method === "GET") {
     e.respondWith(
       caches.match(e.request).then((cached) =>
         cached ||
@@ -48,7 +51,6 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Pass-through for cross-origin or non-GET
+  // Pass-through for everything else
   e.respondWith(fetch(e.request));
 });
-

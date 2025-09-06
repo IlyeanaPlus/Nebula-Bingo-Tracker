@@ -1,35 +1,25 @@
 // src/App.jsx
-import React,{useEffect,useMemo,useRef,useState} from "react";
+import React,{useEffect,useRef,useState} from "react";
 import Header from "./components/Header.jsx";
 import BingoCard from "./components/BingoCard.jsx";
-import {
-  loadImageFromFile, detectGridCrops,
-  computeAHash, computeDHashX, computeDHashY
-} from "./utils/image.js";
+import {loadImageFromFile,detectGridCrops,computeAHash,computeDHashX,computeDHashY} from "./utils/image.js";
 
 const ABS_THRESH=8, MIN_GAP=4, PAD_FRAC=0.07;
 
 export default function App(){
   const [cards,setCards]=useState(()=>JSON.parse(localStorage.getItem("cards_v2")||"[]"));
-  const [activeId,setActiveId]=useState(cards[0]?.id||null);
   const [cache,setCache]=useState([]);
   const [loadProg,setLoadProg]=useState({total:0,done:0,loading:false});
-  const fileRef=useRef();
+  const fillInputRef=useRef();
 
   // persist only saved cards
-  useEffect(()=>{
-    const saved=cards.filter(c=>c.saved!==false);
-    localStorage.setItem("cards_v2",JSON.stringify(saved));
-  },[cards]);
-
-  const activeCard=useMemo(()=>cards.find(c=>c.id===activeId)||null,[cards,activeId]);
+  useEffect(()=>{ const saved=cards.filter(c=>c.saved!==false); localStorage.setItem("cards_v2",JSON.stringify(saved)) },[cards]);
 
   async function forceLoadSprites(){
     setLoadProg({total:0,done:0,loading:true});
     try{
       const r=await fetch("/drive_cache.json",{cache:"reload"});
       const j=await r.json();
-      // simulate progress while validating/normalizing
       const norm=[]; let i=0;
       for(const it of j){
         norm.push({
@@ -43,20 +33,17 @@ export default function App(){
       }
       setCache(norm);
       setLoadProg({total:norm.length,done:norm.length,loading:false});
-    }catch{
-      setCache([]); setLoadProg({total:0,done:0,loading:false});
-    }
+    }catch{ setCache([]); setLoadProg({total:0,done:0,loading:false}); }
   }
 
   function newBlankCard(){
     const id=`card_${Date.now()}`;
     const tiles=Array.from({length:25},()=>({match:null,ah:0,dx:0,dy:0}));
     const toggles=Array(25).fill(false);
-    const card={id,title:`Card ${cards.length+1}`,tiles,toggles,saved:false};
-    setCards(cs=>[card,...cs]); setActiveId(id);
+    setCards(cs=>[...cs,{id,title:`Card ${cs.length+1}`,tiles,toggles,saved:false}]);
   }
 
-  async function fillFromScreenshot(cardId, file){
+  async function fillFromScreenshot(cardId,file){
     if(!file) return;
     const img=await loadImageFromFile(file);
     const crops=detectGridCrops(img,{padFrac:PAD_FRAC,minGap:MIN_GAP});
@@ -69,23 +56,12 @@ export default function App(){
     setCards(cs=>cs.map(c=>c.id===cardId?{...c,tiles}:c));
   }
 
-  function saveCard(cardId){
-    setCards(cs=>cs.map(c=>c.id===cardId?{...c,saved:true}:c));
-  }
-  function removeCard(cardId){
-    setCards(cs=>cs.filter(c=>c.id!==cardId));
-    if(activeId===cardId){
-      const next=cards.find(c=>c.id!==cardId)?.id||null;
-      setActiveId(next);
-    }
-  }
-  function renameCard(id,newTitle){
-    setCards(cs=>cs.map(c=>c.id===id?{...c,title:newTitle}:c));
-  }
-  function toggleCell(idx){
-    const card=activeCard; if(!card) return;
+  function saveCard(cardId){ setCards(cs=>cs.map(c=>c.id===cardId?{...c,saved:true}:c)) }
+  function removeCard(cardId){ setCards(cs=>cs.filter(c=>c.id!==cardId)) }
+  function renameCard(cardId,title){ setCards(cs=>cs.map(c=>c.id===cardId?{...c,title}:c)) }
+  function toggleCell(cardId,idx){
     setCards(cs=>cs.map(c=>{
-      if(c.id!==card.id) return c;
+      if(c.id!==cardId) return c;
       const t=[...c.toggles]; t[idx]=!t[idx];
       return {...c,toggles:t};
     }));
@@ -111,23 +87,21 @@ export default function App(){
         onGetSprites={forceLoadSprites}
         onNewCard={newBlankCard}
       />
-      <div className="p-4 grid md:grid-cols-[1fr]">
-        {activeCard?(
+      <div className="p-4 grid lg:grid-cols-2 xl:grid-cols-3 gap-6">
+        {cards.map(card=>(
           <BingoCard
-            key={activeCard.id}
-            card={activeCard}
-            onRename={renameCard}
-            onFill={(file)=>fillFromScreenshot(activeCard.id,file)}
-            onSave={()=>saveCard(activeCard.id)}
-            onRemove={()=>removeCard(activeCard.id)}
-            onToggle={toggleCell}
+            key={card.id}
+            card={card}
+            onTitle={(t)=>renameCard(card.id,t)}
+            onFill={(file)=>fillFromScreenshot(card.id,file)}
+            onSave={()=>saveCard(card.id)}
+            onRemove={()=>removeCard(card.id)}
+            onToggle={(i)=>toggleCell(card.id,i)}
           />
-        ):(
-          <div className="opacity-70">Create a blank card to begin.</div>
-        )}
+        ))}
+        {!cards.length && <div className="opacity-70">Create a blank card to begin.</div>}
       </div>
-      {/* hidden file input for Fill (handled in BingoCard) but kept here for safety */}
-      <input ref={fileRef} type="file" accept="image/*" className="hidden"/>
+      <input ref={fillInputRef} type="file" accept="image/*" className="hidden"/>
     </div>
   );
 }
