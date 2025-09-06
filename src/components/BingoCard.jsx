@@ -3,7 +3,6 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { fileToImage, crop25 } from '../utils/image';
 import { prepareRefIndex, findBestMatch } from '../utils/matchers';
 
-// Simple SVG “no match” badge
 const NO_MATCH_SVG = encodeURI(
   `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
      <rect width="100%" height="100%" fill="#121212"/>
@@ -20,7 +19,6 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
   const [refIndex, setRefIndex] = useState([]);
   const inputRef = useRef(null);
 
-  // ensure we have a 25-cell structure
   const cells = useMemo(
     () =>
       card.cells ||
@@ -48,9 +46,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
         if (alive) setRefIndex([]);
       }
     })();
-    return () => {
-      alive = false;
-    };
+    return () => { alive = false; };
   }, [manifest]);
 
   function toggleComplete(idx) {
@@ -91,7 +87,6 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
     setIsFilling(true);
     setFillStep(0);
     try {
-      // load and crop the screenshot
       const img = await fileToImage(file);
       const crops = await crop25(img);
 
@@ -102,11 +97,10 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
 
         let out = null;
         if (refIndex.length) {
-          // shortlist with histograms, then SSIM + MSE with small offset search
           out = await findBestMatch(cropURL, refIndex, {
-            shortlistK: 24, // tune: 16–48
-            ssimMin: 0.88,  // tune: 0.86–0.92
-            mseMax: 600,    // tune: 400–800
+            shortlistK: 24, // 16–48
+            ssimMin: 0.88,  // 0.86–0.92
+            mseMax: 600,    // 400–800
           });
         }
 
@@ -117,12 +111,10 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
             complete: nextCells[i]?.complete || false,
           };
         } else {
-          // analyzer ran but nothing was confident enough
           nextCells[i] = { name: '— no match —', sprite: NO_MATCH_DATA_URL, complete: false };
         }
 
         setFillStep(i + 1);
-        // yield so the UI paints during long runs
         if ((i + 1) % 5 === 0) await new Promise((r) => setTimeout(r, 0));
       }
 
@@ -144,8 +136,11 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
           placeholder="Card title"
           aria-label="Card title"
         />
-        <div className="actions">
-          <button onClick={handlePick}>Fill</button>
+        <div className="actions" title={refIndex.length ? '' : 'Sprites not loaded yet'}>
+          <span style={{ opacity: 0.7, fontSize: 12, marginRight: 8 }}>
+            sprites: {refIndex.length}
+          </span>
+          <button onClick={handlePick} disabled={!refIndex.length}>Fill</button>
           <button onClick={handleSave}>Save</button>
           <button onClick={onRemove}>Remove</button>
         </div>

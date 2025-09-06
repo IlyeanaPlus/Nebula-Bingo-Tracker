@@ -1,14 +1,14 @@
 // src/utils/matchers.js
 // Histogram shortlist + SSIM/MSE final on a foreground mask.
-// Works with tiny 32x32 color sprites. Background composited to #8b8b8b.
+// Designed for 32x32 color sprites; composites transparency to board gray (#8b8b8b).
 
-const BG = { r: 139, g: 139, b: 139 };   // board gray #8b8b8b
-const SIZE = 32;                          // reference/crop working size
-const BINS = 8;                           // per-channel histogram bins
-const OFF = [-1, 0, 1];                   // small shift search
-const SHORTLIST_K = 24;                   // keep top-K from histogram stage
+const BG = { r: 139, g: 139, b: 139 }; // #8b8b8b
+const SIZE = 32;
+const BINS = 8;
+const OFF = [-1, 0, 1];
+const SHORTLIST_K = 24;
 
-// ---- Canvas helpers ----
+// ---------- Canvas helpers ----------
 function loadImage(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -29,7 +29,7 @@ function toCanvas(img, w = SIZE, h = SIZE) {
   return c;
 }
 
-// Composite transparent pixels over BG gray (matches board)
+// Composite transparent pixels over BG gray
 function compositeToBG(cnv) {
   const ctx = cnv.getContext('2d', { willReadFrequently: true });
   const im = ctx.getImageData(0, 0, cnv.width, cnv.height);
@@ -42,7 +42,7 @@ function compositeToBG(cnv) {
     d[i + 3] = 255;
   }
   ctx.putImageData(im, 0, 0);
-  return im; // return ImageData
+  return im; // ImageData
 }
 
 function imageDataFromDataURL(dataURL, w = SIZE, h = SIZE) {
@@ -58,7 +58,7 @@ function imageDataFromDataURL(dataURL, w = SIZE, h = SIZE) {
   });
 }
 
-// ---- Foreground mask (estimate background from a 1px border ring) ----
+// ---------- Foreground mask ----------
 function estimateBGFromBorder(im) {
   const { data, width: w, height: h } = im;
   const valsR = [], valsG = [], valsB = [];
@@ -84,7 +84,7 @@ function makeMask(im, thr = 18) {
   return mask;
 }
 
-// ---- Histograms (per-channel) + χ² distance ----
+// ---------- Histograms + χ² ----------
 function histRGB(im, bins = BINS) {
   const { data } = im;
   const hist = new Float32Array(bins * 3);
@@ -110,7 +110,7 @@ function chiSq(h1, h2, eps = 1e-9) {
   return v;
 }
 
-// ---- Luma conversion ----
+// ---------- Luma + SSIM ----------
 function lumaArray(im) {
   const { data } = im;
   const out = new Float32Array(im.width * im.height);
@@ -120,9 +120,8 @@ function lumaArray(im) {
   return out;
 }
 
-// ---- SSIM (single-scale, luma, small window) ----
 function ssimLuma(a, b, w, h, mask = null) {
-  // window 8x8 with circular padding; constants from SSIM paper
+  // Single-scale SSIM, 8x8 windows, wrap-around (cheap at 32x32)
   const W = 8; const C1 = (0.01 * 255) ** 2; const C2 = (0.03 * 255) ** 2;
   let scoreSum = 0, count = 0;
 
@@ -149,7 +148,6 @@ function ssimLuma(a, b, w, h, mask = null) {
       const n = Math.min(A.n, B.n);
       if (!n) continue;
 
-      // covariance
       let cov = 0, nn = 0;
       for (let j = 0; j < W; j++) {
         for (let i = 0; i < W; i++) {
@@ -169,7 +167,7 @@ function ssimLuma(a, b, w, h, mask = null) {
   return count ? scoreSum / count : 0;
 }
 
-// ---- MSE over RGB with mask and small offset search ----
+// ---------- MSE with small offset search ----------
 function mseRGB(imA, imB, mask = null, dx = 0, dy = 0) {
   const { data: A, width: w, height: h } = imA;
   const { data: B } = imB;
@@ -186,11 +184,10 @@ function mseRGB(imA, imB, mask = null, dx = 0, dy = 0) {
       n++;
     }
   }
-  return n ? sum / (3 * n) : Infinity; // per-channel average
+  return n ? sum / (3 * n) : Infinity;
 }
 
 function bestOffsetScores(refIm, cropIm, mask) {
-  // Try small offsets, return best MSE + corresponding SSIM
   const cropL = lumaArray(cropIm);
   const refL = lumaArray(refIm);
   const w = cropIm.width, h = cropIm.height;
@@ -199,9 +196,7 @@ function bestOffsetScores(refIm, cropIm, mask) {
   for (const dy of OFF) {
     for (const dx of OFF) {
       const mse = mseRGB(cropIm, refIm, mask, dx, dy);
-      // SSIM computed with same offset by shifting ref luma array virtually
-      // (recompute shifted luma lazily via ImageData shift if needed; at 32x32 MSE is the main offset guard)
-      const ssim = ssimLuma(cropL, refL, w, h, mask); // acceptable approximation
+      const ssim = ssimLuma(cropL, refL, w, h, mask); // (approx) same offset; OK at 32x32
       if (mse < best.mse || (Math.abs(mse - best.mse) < 1e-6 && ssim > best.ssim)) {
         best = { mse, ssim, dx, dy };
       }
@@ -210,12 +205,20 @@ function bestOffsetScores(refIm, cropIm, mask) {
   return best;
 }
 
-// ---- Public: prepare reference index ----
+// ---------- Public: prepare reference index ----------
 export async function prepareRefIndex(manifest) {
   const refs = [];
+  let ok = 0, fail = 0;
+
   for (const e of manifest || []) {
-    const src = e.src || e.image || e.url;
-    if (!src) continue;
+    const rawSrc = e.src || e.image || e.url;
+    if (!rawSrc) continue;
+
+    // Try size hint to reduce payload & sometimes improve CORS routing
+    const src = rawSrc.includes('lh3.googleusercontent.com/d/')
+      ? `${rawSrc}=s64`
+      : rawSrc;
+
     try {
       const img = await loadImage(src);
       const cnv = toCanvas(img);
@@ -224,16 +227,20 @@ export async function prepareRefIndex(manifest) {
         name: e.name || e.id || 'Unknown',
         src,
         im,
-        hist: histRGB(im)
+        hist: histRGB(im),
       });
+      ok++;
     } catch (err) {
-      console.warn('Ref load failed', e.name || e.id, err);
+      console.warn('Ref load failed:', e.name || e.id || '<unnamed>', rawSrc, err);
+      fail++;
     }
   }
+
+  console.log(`[matchers] refs loaded: ${ok} ok, ${fail} failed, manifest: ${(manifest || []).length}`);
   return refs;
 }
 
-// ---- Public: find best match for a dataURL crop ----
+// ---------- Public: find best match ----------
 export async function findBestMatch(cropDataURL, refIndex, opts = {}) {
   const {
     shortlistK = SHORTLIST_K,
@@ -246,22 +253,20 @@ export async function findBestMatch(cropDataURL, refIndex, opts = {}) {
   const cropHist = histRGB(cropIm);
   const mask = makeMask(cropIm);
 
-  // Stage-1 shortlist by histogram chi-squared (lower is better)
+  // Stage-1 shortlist
   const ranked = refIndex
     .map(r => ({ r, d: chiSq(cropHist, r.hist) }))
     .sort((a, b) => a.d - b.d)
     .slice(0, Math.min(shortlistK, refIndex.length));
 
-  // Stage-2 precise scoring with small offset search
+  // Stage-2 precise scoring
   let best = { score: Infinity, entry: null, mse: Infinity, ssim: -1 };
   for (const { r } of ranked) {
     const { mse, ssim } = bestOffsetScores(r.im, cropIm, mask);
-    // Combine (lower better): normalized MSE + (1-SSIM)
     const combined = (mse / 255) + (1 - ssim) * 200; // weight SSIM strongly
     if (combined < best.score) best = { score: combined, entry: r, mse, ssim };
   }
 
-  // Thresholding
   if (!best.entry) return null;
   if (best.mse > mseMax || best.ssim < ssimMin) return null;
 
