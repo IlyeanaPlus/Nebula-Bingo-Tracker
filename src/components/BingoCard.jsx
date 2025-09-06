@@ -13,14 +13,6 @@ const NO_MATCH_SVG = encodeURI(
 );
 const NO_MATCH_DATA_URL = `data:image/svg+xml;utf8,${NO_MATCH_SVG}`;
 
-function debugEnabled() {
-  try {
-    if (/[?&]debug(=1|&|$)/.test(location.search)) return true;
-    if (localStorage.getItem('nbt.debug') === '1') return true;
-  } catch {}
-  return false;
-}
-
 export default function BingoCard({ card, onChange, onRemove, manifest }) {
   const [isFilling, setIsFilling] = useState(false);
   const [fillStep, setFillStep] = useState(0);
@@ -29,6 +21,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
   const [showDebugCrops, setShowDebugCrops] = useState(false);
   const inputRef = useRef(null);
 
+  // normalize to 25 cells
   const cells = useMemo(
     () =>
       card.cells ||
@@ -58,6 +51,15 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
     })();
     return () => { alive = false; };
   }, [manifest]);
+
+  // Close Debug Crops with Esc
+  useEffect(() => {
+    function onEsc(e) {
+      if (e.key === 'Escape') setShowDebugCrops(false);
+    }
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, []);
 
   function toggleComplete(idx) {
     const next = [...cells];
@@ -95,8 +97,8 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
     setFillStep(0);
     try {
       const img = await fileToImage(file);
-      const crops = await crop25(img); // array of 25 data URLs (32x32 view)
-      setLastCrops(crops);             // keep for visual inspection in debug
+      const crops = await crop25(img);   // native-size crops
+      setLastCrops(crops);               // show in Debug Crops modal
 
       const nextCells = [...cells];
 
@@ -108,9 +110,9 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
               shortlistK: 48,
               ssimMin: 0.82,
               mseMax: 1100,
-              nccMin: 0.88, // enable NCC acceptance path
-              tau: 16,      // raise to 18–20 for low-quality JPG screenshots
-              debug: true   // log fg ratio + top candidates
+              nccMin: 0.88, // NCC acceptance path
+              tau: 16,      // raise to 18–20 for low-quality JPGs
+              debug: true   // console logs while tuning
             })
           : null;
 
@@ -153,7 +155,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
           <button onClick={handlePick} disabled={!refIndex.length || isFilling}>Fill</button>
           <button onClick={handleSave}>Save</button>
           <button onClick={onRemove}>Remove</button>
-          {debugEnabled() && lastCrops?.length === 25 && (
+          {lastCrops?.length === 25 && (
             <button
               onClick={() => setShowDebugCrops(true)}
               title="Show 25 cropped cells from the last Fill"
@@ -206,9 +208,23 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
 
       {/* Debug crops modal */}
       {showDebugCrops && (
-        <div className="fill-overlay" onClick={() => setShowDebugCrops(true)}>
-          <div className="fill-box" onClick={(e) => e.stopPropagation()}>
-            <div className="fill-title">Last Fill – Crops (click outside to close)</div>
+        <div
+          className="fill-overlay"
+          style={{ zIndex: 9999 }}
+          onClick={() => setShowDebugCrops(false)}
+        >
+          <div
+            className="fill-box"
+            onClick={(e) => e.stopPropagation()}
+            style={{ maxHeight: '70vh', overflow: 'auto' }}
+          >
+            <div
+              className="fill-title"
+              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
+            >
+              <span>Last Fill — Crops</span>
+              <button onClick={() => setShowDebugCrops(false)}>Close</button>
+            </div>
             <div
               style={{
                 display: 'grid',
@@ -216,15 +232,24 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
                 gap: 8,
                 background: '#111',
                 padding: 8,
-                borderRadius: 8,
-                maxHeight: '60vh',
-                overflow: 'auto'
+                borderRadius: 8
               }}
             >
               {lastCrops.map((src, i) => (
                 <div key={i} style={{ background: '#222', padding: 6, borderRadius: 6 }}>
-                  <img src={src} alt={`crop ${i}`} style={{ width: 48, height: 48, imageRendering: 'pixelated' }} />
-                  <div style={{ fontSize: 11, opacity: 0.8, marginTop: 4, textAlign: 'center' }}>
+                  <img
+                    src={src}
+                    alt={`crop ${i}`}
+                    style={{ width: 48, height: 48, imageRendering: 'pixelated' }}
+                  />
+                  <div
+                    style={{
+                      fontSize: 11,
+                      opacity: 0.8,
+                      marginTop: 4,
+                      textAlign: 'center'
+                    }}
+                  >
                     {i === 12 ? 'center' : `#${i + 1}`}
                   </div>
                 </div>
