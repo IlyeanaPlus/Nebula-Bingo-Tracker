@@ -54,6 +54,8 @@ export default function App() {
 
   // Library aHashes cache (url -> bitString). useRef to avoid rerenders
   const libHashesRef = useRef(new Map());
+  // Cache for parsed bit arrays to speed up matching (url -> Int8 array of 0/1)
+  const libBitsRef = useRef(new Map());
 
   // Cards
   const [cards, setCards] = useState([]); // [{id,title,rows,cols,tiles:[{url,checked}|null]}]
@@ -63,7 +65,7 @@ export default function App() {
 
   // migrate old saves where tile was 'string url' -> {url,checked:false}
   function migrateTiles(tiles, rows, cols) {
-    const total = rows * cols;
+    const total = (rows || 5) * (cols || 5);
     const arr = Array.isArray(tiles) ? tiles.slice(0, total) : [];
     const out = Array(total).fill(null);
     for (let i = 0; i < total; i++) {
@@ -160,6 +162,9 @@ export default function App() {
       }
       try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
 
+      // Build libBits cache (url -> Int8Array of bits) for faster matching
+      buildLibBitsCache();
+
       setGetSpritesProg({ stage: 'done', done: items.length, total: items.length });
       setTimeout(() => setGetSpritesProg({ stage: 'idle', done: 0, total: 0 }), 1000);
     } catch (e) {
@@ -169,13 +174,25 @@ export default function App() {
     }
   }
 
+  function buildLibBitsCache() {
+    const hashes = libHashesRef.current;
+    const bitsCache = libBitsRef.current;
+    for (const [url, bitStr] of hashes.entries()) {
+      if (!bitsCache.has(url)) {
+        const arr = new Int8Array(bitStr.length);
+        for (let i = 0; i < bitStr.length; i++) arr[i] = bitStr[i] === '1' ? 1 : 0;
+        bitsCache.set(url, arr);
+      }
+    }
+  }
+
   async function ensureLibraryHashes() {
     const items = library;
     const hashes = libHashesRef.current;
     const persisted = Object.fromEntries(hashes);
     let missing = 0;
     for (const it of items) if (!hashes.has(it.url)) missing++;
-    if (missing === 0) return;
+    if (missing === 0) { buildLibBitsCache(); return; }
 
     setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
     let done = 0;
@@ -194,6 +211,7 @@ export default function App() {
       await new Promise((r) => setTimeout(r, 0));
     }
     try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
+    buildLibBitsCache();
     setGetSpritesProg({ stage: 'idle', done: 0, total: 0 });
   }
 
@@ -239,6 +257,13 @@ export default function App() {
   }
 
   /* ----------------------- screenshot analysis ---------------------- */
+  /**
+   * Enhanced "Fill Card":
+   *  - Accepts a whole screenshot (not perfectly cropped)
+   *  - Tries multiple auto-crops (margin search)
+   *  - For the best crop, divides into rows/cols and matches each cell against library
+   *  - Fills relevant cells with best-match sprites (skips if distance > threshold)
+   */
 
   async function analyzeScreenshotForCard(id, file) {
     setAnalyzing((s) => new Set([...s, id]));
@@ -250,40 +275,39 @@ export default function App() {
       if (!card) return;
       const { rows, cols } = card;
 
-      const width = img.naturalWidth || img.width;
-      const height = img.naturalHeight || img.height;
-      const cellW = width / cols;
-      const cellH = height / rows;
+      // Precompute library bit arrays for speed
+      const libBits = libBitsRef.current;
+      const libList = library
+        .map((it) => {
+          const bits = libBits.get(it.url);
+          return bits ? { url: it.url, bits } : null;
+        })
+        .filter(Boolean);
 
-      const nextTiles = Array(rows * cols).fill(null);
-      for (let r = 0; r < rows; r++) {
-        for (let c = 0; c < cols; c++) {
-          const x = Math.floor(c * cellW);
-          const y = Math.floor(r * cellH);
-          const w = Math.floor(cellW);
-          const h = Math.floor(cellH);
-          const cellCanvas = cropToCanvas(img, x, y, w, h);
+      if (libList.length === 0) return;
 
-          const cellBits = ahashFromImage(cellCanvas, 8);
+      // Search some margin percentages to auto-crop the card area
+      const margins = [0.00, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15, 0.18];
+      const innerPad = 0.02; // small inner padding per cell (to avoid borders)
 
-          let bestUrl = null;
-          let bestDist = Infinity;
-          for (const it of library) {
-            const bitStr = libHashesRef.current.get(it.url);
-            if (!bitStr) continue;
-            const refBits = stringToBits(bitStr);
-            const d = hammingDistanceBits(cellBits, refBits);
-            if (d < bestDist) {
-              bestDist = d;
-              bestUrl = it.url;
-            }
-          }
+      let best = { score: Infinity, filled: null };
 
-          if (bestUrl) nextTiles[r * cols + c] = { url: bestUrl, checked: false };
-        }
+      for (const m of margins) {
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
+        const x0 = Math.floor(m * w);
+        const y0 = Math.floor(m * h);
+        const ww = Math.max(4, Math.floor(w - 2 * x0));
+        const hh = Math.max(4, Math.floor(h - 2 * y0));
+        const cropped = cropToCanvas(img, x0, y0, ww, hh);
+
+        const result = matchGrid(cropped, rows, cols, libList, innerPad);
+        if (result && result.score < best.score) best = result;
       }
 
-      setCards((prev) => prev.map((c) => (c.id === id ? { ...c, tiles: nextTiles } : c)));
+      if (best.filled) {
+        setCards((prev) => prev.map((c) => (c.id === id ? { ...c, tiles: best.filled } : c)));
+      }
     } finally {
       setAnalyzing((s) => {
         const n = new Set(s);
@@ -291,6 +315,60 @@ export default function App() {
         return n;
       });
     }
+  }
+
+  /**
+   * Split a cropped canvas into rows/cols (with inner padding),
+   * aHash each cell, match against library, return { filled, score }.
+   * score = sum of best distances (lower is better).
+   */
+  function matchGrid(cropped, rows, cols, libList, innerPadFrac = 0.0) {
+    const W = cropped.width, H = cropped.height;
+    if (!W || !H) return null;
+
+    const cellW = W / cols;
+    const cellH = H / rows;
+    const padX = Math.floor(cellW * innerPadFrac);
+    const padY = Math.floor(cellH * innerPadFrac);
+
+    const filled = Array(rows * cols).fill(null);
+    let totalDist = 0;
+
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        const x = Math.max(0, Math.floor(c * cellW + padX));
+        const y = Math.max(0, Math.floor(r * cellH + padY));
+        const w = Math.max(2, Math.floor(cellW - 2 * padX));
+        const h = Math.max(2, Math.floor(cellH - 2 * padY));
+        const cellCanvas = cropToCanvas(cropped, x, y, w, h);
+
+        const cellBits = ahashFromImage(cellCanvas, 8); // 64-bit
+        let bestUrl = null;
+        let bestDist = Infinity;
+
+        for (let i = 0; i < libList.length; i++) {
+          const cand = libList[i];
+          // Compare against cached bit arrays (fast)
+          const d = hammingDistanceBits(cellBits, cand.bits);
+          if (d < bestDist) {
+            bestDist = d;
+            bestUrl = cand.url;
+          }
+        }
+
+        // Threshold: if too far from any known sprite, leave empty.
+        // 64-bit aHash → distances < 12 are usually close; tweak if needed.
+        if (bestUrl && bestDist <= 12) {
+          filled[r * cols + c] = { url: bestUrl, checked: false };
+          totalDist += bestDist;
+        } else {
+          filled[r * cols + c] = null;
+          totalDist += 20; // small penalty for unmatched
+        }
+      }
+    }
+
+    return { filled, score: totalDist };
   }
 
   /* ------------------------------- UI -------------------------------- */
@@ -309,12 +387,11 @@ export default function App() {
       </header>
 
       <main style={styles.main}>
-        {/* Left: tools */}
+        {/* Left: vertical tools (Get Sprites on top, New Card below) */}
         <section style={styles.toolsPane}>
-          <div style={styles.toolbarRow}>
-            <button style={styles.btn} onClick={getSprites}>Get Sprites</button>
-            <button style={styles.btn} onClick={() => addCard({})}>New Card</button>
-          </div>
+          <button style={styles.btnBlock} onClick={getSprites}>Get Sprites</button>
+          <button style={styles.btnBlock} onClick={() => addCard({})}>New Card</button>
+
           {progressPct !== null && (
             <div style={styles.progressWrap} aria-label="progress">
               <div style={{ ...styles.progressBar, width: `${progressPct}%` }} />
@@ -384,16 +461,14 @@ const styles = {
     flexDirection: 'column',
     gap: '10px',
   },
-  toolbarRow: {
-    display: 'flex',
-    gap: '10px',
-    flexWrap: 'wrap',
-  },
-  btn: {
+  btnBlock: {
+    display: 'block',
+    width: '100%',
+    textAlign: 'center',
     background: '#2b2b2b',
     color: '#fff',
     border: '1px solid #3a3a3a',
-    padding: '8px 12px',
+    padding: '10px 12px',
     borderRadius: '12px',
     cursor: 'pointer',
   },

@@ -67,7 +67,7 @@ export default function BingoCard({
         )}
 
         <div style={styles.actions}>
-          <button style={styles.smallBtn} onClick={openFilePicker} title="Fill card from screenshot">
+          <button style={styles.smallBtn} onClick={openFilePicker} title="Upload screenshot to fill">
             Fill Card
           </button>
           <button style={styles.smallBtn} onClick={() => onClear?.(id)} title="Reset this card">
@@ -76,6 +76,7 @@ export default function BingoCard({
           <button style={styles.smallBtnDanger} onClick={() => onRemove?.(id)} title="Delete card">
             Remove
           </button>
+
           <input
             ref={fileRef}
             type="file"
