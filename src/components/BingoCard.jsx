@@ -1,7 +1,5 @@
 // src/components/BingoCard.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
-
-// v2 natural-pixel helpers
 import {
   fileToImage,
   crop25,
@@ -10,41 +8,40 @@ import {
   normalizeGridLines,
 } from "../utils/image";
 
-// base card styles
+// IMPORTANT: keep bingo.css wired so the classes below style correctly
 import "../styles/bingo.css";
 
 export default function BingoCard() {
-  // Title (click-to-rename, same as v2)
-  const [title, setTitle] = useState("Bingo Card");
+  // Title inline edit
+  const [title, setTitle] = useState("New Card");
   const [editingTitle, setEditingTitle] = useState(false);
 
   // Inputs
   const [baseFile, setBaseFile] = useState(null);
   const [overlayFile, setOverlayFile] = useState(null);
 
-  // Crops for this card (used for preview + matcher upstream)
-  const [lastFillCrops, setLastFillCrops] = useState([]); // 25 PNG dataURLs
-  const [lastRects, setLastRects] = useState([]);         // 25 rects (debug)
+  // Crops for this card
+  const [crops, setCrops] = useState(Array(25).fill(null));   // 25 PNG dataURLs
+  const [rects, setRects] = useState([]);                     // debug only
+
+  // Fill overlay state
+  const [filling, setFilling] = useState(false);
+  const [fillIndex, setFillIndex] = useState(0);
+
+  // Debug modal (optional; plain)
   const [debugOpen, setDebugOpen] = useState(false);
 
   const baseImgRef = useRef(null);
   const overlayImgRef = useRef(null);
 
-  // Ensure Esc closes the modal
-  useEffect(() => {
-    const onKey = (e) => e.key === "Escape" && setDebugOpen(false);
-    if (debugOpen) window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [debugOpen]);
-
   const canFill = useMemo(() => !!baseFile, [baseFile]);
 
-  // ---- file pickers (same semantics) ----
-  const handleChooseBase = (e) => {
+  // File pickers
+  const onPickBase = (e) => {
     const f = e.target.files?.[0];
     if (f) setBaseFile(f);
   };
-  const handleChooseOverlay = (e) => {
+  const onPickOverlay = (e) => {
     const f = e.target.files?.[0];
     if (f) setOverlayFile(f);
   };
@@ -54,13 +51,18 @@ export default function BingoCard() {
     if (overlayFile && !overlayImgRef.current) overlayImgRef.current = await fileToImage(overlayFile);
   }
 
-  // ---- Fill flow (kept; now also previews crops in grid) ----
+  // Fill using natural-pixel pipeline; shows overlay progress
   async function handleFill() {
+    if (!canFill) return;
     try {
+      setFilling(true);
+      setFillIndex(0);
+
       await ensureImagesLoaded();
       const baseImg = baseImgRef.current;
       if (!baseImg) return;
 
+      // Detect/normalize lines
       let norm;
       if (overlayImgRef.current) {
         const detected = detectGridFromGreenOverlay(overlayImgRef.current);
@@ -69,27 +71,37 @@ export default function BingoCard() {
         norm = normalizeGridLines(baseImg, { vertical: [], horizontal: [] });
       }
 
-      const rects = get25Rects(baseImg, norm);
-      const dataURLs = crop25(baseImg, norm);
+      // Compute rects and crops
+      const r = get25Rects(baseImg, norm);
+      setRects(r);
 
-      setLastRects(rects);
-      setLastFillCrops(dataURLs);   // <- immediately visible in the grid
-      setDebugOpen(true);           // optional; can be toggled off if you prefer
+      // Crop with a little progress animation for the overlay
+      const urls = [];
+      for (let i = 0; i < r.length; i++) {
+        urls.push(crop25(baseImg, norm)[i]); // crop25 returns all; index to simulate progress
+        setFillIndex(i + 1);
+        await new Promise((res) => setTimeout(res, 12)); // tiny delay for visible progress
+      }
+      setCrops(urls);
+
+      // Optional: open debug viewer
+      setDebugOpen(true);
     } catch (err) {
       console.error("[BingoCard] fill failed:", err);
+    } finally {
+      setFilling(false);
     }
   }
 
-  // ---- Render ----
+  // Render a single card using the CSS hooks from bingo.css
   return (
-    <div className="bingo-card">
-      {/* Header / toolbar row (hooks preserved for bingo.css) */}
-      <div className="bingo-toolbar">
-        <div className="bingo-title">
+    <div className="cards">
+      <div className="card">{/* .card styles size/appearance */}{/* :contentReference[oaicite:1]{index=1} */}
+        <div className="card-header">{/* header row */}{/* :contentReference[oaicite:2]{index=2} */}
           {editingTitle ? (
             <input
+              className="title-inline"
               autoFocus
-              className="bingo-title-input"
               value={title}
               onChange={(e) => setTitle(e.target.value)}
               onBlur={() => setEditingTitle(false)}
@@ -98,95 +110,83 @@ export default function BingoCard() {
               }}
             />
           ) : (
-            <span className="bingo-title-text" onClick={() => setEditingTitle(true)} title="Click to rename">
+            <div style={{ fontWeight: 600, cursor: "text" }} onClick={() => setEditingTitle(true)}>
               {title}
-            </span>
-          )}
-        </div>
-
-        <div className="bingo-actions">
-          {/* Select Screenshot */}
-          <label className="btn btn-file">
-            <input type="file" accept="image/*" className="hidden" onChange={handleChooseBase} />
-            <span>Select Screenshot</span>
-          </label>
-
-          {/* Optional overlay grid PNG */}
-          <label className="btn btn-file">
-            <input type="file" accept="image/*" className="hidden" onChange={handleChooseOverlay} />
-            <span>Grid PNG (optional)</span>
-          </label>
-
-          {/* Fill (disabled until screenshot selected) */}
-          <button
-            className="btn btn-primary"
-            disabled={!canFill}
-            onClick={handleFill}
-            title={canFill ? "Analyze screenshot & fill" : "Select a screenshot first"}
-          >
-            Fill Card
-          </button>
-
-          {/* Open last crops modal */}
-          <button
-            className="btn"
-            onClick={() => setDebugOpen(true)}
-            disabled={!lastFillCrops.length}
-            title="Open last crops"
-          >
-            Crops
-          </button>
-        </div>
-      </div>
-
-      {/* Visible 5×5 card grid (restored) */}
-      <div className="bingo-grid">
-        {Array.from({ length: 25 }).map((_, i) => {
-          const imgUrl = lastFillCrops[i] || null;
-          return (
-            <div key={i} className="bingo-cell">
-              {imgUrl ? (
-                <img
-                  className="bingo-cell-img"
-                  src={imgUrl}
-                  alt={`slot ${i + 1}`}
-                  draggable={false}
-                />
-              ) : (
-                <div className="bingo-cell-empty">—</div>
-              )}
-              <div className="bingo-cell-meta">
-                <div className="bingo-cell-status">— no match</div>
-                <div className="bingo-cell-index">#{i + 1}</div>
-              </div>
             </div>
-          );
-        })}
+          )}
+
+          <div className="actions">
+            <label>
+              <input type="file" accept="image/*" style={{ display: "none" }} onChange={onPickBase} />
+              <button>Select Screenshot</button>
+            </label>
+            <label>
+              <input type="file" accept="image/*" style={{ display: "none" }} onChange={onPickOverlay} />
+              <button>Grid PNG (optional)</button>
+            </label>
+            <button onClick={handleFill} disabled={!canFill} title={canFill ? "Analyze screenshot & fill" : "Select a screenshot first"}>
+              Fill Card
+            </button>
+            <button onClick={() => setDebugOpen(true)} disabled={!crops.filter(Boolean).length}>
+              Crops
+            </button>
+          </div>
+        </div>
+
+        {/* 5×5 grid */}
+        <div className="grid-5x5">{/* squares; aspect-ratio enforced in CSS */}{/* :contentReference[oaicite:3]{index=3} */}
+          {Array.from({ length: 25 }).map((_, i) => (
+            <div className="cell" key={i}>{/* tile */}{/* :contentReference[oaicite:4]{index=4} */}
+              {crops[i] ? (
+                <img src={crops[i]} alt={`tile ${i + 1}`} draggable={false} />
+              ) : (
+                <div className="cell-text">—</div>
+              )}
+            </div>
+          ))}
+        </div>
+
+        {/* Fill overlay (centered) */}
+        {filling && (
+          <div className="fill-overlay">{/* dark blur overlay */}{/* :contentReference[oaicite:5]{index=5} */}
+            <div className="fill-box">
+              <div className="fill-title">Analyzing screenshot...</div>
+              <div className="fill-meta">
+                {Math.min(fillIndex, 25)} / 25
+              </div>
+              <div className="fill-bar" style={{ marginTop: 6, marginBottom: 6 }}>{/* styled bar */}{/* :contentReference[oaicite:6]{index=6} */}
+                <div
+                  className="fill-bar-inner"
+                  style={{ width: `${(Math.min(fillIndex, 25) / 25) * 100}%` }}
+                />
+              </div>
+              <div className="fill-hint">Tip: Drop an image anywhere on this card to start.</div>
+            </div>
+          </div>
+        )}
       </div>
 
-      {/* Debug Crops Modal (plain; won’t affect base CSS) */}
+      {/* Debug crops (plain, not styled by bingo.css) */}
       {debugOpen && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/60" onClick={() => setDebugOpen(false)} />
-          <div className="relative z-[1001] w-[360px] max-h-[85vh] overflow-auto rounded-2xl bg-neutral-900 text-neutral-200 shadow-2xl border border-neutral-800">
-            <div className="sticky top-0 flex items-center justify-between px-4 py-3 border-b border-neutral-800 bg-neutral-900/90 backdrop-blur">
-              <div className="font-semibold">Last Fill — Crops</div>
-              <button className="px-2 py-1 rounded-md bg-neutral-800 border border-neutral-700" onClick={() => setDebugOpen(false)}>
-                Close
-              </button>
+          <div className="relative z-[1001] w-[360px] max-h-[85vh] overflow-auto rounded-2xl bg-[#1e1e1e] text-[#e8e8e8] shadow-2xl border border-[#2a2a2a]">
+            <div className="sticky top-0 flex items-center justify-between px-4 py-3 border-b border-[#2a2a2a] bg-[#1e1e1e]/90">
+              <div style={{ fontWeight: 600 }}>Last Fill — Crops</div>
+              <button onClick={() => setDebugOpen(false)}>Close</button>
             </div>
             <div className="px-3 py-4">
-              <div className="flex flex-wrap gap-2">
-                {lastFillCrops.map((url, idx) => (
-                  <div key={idx} className="p-1 rounded border border-neutral-800 bg-neutral-900">
-                    <img src={url} alt={`crop ${idx + 1}`} draggable={false} style={{ display: "block", width: 56, height: 56 }} />
-                    <div className="mt-1 text-[11px] text-neutral-400 text-center">#{idx + 1}</div>
+              <div style={{ display: "flex", flexWrap: "wrap", gap: 8 }}>
+                {crops.map((url, idx) => (
+                  <div key={idx} style={{ padding: 4, borderRadius: 6, border: "1px solid #2a2a2a", background: "#1a1a1a" }}>
+                    {url && <img src={url} alt={`crop ${idx + 1}`} draggable={false} style={{ display: "block", width: 56, height: 56 }} />}
+                    <div style={{ marginTop: 4, fontSize: 11, color: "#b6b6b6", textAlign: "center" }}>#{idx + 1}</div>
                   </div>
                 ))}
               </div>
-              {lastRects?.[0] && (
-                <pre className="mt-3 text-xs text-neutral-400 whitespace-pre-wrap break-all">
-                  rect[1] (w × h): {lastRects[0].w} × {lastRects[0].h}
+              {rects?.[0] && (
+                <pre style={{ marginTop: 12, fontSize: 12, color: "#b6b6b6", whiteSpace: "pre-wrap", wordBreak: "break-all" }}>
+                  rect[1] (w × h): {rects[0].w} × {rects[0].h}
                 </pre>
               )}
             </div>
