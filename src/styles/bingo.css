@@ -77,8 +77,9 @@ body {
   border: 1px solid var(--border);
   border-radius: 12px;
   padding: 8px;
-  width: 450px; /* increased from ~300px */
+  width: 450px;
   box-shadow: 0 2px 6px rgba(0,0,0,.4);
+  position: relative;
 }
 
 /* Card header */
@@ -137,8 +138,7 @@ body {
 /* Fill overlay */
 .fill-overlay {
   position: absolute;
-  top: 0; left: 0;
-  right: 0; bottom: 0;
+  inset: 0;
   background: rgba(0,0,0,.85);
   display: flex;
   align-items: center;

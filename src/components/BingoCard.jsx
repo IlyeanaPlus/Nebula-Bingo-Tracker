@@ -1,14 +1,10 @@
 // src/components/BingoCard.jsx
 import React, { useMemo, useRef, useState } from 'react';
-import { fileToImage, crop25, calcGrayHashes, calcRGBHashes, hamming64 } from '../utils/image';
-import { weightedScore, scoreGray, scoreRGB, DEFAULT_WEIGHTS } from '../utils/match';
+import { fileToImage, crop25, calcGrayHashes, calcRGBHashes, calcPHash, calcEdgeHash, hamming64 } from '../utils/image';
 
-// Loosened threshold for robustness against background differences
-const MAX_SCORE = 0.34; // was 0.22
-// Slightly favor grayscale since board bg is largely uniform gray
-const WEIGHTS = { gray: 0.7, rgb: 0.3 } || DEFAULT_WEIGHTS;
+const MAX_SCORE = 0.30;
+const WEIGHTS = { phash: 0.45, edge: 0.25, gray: 0.20, rgb: 0.10 };
 
-// Inline SVG placeholder for unmatched cells
 const NO_MATCH_SVG = encodeURI(
   `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
      <rect width="100%" height="100%" fill="#121212"/>
@@ -21,6 +17,19 @@ const NO_MATCH_DATA_URL = `data:image/svg+xml;utf8,${NO_MATCH_SVG}`;
 
 function pickSpriteSrc(entry) {
   return entry.src || entry.image || entry.path || entry.url || null;
+}
+
+function norm64(d) { return d / 64; }
+
+function scoreGray(dA, dX, dY) {
+  return (0.2 * norm64(dA)) + (0.4 * norm64(dX)) + (0.4 * norm64(dY));
+}
+function scoreRGB(dist) {
+  const ch = ['R','G','B'].map(k => {
+    const v = dist[k];
+    return (0.2 * norm64(v.a)) + (0.4 * norm64(v.dx)) + (0.4 * norm64(v.dy));
+  });
+  return (ch[0] + ch[1] + ch[2]) / 3;
 }
 
 export default function BingoCard({ card, onChange, onRemove, manifest }) {
@@ -61,15 +70,17 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
       for (let i = 0; i < crops.length; i++) {
         const dataURL = crops[i];
 
-        // Compute hashes for the crop
+        const [ph, eh] = await Promise.all([calcPHash(dataURL), calcEdgeHash(dataURL)]);
         const gray = await calcGrayHashes(dataURL);
         const rgb = await calcRGBHashes(dataURL);
 
         let best = { score: Number.POSITIVE_INFINITY, entry: null };
 
-        // Scan manifest entries for best score
         for (const entry of manifest || []) {
-          if (!entry.ahash || !entry.dhashX || !entry.dhashY) continue;
+          if (!entry.ahash || !entry.dhashX || !entry.dhashY || !entry.phash || !entry.edgeHash) continue;
+
+          const phd = norm64(hamming64(ph, entry.phash));
+          const ehd = norm64(hamming64(eh, entry.edgeHash));
 
           const gScore = scoreGray(
             hamming64(gray.a, entry.ahash),
@@ -94,13 +105,11 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
               dy: entry.dhashYB ? hamming64(rgb.B.dy, entry.dhashYB) : 64
             }
           };
-
           const cScore = scoreRGB(rgbDistances);
-          const final = weightedScore({ gray: gScore, rgb: cScore }, WEIGHTS);
 
-          if (final < best.score) {
-            best = { score: final, entry };
-          }
+          const final = (WEIGHTS.phash * phd) + (WEIGHTS.edge * ehd) + (WEIGHTS.gray * gScore) + (WEIGHTS.rgb * cScore);
+
+          if (final < best.score) best = { score: final, entry };
         }
 
         if (best.entry && best.score <= MAX_SCORE) {
@@ -110,8 +119,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
             complete: nextCells[i]?.complete || false
           };
         } else {
-          // Use placeholder to indicate analyzer ran but no match was found
-          nextCells[i] = { name: '— no match —', sprite: NO_MATCH_DATA_URL, complete: false };
+          nextCells[i] = { name: '— no match —', sprite: null, complete: false };
         }
 
         setFillStep(i + 1);
