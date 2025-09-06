@@ -1,46 +1,56 @@
-import React,{useMemo,useState} from "react";
+// src/components/BingoCard.jsx
+import React,{useRef,useState} from "react";
 
-export default function BingoCard({card,onRename,onToggle,debug}){
-  const [edit,setEdit]=useState(false);
-  const [name,setName]=useState(card.title);
+export default function BingoCard({card,onRename,onFill,onSave,onRemove,onToggle}){
   const rows=[0,1,2,3,4];
-  const score=card.toggles.filter(Boolean).length;
-  const hits=useMemo(()=>card.tiles.map(t=>!!t.match),[card]);
+  const [editing,setEditing]=useState(false);
+  const [title,setTitle]=useState(card.title);
+  const inputRef=useRef();
+
+  function chooseFile(){ inputRef.current?.click(); }
+  function onFile(e){ const f=e.target.files?.[0]; if(f) onFill(f); e.target.value=""; }
 
   return (
-    <div className="w-full">
-      <div className="flex items-center gap-3 mb-3">
-        {edit?(
+    <div className="max-w-3xl mx-auto border border-neutral-800 rounded-2xl p-4 shadow-[0_0_0_1px_rgba(255,255,255,0.05)]">
+      <div className="flex items-center gap-2 mb-3">
+        <div className="text-lg font-semibold">Card</div>
+        {editing?(
           <>
-            <input className="px-2 py-1 rounded bg-neutral-800 border border-neutral-700" value={name} onChange={e=>setName(e.target.value)}/>
-            <button className="px-2 py-1 bg-indigo-600 rounded" onClick={()=>{onRename(card.id,name);setEdit(false)}}>Save</button>
-            <button className="px-2 py-1 bg-neutral-700 rounded" onClick={()=>{setName(card.title);setEdit(false)}}>Cancel</button>
+            <input className="px-2 py-1 rounded bg-neutral-800 border border-neutral-700" value={title} onChange={e=>setTitle(e.target.value)}/>
+            <button className="px-2 py-1 bg-indigo-600 rounded" onClick={()=>{onRename(card.id,title);setEditing(false)}}>Save Name</button>
+            <button className="px-2 py-1 bg-neutral-700 rounded" onClick={()=>{setTitle(card.title);setEditing(false)}}>Cancel</button>
           </>
         ):(
           <>
-            <h2 className="text-xl font-semibold">{card.title}</h2>
-            <button className="px-2 py-1 bg-neutral-700 rounded" onClick={()=>setEdit(true)}>Rename</button>
-            <span className="opacity-70">• Toggles: {score}/25</span>
+            <div className="text-lg"> {card.title}</div>
+            <button className="px-2 py-1 bg-neutral-700 rounded" onClick={()=>setEditing(true)}>Rename</button>
           </>
         )}
+        <div className="ml-auto flex items-center gap-2">
+          <button className="px-3 py-1.5 bg-neutral-700 rounded" onClick={chooseFile}>Fill</button>
+          {!card.saved && <button className="px-3 py-1.5 bg-emerald-600 rounded" onClick={onSave}>Save</button>}
+          <button className="px-3 py-1.5 bg-red-600 rounded" onClick={onRemove}>Remove</button>
+          <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={onFile}/>
+        </div>
       </div>
-      <div className="grid grid-cols-5 gap-2 w-full max-w-3xl">
+
+      <div className="grid grid-cols-5 gap-3">
         {rows.flatMap(r=>rows.map(c=>{
-          const i=r*5+c; const t=card.tiles[i]; const on=card.toggles[i];
+          const i=r*5+c;
+          const on=card.toggles[i];
+          const name=card.tiles[i]?.match?.name||"";
           return (
-            <button key={i} onClick={()=>onToggle(i)} className={`relative aspect-square rounded grid place-items-center border ${on?"bg-emerald-600/70 border-emerald-400":"bg-neutral-800 border-neutral-700"} overflow-hidden`}>
-              <div className="absolute inset-0 grid place-items-center text-[10px] leading-tight p-1 text-center">
-                <div className="opacity-90">{t?.match?.name||"—"}</div>
-              </div>
-              {debug&&(
-                <div className="absolute bottom-1 left-1 right-1 text-[9px] opacity-70">
-                  <div>score:{t?.match?.score??"-"}</div>
-                </div>
-              )}
+            <button
+              key={i}
+              onClick={()=>onToggle(i)}
+              className={`relative aspect-square rounded-xl border ${on?"bg-emerald-600/60 border-emerald-400":"bg-neutral-800 border-neutral-700"} grid place-items-center overflow-hidden`}
+              title={name}
+            >
+              <span className="text-[11px] text-neutral-200 px-1 truncate w-[90%] text-center">{name||" "}</span>
             </button>
-          )
+          );
         }))}
       </div>
     </div>
-  )
+  );
 }
