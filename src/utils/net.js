@@ -36,3 +36,9 @@ export async function getBlob(url, label, { timeoutMs = 30000 } = {}) {
     throw new Error(`Network/CORS error while ${label}: ${e.message}`);
   } finally { t.cancel(); }
 }
+
+// src/utils/net.js (add)
+export async function getText(url, label, opts) {
+  const blob = await getBlob(url, label, opts);
+  return await blob.text();
+}

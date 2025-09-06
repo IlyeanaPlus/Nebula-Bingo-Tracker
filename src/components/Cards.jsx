@@ -1,4 +1,4 @@
-// components/Cards.jsx
+// src/components/Cards.jsx
 import React from "react";
 
 export default function Cards({
@@ -6,9 +6,14 @@ export default function Cards({
   copyTSV,
   downloadCSV,
   resetCard,
+  removeCard,          // NEW
   updateCellName,
   toggleCheck,
 }) {
+  if (!cards?.length) {
+    return <div className="text-sm text-slate-500">No cards yet. Upload a screenshot to create one.</div>;
+  }
+
   return (
     <section className="space-y-6">
       {cards.map((card) => (
@@ -20,6 +25,7 @@ export default function Cards({
               <button className="px-3 py-1 rounded bg-slate-100 hover:bg-slate-200" onClick={()=>downloadCSV(card)}>Download CSV</button>
               <button className="px-3 py-1 rounded bg-amber-100 hover:bg-amber-200" onClick={()=>resetCard(card.id, "checks")}>Reset checks</button>
               <button className="px-3 py-1 rounded bg-rose-100 hover:bg-rose-200" onClick={()=>resetCard(card.id, "all")}>Clear names</button>
+              <button className="px-3 py-1 rounded bg-red-600 text-white hover:bg-red-700" onClick={()=>removeCard(card.id)}>Remove card</button>
             </div>
           </div>
 
@@ -33,7 +39,9 @@ export default function Cards({
                       {cell.refUrl ? (<img src={cell.refUrl} className="max-w-full max-h-full object-contain"/>) : (<span className="text-[10px] text-slate-400">no match</span>)}
                     </div>
                     <div className="flex-1">
-                      <input className="w-full text-sm border rounded px-2 py-1" value={cell.name} placeholder="(name)" onChange={(e)=>updateCellName(card.id, i, e.target.value)} />
+                      <input className="w-full text-sm border rounded px-2 py-1"
+                             value={cell.name} placeholder="(name)"
+                             onChange={(e)=>updateCellName(card.id, i, e.target.value)} />
                       <div className="text-[10px] text-slate-500">r{r}c{c} · dist {Number.isFinite(cell.dist) ? cell.dist : "-"}</div>
                     </div>
                     <label className="flex items-center gap-2 text-sm">
@@ -47,8 +55,6 @@ export default function Cards({
           </div>
         </div>
       ))}
-
-      {cards.length === 0 && (<div className="text-sm text-slate-500">No cards yet. Upload a screenshot to create one.</div>)}
     </section>
   );
 }
