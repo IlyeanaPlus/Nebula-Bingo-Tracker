@@ -1,130 +1,78 @@
-// src/App.jsx
-import React, {useEffect,useMemo,useRef,useState} from "react";
+import React,{useEffect,useMemo,useRef,useState} from "react";
+import Sidebar from "./components/Sidebar.jsx";
 import BingoCard from "./components/BingoCard.jsx";
-import {loadImageFromFile,computeAHash,computeDHashX,computeDHashY,detectGridCrops} from "./utils/image.js";
+import {
+  loadImageFromFile,detectGridCrops,
+  computeAHash,computeDHashX,computeDHashY,
+  computeAHashRGB,computeDHashXRGB,computeDHashYRGB
+} from "./utils/image.js";
+import {findBestMatch} from "./utils/match.js";
 import {tryLoadDriveCacheJSON} from "./services/drive.js";
+import {useCards} from "./hooks/useCards.js";
 
-const ABS_THRESH=8,MIN_GAP=4,PAD_FRAC=0.07;
+export const ABS_LUMA=8,ABS_RGB=20,COLOR_W=0.5,MIN_GAP=4,PAD_FRAC=0.07;
 
 export default function App(){
-  const [cards,setCards]=useState(()=>JSON.parse(localStorage.getItem("cards_v2")||"[]"));
-  const [activeId,setActiveId]=useState(cards[0]?.id||null);
-  const [cache,setCache]=useState([]);
-  const [maxCache,setMaxCache]=useState(()=>Number(localStorage.getItem("max_cache_seen")||"0"));
-  const [debug,setDebug]=useState(false);
-  const inputRef=useRef();
+  const {cards,activeCard,activeId,setActiveId,addCard,renameCard,toggleCell,removeCard} = useCards();
+  const [cache,setCache] = useState([]);
+  const [maxCache,setMaxCache] = useState(()=>Number(localStorage.getItem("max_cache_seen")||"0"));
+  const [debug,setDebug] = useState(false);
+  const inputRef = useRef();
+
   useEffect(()=>{
     tryLoadDriveCacheJSON().then(arr=>{
       setCache(arr||[]);
-      const m=Math.max(Number(localStorage.getItem("max_cache_seen")||"0"), (arr||[]).length);
+      const m=Math.max(Number(localStorage.getItem("max_cache_seen")||"0"),(arr||[]).length);
       localStorage.setItem("max_cache_seen",String(m)); setMaxCache(m);
-    }).catch(()=>{setCache([])});
+    }).catch(()=>setCache([]));
   },[]);
-  useEffect(()=>{localStorage.setItem("cards_v2",JSON.stringify(cards))},[cards]);
-  const activeCard=useMemo(()=>cards.find(c=>c.id===activeId)||null,[cards,activeId]);
 
   async function handleNewCard(e){
     const f=e.target.files?.[0]; if(!f) return;
     const img=await loadImageFromFile(f);
     const crops=detectGridCrops(img,{padFrac:PAD_FRAC,minGap:MIN_GAP,debug});
-    const tiles=await Promise.all(crops.map(async (crop)=>{
+    const tiles=await Promise.all(crops.map(async crop=>{
       const ah=await computeAHash(crop);
       const dx=await computeDHashX(crop),dy=await computeDHashY(crop);
-      const match=findBestMatch({ah,dx,dy});
-      return {ah,dx,dy,match};
+      const ahRGB=await computeAHashRGB(crop);
+      const dxRGB=await computeDHashXRGB(crop),dyRGB=await computeDHashYRGB(crop);
+      const match=findBestMatch({ah,dx,dy,ahRGB,dxRGB,dyRGB},cache,{ABS_LUMA,ABS_RGB,COLOR_W});
+      return {ah,dx,dy,ahRGB,dxRGB,dyRGB,match};
     }));
-    const id=`card_${Date.now()}`;
-    const title=f.name.replace(/\.\w+$/,"");
-    const toggles=Array(25).fill(false);
-    const card={id,title,tiles,toggles};
-    setCards(cs=>[card,...cs]); setActiveId(id);
+    const id=addCard(f.name.replace(/\.\w+$/,""),tiles);
+    setActiveId(id);
     e.target.value="";
   }
 
   function handleBlankCard(){
-    const tiles=Array.from({length:25},()=>({ah:0,dx:0,dy:0,match:null}));
-    const id=`card_${Date.now()}`;
-    const title="Blank Card";
-    const toggles=Array(25).fill(false);
-    const card={id,title,tiles,toggles};
-    setCards(cs=>[card,...cs]); setActiveId(id);
+    const tiles=Array.from({length:25},()=>({ah:0,dx:0,dy:0,ahRGB:null,dxRGB:null,dyRGB:null,match:null}));
+    const id=addCard("Blank Card",tiles);
+    setActiveId(id);
   }
 
-  function findBestMatch(sig){
-    let best=null,score=1e9;
-    for(const it of cache){
-      const a=it.ahash||it.ah, x=it.dhashX||it.dx, y=it.dhashY||it.dy;
-      if(a==null||x==null||y==null) continue;
-      const sa=popcnt(sig.ah^a), sx=popcnt(sig.dx^x), sy=popcnt(sig.dy^y);
-      const s=sa+sx+sy;
-      if(s<score){score=s;best=it}
-    }
-    return score<=ABS_THRESH?{name:best.name,id:best.id||best.name,score}:null;
-  }
-  function popcnt(n){n=n>>>0;let c=0;while(n){n&=n-1;c++}return c}
-
-  function renameCard(id,newTitle){setCards(cs=>cs.map(c=>c.id===id?{...c,title:newTitle}:c))}
-  function toggleCell(idx){
-    if(!activeCard) return;
-    setCards(cs=>cs.map(c=>{
-      if(c.id!==activeCard.id) return c;
-      const t=[...c.toggles]; t[idx]=!t[idx];
-      return {...c,toggles:t};
-    }));
-  }
-  function removeCard(id){
-    setCards(cs=>cs.filter(c=>c.id!==id));
-    if(activeId===id) setActiveId(cs=> (cards.filter(c=>c.id!==id)[0]?.id||null));
-  }
-
-  const cachePct=maxCache?Math.min(100,Math.round((cache.length/maxCache)*100)): (cache.length?100:0);
+  const cachePct=maxCache?Math.min(100,Math.round((cache.length/maxCache)*100)):(cache.length?100:0);
   const matched=activeCard?activeCard.tiles.filter(t=>t.match).length:0;
 
   return (
     <div className="min-h-screen grid md:grid-cols-[320px_1fr] gap-4 p-4 text-sm text-white bg-neutral-900">
-      <aside className="space-y-3">
-        <h1 className="text-lg font-semibold">Nebula Bingo Tracker</h1>
-        <div className="space-y-2">
-          <button onClick={()=>inputRef.current?.click()} className="w-full px-3 py-2 bg-indigo-600 rounded">New Card</button>
-          <button onClick={handleBlankCard} className="w-full px-3 py-2 bg-neutral-700 rounded">Blank Card</button>
-          <input ref={inputRef} type="file" accept="image/*" className="hidden" onChange={handleNewCard}/>
-        </div>
-        <label className="flex items-center gap-2 text-neutral-300">
-          <input type="checkbox" checked={debug} onChange={e=>setDebug(e.target.checked)}/><span>Debug</span>
-        </label>
-
-        <div className="space-y-1">
-          <div className="text-neutral-300">Sprites Indexed: {cache.length}</div>
-          <div className="h-2 bg-neutral-800 rounded overflow-hidden">
-            <div className="h-full bg-emerald-500" style={{width:`${cachePct}%`}}/>
-          </div>
-        </div>
-
-        {activeCard && (
-          <div className="space-y-1">
-            <div className="text-neutral-300">Matches on Card: {matched}/25</div>
-            <div className="h-2 bg-neutral-800 rounded overflow-hidden">
-              <div className="h-full bg-indigo-500" style={{width:`${Math.round((matched/25)*100)}%`}}/>
-            </div>
-          </div>
-        )}
-
-        <div className="border border-neutral-700 rounded">
-          <div className="px-3 py-2 border-b border-neutral-700 text-neutral-300">Saved Cards</div>
-          <ul className="max-h-[50vh] overflow-auto">
-            {cards.map(c=>(
-              <li key={c.id} className={`flex items-center justify-between px-3 py-2 hover:bg-neutral-800 ${c.id===activeId?"bg-neutral-800":""}`}>
-                <button className="truncate text-left" onClick={()=>setActiveId(c.id)} title={c.title}>{c.title}</button>
-                <button onClick={()=>removeCard(c.id)} className="text-red-400 ml-2">✕</button>
-              </li>
-            ))}
-          </ul>
-        </div>
-      </aside>
-
+      <Sidebar
+        onNew={()=>inputRef.current?.click()}
+        onBlank={handleBlankCard}
+        inputRef={inputRef}
+        onFile={handleNewCard}
+        debug={debug}
+        setDebug={setDebug}
+        cards={cards}
+        activeId={activeId}
+        setActiveId={setActiveId}
+        removeCard={removeCard}
+        cacheLen={cache.length}
+        cachePct={cachePct}
+        matched={matched}
+      />
       <main className="grid place-items-start">
         {activeCard?
-          <BingoCard card={activeCard} onRename={renameCard} onToggle={toggleCell} debug={debug}/>:
+          <BingoCard card={activeCard} onRename={renameCard} onToggle={i=>toggleCell(activeCard.id,i)} debug={debug}/>:
           <div className="opacity-70">Create a card from a screenshot or start with a blank card.</div>}
       </main>
     </div>

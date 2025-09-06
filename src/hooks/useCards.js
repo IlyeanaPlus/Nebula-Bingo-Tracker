@@ -1,11 +1,9 @@
-// src/hooks/useCards.js
-import {useCallback,useMemo,useState,useEffect} from "react";
+import {useCallback,useEffect,useMemo,useState} from "react";
 
 export function useCards(){
   const [cards,setCards]=useState(()=>JSON.parse(localStorage.getItem("cards_v2")||"[]"));
   const [activeId,setActiveId]=useState(cards[0]?.id||null);
   useEffect(()=>{localStorage.setItem("cards_v2",JSON.stringify(cards))},[cards]);
-
   const activeCard=useMemo(()=>cards.find(c=>c.id===activeId)||null,[cards,activeId]);
 
   const addCard=useCallback((title,tiles)=>{
@@ -30,13 +28,7 @@ export function useCards(){
 
   const removeCard=useCallback((id)=>{
     setCards(cs=>cs.filter(c=>c.id!==id));
-    if(activeId===id){
-      setActiveId(prev=>{
-        const next=cards.filter(c=>c.id!==id)[0]?.id||null;
-        return next;
-      });
-    }
-  },[activeId,cards]);
+  },[]);
 
   return {cards,activeId,activeCard,setActiveId,addCard,renameCard,toggleCell,removeCard};
 }

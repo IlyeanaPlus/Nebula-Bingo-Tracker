@@ -1,4 +1,3 @@
-// src/components/BingoCard.jsx
 import React,{useMemo,useState} from "react";
 
 export default function BingoCard({card,onRename,onToggle,debug}){
@@ -35,7 +34,7 @@ export default function BingoCard({card,onRename,onToggle,debug}){
               </div>
               {debug&&(
                 <div className="absolute bottom-1 left-1 right-1 text-[9px] opacity-70">
-                  <div>hit:{hits[i]?"Y":"N"} score:{t?.match?.score??"-"}</div>
+                  <div>score:{t?.match?.score??"-"}</div>
                 </div>
               )}
             </button>
