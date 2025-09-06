@@ -1,6 +1,6 @@
 /* global self, caches, fetch */
 const BASE = self.registration.scope; // base-aware for GitHub Pages
-const CACHE_APP = 'nebula-bingo-app-v2-1';
+const CACHE_APP = 'nebula-bingo-app-v2-2';
 const CACHE_OTHER = 'nebula-bingo-other-v2-1';
 
 // Precaches only app shell
