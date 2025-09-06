@@ -1,259 +1,224 @@
 // src/components/BingoCard.jsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { fileToImage, crop25 } from '../utils/image';
-import { prepareRefIndex, findBestMatch } from '../utils/matchers';
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
-const NO_MATCH_SVG = encodeURI(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
-     <rect width="100%" height="100%" fill="#121212"/>
-     <g fill="#777" font-family="system-ui,Segoe UI,Arial" font-size="16" text-anchor="middle">
-       <text x="150" y="154">No match</text>
-     </g>
-   </svg>`
-);
-const NO_MATCH_DATA_URL = `data:image/svg+xml;utf8,${NO_MATCH_SVG}`;
+// Image/grid helpers (v2 baseline, natural-pixel)
+import {
+  fileToImage,
+  crop25,
+  get25Rects,
+  detectGridFromGreenOverlay,
+  normalizeGridLines,
+} from "../utils/image";
 
-export default function BingoCard({ card, onChange, onRemove, manifest }) {
-  const [isFilling, setIsFilling] = useState(false);
-  const [fillStep, setFillStep] = useState(0);
-  const [refIndex, setRefIndex] = useState([]);
-  const [lastCrops, setLastCrops] = useState(null);     // dataURLs from last Fill
-  const [showDebugCrops, setShowDebugCrops] = useState(false);
-  const inputRef = useRef(null);
+// Square debug crops styles
+import "../styles/debug-crops.css";
 
-  // normalize to 25 cells
-  const cells = useMemo(
-    () =>
-      card.cells ||
-      Array.from({ length: 25 }, () => ({
-        name: '',
-        sprite: null,
-        complete: false,
-      })),
-    [card]
-  );
+/**
+ * BingoCard
+ * - Minimal, v2-friendly card with “Fill Card” flow
+ * - Shows the “Last Fill — Crops” debug modal with true-square tiles
+ *
+ * Notes:
+ * - This component assumes you’ll provide a screenshot (base image)
+ *   and optionally a green-overlay grid image. If you don’t use the
+ *   overlay flow, you can wire your own detector and pass its lines
+ *   into `crop25` (natural or {space:'client'}).
+ */
+export default function BingoCard() {
+  const [title, setTitle] = useState("Bingo Card");
+  const [editingTitle, setEditingTitle] = useState(false);
 
-  // Build reference index whenever manifest changes
+  const [baseFile, setBaseFile] = useState(null);
+  const [overlayFile, setOverlayFile] = useState(null);
+
+  const [lastFillCrops, setLastFillCrops] = useState([]); // 25 dataURLs
+  const [lastRects, setLastRects] = useState([]);         // 25 rects (natural px)
+  const [debugOpen, setDebugOpen] = useState(false);
+
+  const baseImgRef = useRef(null);
+  const overlayImgRef = useRef(null);
+
+  // Close debug on Esc
   useEffect(() => {
-    let alive = true;
-    (async () => {
-      if (!manifest || !manifest.length) {
-        setRefIndex([]);
-        return;
-      }
-      try {
-        const idx = await prepareRefIndex(manifest);
-        if (alive) setRefIndex(idx);
-      } catch (e) {
-        console.error('prepareRefIndex failed', e);
-        if (alive) setRefIndex([]);
-      }
-    })();
-    return () => { alive = false; };
-  }, [manifest]);
+    const onKey = (e) => {
+      if (e.key === "Escape") setDebugOpen(false);
+    };
+    if (debugOpen) window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [debugOpen]);
 
-  // Close Debug Crops with Esc
-  useEffect(() => {
-    function onEsc(e) {
-      if (e.key === 'Escape') setShowDebugCrops(false);
-    }
-    window.addEventListener('keydown', onEsc);
-    return () => window.removeEventListener('keydown', onEsc);
-  }, []);
+  const canFill = useMemo(() => !!baseFile, [baseFile]);
 
-  function toggleComplete(idx) {
-    const next = [...cells];
-    next[idx] = { ...next[idx], complete: !next[idx].complete };
-    onChange({ ...card, cells: next });
-  }
-
-  function handleTitleChange(e) {
-    onChange({ ...card, title: e.target.value });
-  }
-
-  function handleSave() {
-    onChange({ ...card, saved: true });
-  }
-
-  function handlePick() {
-    if (!isFilling) inputRef.current?.click();
-  }
-
-  function onFile(e) {
+  async function handleChooseBase(e) {
     const f = e.target.files?.[0];
-    if (f) runFillFromFile(f);
-    e.target.value = '';
+    if (f) setBaseFile(f);
+  }
+  async function handleChooseOverlay(e) {
+    const f = e.target.files?.[0];
+    if (f) setOverlayFile(f);
   }
 
-  function onDrop(e) {
-    e.preventDefault();
-    const f = e.dataTransfer?.files?.[0];
-    if (f) runFillFromFile(f);
+  async function loadImagesIfNeeded() {
+    if (baseFile && !baseImgRef.current) {
+      baseImgRef.current = await fileToImage(baseFile);
+    }
+    if (overlayFile && !overlayImgRef.current) {
+      overlayImgRef.current = await fileToImage(overlayFile);
+    }
   }
-  function onDragOver(e) { e.preventDefault(); }
 
-  async function runFillFromFile(file) {
-    setIsFilling(true);
-    setFillStep(0);
+  async function handleFill() {
     try {
-      const img = await fileToImage(file);
-      const crops = await crop25(img);   // native-size crops
-      setLastCrops(crops);               // show in Debug Crops modal
+      await loadImagesIfNeeded();
+      const baseImg = baseImgRef.current;
+      if (!baseImg) return;
 
-      const nextCells = [...cells];
+      let dataURLs = [];
+      let rects = [];
 
-      for (let i = 0; i < crops.length; i++) {
-        const cropURL = crops[i];
-
-        const out = refIndex.length
-          ? await findBestMatch(cropURL, refIndex, {
-              shortlistK: 48,
-              ssimMin: 0.82,
-              mseMax: 1100,
-              nccMin: 0.88, // NCC acceptance path
-              tau: 16,      // raise to 18–20 for low-quality JPGs
-              debug: true   // console logs while tuning
-            })
-          : null;
-
-        if (out) {
-          nextCells[i] = {
-            name: out.name,
-            sprite: out.src,
-            complete: nextCells[i]?.complete || false,
-          };
-        } else {
-          nextCells[i] = { name: '— no match —', sprite: NO_MATCH_DATA_URL, complete: false };
-        }
-
-        setFillStep(i + 1);
-        if ((i + 1) % 5 === 0) await new Promise((r) => setTimeout(r, 0));
+      if (overlayImgRef.current) {
+        // Preferred path: detect lines from the bright-green overlay
+        const detected = detectGridFromGreenOverlay(overlayImgRef.current);
+        const norm = normalizeGridLines(baseImg, detected);
+        rects = get25Rects(baseImg, norm);
+        dataURLs = crop25(baseImg, norm);
+      } else {
+        // Fallback: equal spacing (normalize handles the fallback)
+        const norm = normalizeGridLines(baseImg, { vertical: [], horizontal: [] });
+        rects = get25Rects(baseImg, norm);
+        dataURLs = crop25(baseImg, norm);
       }
 
-      onChange({ ...card, cells: nextCells });
-    } catch (e) {
-      console.error('Fill error', e);
-    } finally {
-      setIsFilling(false);
+      setLastRects(rects);
+      setLastFillCrops(dataURLs);
+      setDebugOpen(true);
+    } catch (err) {
+      console.error("[BingoCard] fill failed:", err);
     }
   }
 
   return (
-    <div className="card" onDrop={onDrop} onDragOver={onDragOver}>
-      <div className="card-header">
-        <input
-          className="title-inline"
-          value={card.title || ''}
-          onChange={handleTitleChange}
-          placeholder="Card title"
-          aria-label="Card title"
-        />
-        <div className="actions" title={refIndex.length ? '' : 'Sprites not loaded yet'}>
-          <span style={{ opacity: 0.7, fontSize: 12, marginRight: 8 }}>
-            sprites: {refIndex.length}
-          </span>
-          <button onClick={handlePick} disabled={!refIndex.length || isFilling}>Fill</button>
-          <button onClick={handleSave}>Save</button>
-          <button onClick={onRemove}>Remove</button>
-          {lastCrops?.length === 25 && (
-            <button
-              onClick={() => setShowDebugCrops(true)}
-              title="Show 25 cropped cells from the last Fill"
-            >
-              Debug Crops
-            </button>
-          )}
+    <div className="w-full max-w-5xl mx-auto">
+      {/* Header */}
+      <div className="flex items-center justify-between gap-3 mb-3">
+        {editingTitle ? (
+          <input
+            autoFocus
+            className="px-2 py-1 rounded-md bg-neutral-800 text-neutral-100 border border-neutral-700"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+            onBlur={() => setEditingTitle(false)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") setEditingTitle(false);
+              if (e.key === "Escape") setEditingTitle(false);
+            }}
+          />
+        ) : (
+          <h2
+            className="text-lg font-semibold cursor-text"
+            title="Click to rename"
+            onClick={() => setEditingTitle(true)}
+          >
+            {title}
+          </h2>
+        )}
+
+        <div className="flex items-center gap-2">
+          {/* Choose base screenshot */}
+          <label className="inline-flex items-center px-3 py-1.5 rounded-md bg-neutral-800 border border-neutral-700 cursor-pointer hover:bg-neutral-750">
+            <input type="file" accept="image/*" className="hidden" onChange={handleChooseBase} />
+            <span>Select Screenshot</span>
+          </label>
+
+          {/* Optional: choose green overlay grid PNG */}
+          <label className="inline-flex items-center px-3 py-1.5 rounded-md bg-neutral-800 border border-neutral-700 cursor-pointer hover:bg-neutral-750">
+            <input type="file" accept="image/*" className="hidden" onChange={handleChooseOverlay} />
+            <span>Grid PNG (optional)</span>
+          </label>
+
+          <button
+            className="px-3 py-1.5 rounded-md bg-neutral-200 text-neutral-900 disabled:opacity-40"
+            disabled={!canFill}
+            onClick={handleFill}
+            title={canFill ? "Analyze screenshot & fill" : "Select a screenshot first"}
+          >
+            Fill Card
+          </button>
+
+          <button
+            className="px-3 py-1.5 rounded-md bg-neutral-800 border border-neutral-700"
+            onClick={() => setDebugOpen(true)}
+            disabled={!lastFillCrops.length}
+            title="Open last crops"
+          >
+            Crops
+          </button>
         </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: 'none' }}
-          onChange={onFile}
-        />
       </div>
 
-      <div className="grid-5x5" aria-label="Bingo grid">
-        {cells.map((cell, idx) => (
+      {/* Card grid placeholder (your existing card UI can live here) */}
+      <div
+        className="grid grid-cols-5 gap-2 p-3 rounded-xl bg-neutral-900/60 border border-neutral-800"
+        style={{ minHeight: 280 }}
+      >
+        {[...Array(25)].map((_, i) => (
           <div
-            key={idx}
-            className={`cell ${cell.complete ? 'complete' : ''}`}
-            onClick={() => toggleComplete(idx)}
-            title={cell.name || '—'}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleComplete(idx)}
-          >
-            {cell.sprite ? (
-              <img src={cell.sprite} alt={cell.name || 'cell'} />
-            ) : (
-              <span className="cell-text">{cell.name || '—'}</span>
-            )}
-          </div>
+            key={i}
+            className="rounded-lg bg-neutral-800/60 border border-neutral-800 aspect-square"
+          />
         ))}
       </div>
 
-      {isFilling && (
-        <div className="fill-overlay" role="status" aria-live="polite">
-          <div className="fill-box">
-            <div className="fill-title">Analyzing screenshot…</div>
-            <div className="fill-bar">
-              <div className="fill-bar-inner" style={{ width: `${(fillStep / 25) * 100}%` }} />
-            </div>
-            <div className="fill-meta">{fillStep} / 25</div>
-            <div className="fill-hint">Tip: drop an image anywhere on this card to start.</div>
-          </div>
-        </div>
-      )}
-
-      {/* Debug crops modal */}
-      {showDebugCrops && (
+      {/* Debug Crops Modal */}
+      {debugOpen && (
         <div
-          className="fill-overlay"
-          style={{ zIndex: 9999 }}
-          onClick={() => setShowDebugCrops(false)}
+          className="fixed inset-0 z-[1000] flex items-center justify-center"
+          role="dialog"
+          aria-modal="true"
         >
+          {/* Backdrop */}
           <div
-            className="fill-box"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxHeight: '70vh', overflow: 'auto' }}
-          >
-            <div
-              className="fill-title"
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-            >
-              <span>Last Fill — Crops</span>
-              <button onClick={() => setShowDebugCrops(false)}>Close</button>
+            className="absolute inset-0 bg-black/60"
+            onClick={() => setDebugOpen(false)}
+          />
+
+          {/* Panel */}
+          <div className="relative z-[1001] w-[360px] max-h-[85vh] overflow-auto rounded-2xl bg-neutral-900 text-neutral-200 shadow-2xl border border-neutral-800">
+            <div className="sticky top-0 flex items-center justify-between px-4 py-3 border-b border-neutral-800 bg-neutral-900/90 backdrop-blur">
+              <div className="font-semibold">Last Fill — Crops</div>
+              <button
+                className="px-2 py-1 rounded-md bg-neutral-800 border border-neutral-700"
+                onClick={() => setDebugOpen(false)}
+                aria-label="Close"
+              >
+                Close
+              </button>
             </div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(5, 1fr)',
-                gap: 8,
-                background: '#111',
-                padding: 8,
-                borderRadius: 8
-              }}
-            >
-              {lastCrops.map((src, i) => (
-                <div key={i} style={{ background: '#222', padding: 6, borderRadius: 6 }}>
-                  <img
-                    src={src}
-                    alt={`crop ${i}`}
-                    style={{ width: 48, height: 48, imageRendering: 'pixelated' }}
-                  />
-                  <div
-                    style={{
-                      fontSize: 11,
-                      opacity: 0.8,
-                      marginTop: 4,
-                      textAlign: 'center'
-                    }}
-                  >
-                    {i === 12 ? 'center' : `#${i + 1}`}
+
+            <div className="px-3 py-4">
+              {/* Square grid */}
+              <div className="nbt-crops-grid">
+                {lastFillCrops.map((dataURL, idx) => (
+                  <div key={idx} className="nbt-crop-wrap">
+                    <div className="nbt-crop-tile">
+                      <img
+                        className="nbt-crop-img"
+                        src={dataURL}
+                        alt={`crop ${idx + 1}`}
+                        draggable={false}
+                      />
+                    </div>
+                    <div className="nbt-crop-label">#{idx + 1}</div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
+
+              {/* Optional: sanity line for square rects */}
+              {lastRects?.[0] && (
+                <pre className="mt-3 text-xs text-neutral-400 whitespace-pre-wrap break-all">
+                  rect[1] (w × h): {lastRects[0].w} × {lastRects[0].h}
+                </pre>
+              )}
             </div>
           </div>
         </div>

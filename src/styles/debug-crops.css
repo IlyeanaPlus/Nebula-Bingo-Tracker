@@ -1,0 +1,43 @@
+/* Debug Crops modal – square tiles, crisp pixels */
+.nbt-crops-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  padding: 6px 8px 12px;
+}
+
+.nbt-crop-tile {
+  width: 64px;            /* adjust UI size as you like */
+  aspect-ratio: 1 / 1;    /* enforce square tiles */
+  border-radius: 10px;
+  background: #1f1f1f;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.06);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.nbt-crop-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;     /* never stretch */
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.nbt-crop-label {
+  position: absolute;
+  bottom: 4px;
+  left: 6px;
+  padding: 0 6px;
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 18px;
+  color: #cfd8dc;
+  background: rgba(0,0,0,0.55);
+  pointer-events: none;
+}
+
+.nbt-crop-wrap {
+  position: relative;
+}
