@@ -2,19 +2,15 @@
 
 /**
  * Google Drive service (API-key only; works with publicly readable folders/files).
- *
- * Exports:
- *  - getConfiguredDriveInfo()
- *  - tryLoadDriveCacheJSON()
- *  - listDriveImagesFast([apiKey], [folderId]) | listDriveImagesFast({ apiKey, folderId })
+ * Returns sprites using CORS-friendly image URLs so canvas hashing works.
  */
 
 // ==== Your hardcoded values ====
 export const GOOGLE_API_KEY  = 'AIzaSyCTsyJ6Q5fogdMdLTUVnsKOuDdkCnigIE8';
 export const DRIVE_FOLDER_ID = '1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB';
 
-// Name filters applied server-side (Drive query) and client-side (extra safety)
-const EXCLUDE_NAME_CONTAINS = ['shiny']; // add more terms if needed
+// Exclusion terms (server & client)
+const EXCLUDE_NAME_CONTAINS = ['shiny'];
 
 export function getConfiguredDriveInfo() {
   const apiKey =
@@ -23,12 +19,14 @@ export function getConfiguredDriveInfo() {
     (typeof localStorage !== 'undefined' &&
       (localStorage.getItem('drive:apiKey') || localStorage.getItem('google:apiKey'))) ||
     '';
+
   const folderId =
     DRIVE_FOLDER_ID ||
     (typeof window !== 'undefined' && window.NBT_DRIVE_FOLDER_ID) ||
     (typeof localStorage !== 'undefined' &&
       (localStorage.getItem('drive:folderId') || localStorage.getItem('google:folderId'))) ||
     '';
+
   return { apiKey, folderId };
 }
 
@@ -56,20 +54,48 @@ function normalizeDriveList(list) {
   return list.files ?? list.images ?? list.items ?? list.list ?? [];
 }
 
-function directContentURL(fileId, apiKey) {
-  return `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
-    fileId
-  )}?alt=media&key=${encodeURIComponent(apiKey)}`;
-}
-
 function matchesExclusion(name = '') {
   const n = String(name).toLowerCase();
   return EXCLUDE_NAME_CONTAINS.some((term) => n.includes(term.toLowerCase()));
 }
 
+/** Upsize a Drive thumbnailLink to a larger size while staying on lh3.googleusercontent.com */
+function upsizeThumb(url) {
+  try {
+    // Common patterns: ...=s220, ...=w200-h200, a 'sz' query, etc.
+    // We attempt a few regex replacements to request ~2048px width.
+    let out = url;
+    out = out.replace(/=s\d+(-c)?$/i, '=s2048');
+    out = out.replace(/=w\d+(-h\d+)?(-p)?$/i, '=w2048');
+    // Some variants use ?sz=...
+    const u = new URL(out);
+    if (u.searchParams.has('sz')) u.searchParams.set('sz', 'w2048');
+    return u.toString();
+  } catch {
+    return url;
+  }
+}
+
+/** CORS-friendly image URL for hashing/display (prefer lh3 thumbnails) */
+function corsImageURL(file) {
+  // Prefer thumbnailLink (usually on lh3.googleusercontent.com with CORS)
+  if (file.thumbnailLink) return upsizeThumb(file.thumbnailLink);
+  // Fallback: known lh3 pattern that serves the binary with CORS
+  return `https://lh3.googleusercontent.com/d/${encodeURIComponent(file.id)}=w2048`;
+}
+
+/** Non-CORS direct download (if ever needed for raw file download) */
+function directDownloadURL(fileId, apiKey) {
+  return `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+    fileId
+  )}?alt=media&key=${encodeURIComponent(apiKey)}`;
+}
+
 /**
- * List images in a Drive folder (excludes shinies).
- * Returns: { files: Array<{ id, name, mimeType, url, thumbnailLink, webViewLink, webContentLink }> }
+ * List images in a Drive folder (excludes "shiny").
+ * Returns: { files: Array<{ id, name, mimeType, url, downloadUrl, thumbnailLink, webViewLink }> }
+ *  - url:  CORS-friendly image URL (use this for <img> and hashing)
+ *  - downloadUrl: alt=media URL (no CORS; not for canvas)
  */
 export async function listDriveImagesFast(arg1, arg2) {
   let apiKey, folderId;
@@ -88,7 +114,7 @@ export async function listDriveImagesFast(arg1, arg2) {
   let pageToken = '';
 
   for (let guard = 0; guard < 50; guard++) {
-    // Server-side filter: exclude names containing "shiny"
+    // Server-side: exclude shinies
     const q =
       `'${folderId}' in parents and trashed=false and ` +
       `mimeType contains 'image/' and not name contains 'shiny'`;
@@ -98,7 +124,7 @@ export async function listDriveImagesFast(arg1, arg2) {
       fields: 'nextPageToken,files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink)',
       pageSize: '1000',
       key: apiKey,
-      // Uncomment if you need Shared Drives:
+      // If you need Shared Drives later, you can uncomment:
       // includeItemsFromAllDrives: 'true',
       // supportsAllDrives: 'true',
       // corpora: 'allDrives',
@@ -106,7 +132,6 @@ export async function listDriveImagesFast(arg1, arg2) {
     if (pageToken) params.set('pageToken', pageToken);
 
     const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
-
     let data;
     try {
       const res = await fetch(url, { mode: 'cors' });
@@ -122,7 +147,6 @@ export async function listDriveImagesFast(arg1, arg2) {
 
     const got = Array.isArray(data.files) ? data.files : [];
     for (const f of got) {
-      // Client-side safety filter too
       if (matchesExclusion(f.name)) continue;
       files.push({
         id: f.id,
@@ -131,7 +155,8 @@ export async function listDriveImagesFast(arg1, arg2) {
         thumbnailLink: f.thumbnailLink,
         webViewLink: f.webViewLink,
         webContentLink: f.webContentLink,
-        url: directContentURL(f.id, apiKey),
+        url: corsImageURL(f),                 // <-- use this for hashing & display
+        downloadUrl: directDownloadURL(f.id, apiKey), // <-- not CORS; not for canvas
       });
     }
 
@@ -142,7 +167,7 @@ export async function listDriveImagesFast(arg1, arg2) {
   return { files };
 }
 
-// Optional helper to adapt a cached list to same shape (with exclusion)
+/** If you ever ingest a cached JSON, normalize to the same structure (with CORS URLs). */
 export function toFileObjectsFromCache(cacheJson) {
   const arr = normalizeDriveList(cacheJson);
   return arr
@@ -150,10 +175,6 @@ export function toFileObjectsFromCache(cacheJson) {
     .map((it) => {
       const id = it.id || it.fileId || it.name || '';
       const name = it.name || it.title || id || 'image';
-      const url =
-        it.url ||
-        it.webContentLink ||
-        (id ? directContentURL(id, getConfiguredDriveInfo().apiKey) : '');
       return {
         id,
         name,
@@ -161,7 +182,8 @@ export function toFileObjectsFromCache(cacheJson) {
         thumbnailLink: it.thumbnailLink,
         webViewLink: it.webViewLink,
         webContentLink: it.webContentLink,
-        url,
+        url: it.url ? upsizeThumb(it.url) : corsImageURL({ id, thumbnailLink: it.thumbnailLink }),
+        downloadUrl: directDownloadURL(id, getConfiguredDriveInfo().apiKey),
       };
     });
 }
