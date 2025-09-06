@@ -3,10 +3,12 @@ import React, { useMemo, useRef, useState } from 'react';
 import { fileToImage, crop25, calcGrayHashes, calcRGBHashes, hamming64 } from '../utils/image';
 import { weightedScore, scoreGray, scoreRGB, DEFAULT_WEIGHTS } from '../utils/match';
 
-const MAX_SCORE = 0.22; // tune: lower = stricter (0.18–0.28 typical)
-const WEIGHTS = DEFAULT_WEIGHTS;
+// Loosened threshold for robustness against background differences
+const MAX_SCORE = 0.34; // was 0.22
+// Slightly favor grayscale since board bg is largely uniform gray
+const WEIGHTS = { gray: 0.7, rgb: 0.3 } || DEFAULT_WEIGHTS;
 
-// Simple inline SVG placeholder for unmatched cells
+// Inline SVG placeholder for unmatched cells
 const NO_MATCH_SVG = encodeURI(
   `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
      <rect width="100%" height="100%" fill="#121212"/>
@@ -113,7 +115,6 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
         }
 
         setFillStep(i + 1);
-        // yield to UI every few steps
         if ((i + 1) % 5 === 0) await new Promise((r) => setTimeout(r, 0));
       }
 
@@ -132,7 +133,6 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
   function onFile(e) {
     const file = e.target.files?.[0];
     if (file) runFillFromFile(file);
-    // reset so selecting same file again still triggers change
     e.target.value = '';
   }
 
