@@ -206,7 +206,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
 
       {/* Debug crops modal */}
       {showDebugCrops && (
-        <div className="fill-overlay" onClick={() => setShowDebugCrops(false)}>
+        <div className="fill-overlay" onClick={() => setShowDebugCrops(true)}>
           <div className="fill-box" onClick={(e) => e.stopPropagation()}>
             <div className="fill-title">Last Fill – Crops (click outside to close)</div>
             <div

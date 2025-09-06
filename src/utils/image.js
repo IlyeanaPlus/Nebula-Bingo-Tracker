@@ -1,158 +1,206 @@
 // src/utils/image.js
-import { computeAhash64, computeDhash64, computePHash64, computeEdgeHash64 } from './phash';
+// Grid-detecting cropper for 5x5 bingo board screenshots.
 
-export const PAD_FRAC = 0.08;          // trim outer edges of screenshot a bit more
-const CELL_INNER_PAD = 0.12;           // trim inside each cell to avoid grid lines
-const TARGET_BG = { r: 139, g: 139, b: 139 }; // #8b8b8b board gray
+const OUT_SIZE = 32;
+const ANALYZE_MAX = 640; // max dimension during analysis
+const BRIGHT_T = 220;    // luma thresholds for line detection
+const DARK_T   = 35;
+const SMOOTH_W = 7;      // smoothing window (odd)
+const MIN_GAP_FRAC = 1/6; // min peak spacing as fraction of width/height
+const INSET_FRAC = 0.06;  // how much we inset inside each cell to avoid gridlines
 
-export async function fileToImage(file) {
-  const url = URL.createObjectURL(file);
-  const img = await loadImage(url);
-  URL.revokeObjectURL(url);
-  return img;
-}
-
-export function loadImage(src) {
+// ---------------- File -> Image ----------------
+export function fileToImage(file) {
   return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
     const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = reject;
-    img.src = src;
+    img.onload = () => { URL.revokeObjectURL(url); resolve(img); };
+    img.onerror = (e) => { URL.revokeObjectURL(url); reject(e); };
+    img.src = url;
   });
 }
 
-// Crop the screenshot into 25 cell images, avoiding grid lines/background bleed
-export function crop25(img, padFrac = PAD_FRAC) {
-  const { width, height } = img;
-  const padX = Math.floor(width * padFrac);
-  const padY = Math.floor(height * padFrac);
-  const w = width - padX * 2;
-  const h = height - padY * 2;
-  const cellW = Math.floor(w / 5);
-  const cellH = Math.floor(h / 5);
+// ---------------- Helpers ----------------
+function toCanvasFromImage(img, w, h) {
+  const c = document.createElement('canvas');
+  c.width = w; c.height = h;
+  const ctx = c.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(img, 0, 0, w, h);
+  return c;
+}
+function getImageDataFromCanvas(cnv) {
+  return cnv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, cnv.width, cnv.height);
+}
+function luma(r, g, b) { return 0.2126 * r + 0.7152 * g + 0.0722 * b; }
 
-  const innerX = Math.floor(cellW * CELL_INNER_PAD);
-  const innerY = Math.floor(cellH * CELL_INNER_PAD);
-  const innerW = cellW - innerX * 2;
-  const innerH = cellH - innerY * 2;
-
-  const crops = [];
-  const canvas = document.createElement('canvas');
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  canvas.width = innerW;
-  canvas.height = innerH;
-
-  for (let r = 0; r < 5; r++) {
-    for (let c = 0; c < 5; c++) {
-      const sx = padX + c * cellW + innerX;
-      const sy = padY + r * cellH + innerY;
-      ctx.clearRect(0, 0, innerW, innerH);
-      ctx.drawImage(img, sx, sy, innerW, innerH, 0, 0, innerW, innerH);
-      crops.push(canvas.toDataURL('image/png'));
+function smooth1D(arr, win = SMOOTH_W) {
+  const n = arr.length, out = new Float32Array(n);
+  const half = (win | 0) >> 1;
+  let sum = 0;
+  for (let i = 0; i < n + half; i++) {
+    const add = i < n ? arr[i] : 0;
+    const sub = i - win >= 0 ? arr[i - win] : 0;
+    sum += add - sub;
+    if (i >= half) {
+      const idx = i - half;
+      if (idx < n) out[idx] = sum / Math.min(win, idx + half + 1, n - (idx - half));
     }
   }
-  return crops;
+  return out;
 }
 
-// --- Background normalization helpers ---
-function estimateBorderMedian(data, w, h) {
-  const valsR = [], valsG = [], valsB = [];
-  function pushPixel(x, y) {
-    const i = (y * w + x) * 4;
-    valsR.push(data[i]); valsG.push(data[i+1]); valsB.push(data[i+2]);
+function topNPeaks(arr, N, minDist) {
+  // Greedy non-max suppression on descending scores
+  const idxs = Array.from({ length: arr.length }, (_, i) => i).sort((a, b) => arr[b] - arr[a]);
+  const chosen = [];
+  for (const i of idxs) {
+    if (arr[i] <= 0) break;
+    if (chosen.every(j => Math.abs(j - i) >= minDist)) {
+      chosen.push(i);
+      if (chosen.length === N) break;
+    }
   }
-  for (let x=0; x<w; x++) { pushPixel(x,0); pushPixel(x,h-1); }
-  for (let y=1; y<h-1; y++) { pushPixel(0,y); pushPixel(w-1,y); }
-  const med = arr => { const s = arr.sort((a,b)=>a-b); const m = Math.floor(s.length/2); return s.length%2 ? s[m] : Math.round((s[m-1]+s[m])/2); };
-  return { r: med(valsR), g: med(valsG), b: med(valsB) };
+  return chosen.sort((a, b) => a - b);
 }
 
-function normalizeToTargetBG(canvas, targetBG = TARGET_BG) {
-  const w = canvas.width, h = canvas.height;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  const img = ctx.getImageData(0,0,w,h);
-  const { data } = img;
-  const bg = estimateBorderMedian(data, w, h);
-  const dr = targetBG.r - bg.r;
-  const dg = targetBG.g - bg.g;
-  const db = targetBG.b - bg.b;
-  for (let i=0; i<data.length; i+=4) {
-    data[i]   = Math.max(0, Math.min(255, data[i]   + dr));
-    data[i+1] = Math.max(0, Math.min(255, data[i+1] + dg));
-    data[i+2] = Math.max(0, Math.min(255, data[i+2] + db));
+function spacingVariance(lines) {
+  if (lines.length < 2) return Infinity;
+  const gaps = [];
+  for (let i = 1; i < lines.length; i++) gaps.push(lines[i] - lines[i - 1]);
+  const m = gaps.reduce((a, b) => a + b, 0) / gaps.length;
+  const v = gaps.reduce((a, b) => a + (b - m) * (b - m), 0) / gaps.length;
+  return v;
+}
+
+function boundariesFromCenters(centers, max) {
+  // Build 6 boundaries from 6 line centers using mirrored midpoints.
+  const B = new Array(6);
+  // Left outer boundary
+  B[0] = Math.round(centers[0] - (centers[1] - centers[0]) / 2);
+  for (let i = 1; i < 5; i++) {
+    B[i] = Math.round((centers[i - 1] + centers[i]) / 2);
   }
-  ctx.putImageData(img,0,0);
-  return canvas;
+  // Right outer boundary
+  B[5] = Math.round(centers[5] + (centers[5] - centers[4]) / 2);
+  // Clamp
+  for (let i = 0; i < 6; i++) B[i] = Math.max(0, Math.min(max - 1, B[i]));
+  // Ensure strictly increasing
+  for (let i = 1; i < 6; i++) if (B[i] <= B[i - 1]) B[i] = B[i - 1] + 1;
+  return B;
 }
 
-async function dataURLToCanvas(dataURL, w, h) {
-  const img = await loadImage(dataURL);
-  const canvas = document.createElement('canvas');
-  canvas.width = w; canvas.height = h;
-  const ctx = canvas.getContext('2d', { willReadFrequently: true });
-  ctx.drawImage(img, 0, 0, w, h);
-  return canvas;
+function cropToDataURL(srcCanvas, sx, sy, sw, sh, outSize = OUT_SIZE) {
+  const out = document.createElement('canvas');
+  out.width = outSize; out.height = outSize;
+  const ctx = out.getContext('2d', { willReadFrequently: true });
+  ctx.imageSmoothingEnabled = true;
+  ctx.drawImage(srcCanvas, sx, sy, sw, sh, 0, 0, outSize, outSize);
+  return out.toDataURL('image/png');
 }
 
-// Hash helpers (with normalization to TARGET_BG)
-export async function calcGrayHashes(dataURL) {
-  const canvas8 = await dataURLToCanvas(dataURL, 8, 8);
-  normalizeToTargetBG(canvas8);
-  const a = computeAhash64(canvas8, true, null);
+// ---------------- Line detection ----------------
+function detectGridLinesFromImageData(im) {
+  const { width: w, height: h, data } = im;
 
-  const canvasX = await dataURLToCanvas(dataURL, 9, 8);
-  normalizeToTargetBG(canvasX);
-  const dx = computeDhash64(canvasX, 'x', true, { w: 9, h: 8 }, null);
-
-  const canvasY = await dataURLToCanvas(dataURL, 8, 9);
-  normalizeToTargetBG(canvasY);
-  const dy = computeDhash64(canvasY, 'y', true, { w: 8, h: 9 }, null);
-
-  return { a, dx, dy };
-}
-
-export async function calcRGBHashes(dataURL) {
-  const channels = {};
-  for (const ch of ['R', 'G', 'B']) {
-    const c8 = await dataURLToCanvas(dataURL, 8, 8);
-    normalizeToTargetBG(c8);
-    const a = computeAhash64(c8, false, ch);
-
-    const cX = await dataURLToCanvas(dataURL, 9, 8);
-    normalizeToTargetBG(cX);
-    const dx = computeDhash64(cX, 'x', false, { w: 9, h: 8 }, ch);
-
-    const cY = await dataURLToCanvas(dataURL, 8, 9);
-    normalizeToTargetBG(cY);
-    const dy = computeDhash64(cY, 'y', false, { w: 8, h: 9 }, ch);
-
-    channels[ch] = { a, dx, dy };
+  // Column scores: fraction of very bright OR very dark pixels (line running through)
+  const colScore = new Float32Array(w);
+  for (let x = 0; x < w; x++) {
+    let bright = 0, dark = 0;
+    for (let y = 0; y < h; y++) {
+      const i = (y * w + x) * 4;
+      const L = luma(data[i], data[i + 1], data[i + 2]);
+      if (L >= BRIGHT_T) bright++;
+      else if (L <= DARK_T) dark++;
+    }
+    colScore[x] = Math.max(bright, dark) / h;
   }
-  return { R: channels.R, G: channels.G, B: channels.B };
-}
+  const colSmooth = smooth1D(colScore, SMOOTH_W);
 
-export async function calcPHash(dataURL) {
-  const c = await dataURLToCanvas(dataURL, 32, 32);
-  normalizeToTargetBG(c);
-  return computePHash64(c);
-}
-
-export async function calcEdgeHash(dataURL) {
-  const c = await dataURLToCanvas(dataURL, 32, 32);
-  normalizeToTargetBG(c);
-  return computeEdgeHash64(c);
-}
-
-// 64-bit hex Hamming distance (0..64)
-export function hamming64(hex1, hex2) {
-  if (!hex1 || !hex2) return 64;
-  const a = BigInt('0x' + hex1);
-  const b = BigInt('0x' + hex2);
-  let x = a ^ b;
-  let count = 0;
-  while (x) {
-    x &= (x - 1n);
-    count++;
+  // Row scores
+  const rowScore = new Float32Array(h);
+  for (let y = 0; y < h; y++) {
+    let bright = 0, dark = 0;
+    for (let x = 0; x < w; x++) {
+      const i = (y * w + x) * 4;
+      const L = luma(data[i], data[i + 1], data[i + 2]);
+      if (L >= BRIGHT_T) bright++;
+      else if (L <= DARK_T) dark++;
+    }
+    rowScore[y] = Math.max(bright, dark) / w;
   }
-  return count;
+  const rowSmooth = smooth1D(rowScore, SMOOTH_W);
+
+  // Pick 6 peaks per axis with min distance ~ width/6
+  const minDx = Math.max(4, Math.floor(w * MIN_GAP_FRAC * 0.7));
+  const minDy = Math.max(4, Math.floor(h * MIN_GAP_FRAC * 0.7));
+  let xCenters = topNPeaks(colSmooth, 6, minDx);
+  let yCenters = topNPeaks(rowSmooth, 6, minDy);
+
+  // Fallback: if not enough peaks, try less strict smoothing or equal spacing
+  if (xCenters.length !== 6) xCenters = topNPeaks(colScore, 6, minDx);
+  if (yCenters.length !== 6) yCenters = topNPeaks(rowScore, 6, minDy);
+
+  // If still not 6, assume equal spacing across the tightest region where scores are non-zero
+  function fallbackCenters(len, score) {
+    const nz = [];
+    for (let i = 0; i < len; i++) if (score[i] > 0) nz.push(i);
+    if (nz.length < 10) {
+      // whole image
+      const step = len / 5;
+      return [0, 1, 2, 3, 4, 5].map(k => Math.round(k * step));
+    }
+    const left = Math.max(0, nz[0] - 2), right = Math.min(len - 1, nz[nz.length - 1] + 2);
+    const step = (right - left) / 5;
+    return [0, 1, 2, 3, 4, 5].map(k => Math.round(left + k * step));
+  }
+  if (xCenters.length !== 6) xCenters = fallbackCenters(w, colSmooth);
+  if (yCenters.length !== 6) yCenters = fallbackCenters(h, rowSmooth);
+
+  // Prefer the solution whose spacings are most uniform
+  // (we already built one; this is mainly defensive)
+  // Build boundaries from centers
+  const xBounds = boundariesFromCenters(xCenters, w);
+  const yBounds = boundariesFromCenters(yCenters, h);
+
+  return { xCenters, yCenters, xBounds, yBounds };
+}
+
+// ---------------- Public: crop25 ----------------
+export async function crop25(img) {
+  // 1) Analysis scale
+  const W = img.width, H = img.height;
+  const scale = Math.min(1, ANALYZE_MAX / Math.max(W, H));
+  const aW = Math.max(1, Math.round(W * scale));
+  const aH = Math.max(1, Math.round(H * scale));
+
+  // 2) Draw analysis canvas
+  const analyzeCanvas = toCanvasFromImage(img, aW, aH);
+  const analyzeData = getImageDataFromCanvas(analyzeCanvas);
+
+  // 3) Detect grid lines and boundaries on the analysis image
+  const { xBounds, yBounds } = detectGridLinesFromImageData(analyzeData);
+
+  // 4) Map boundaries back to original coordinates
+  const inv = scale ? (1 / scale) : 1;
+  const X = xBounds.map(v => Math.round(v * inv));
+  const Y = yBounds.map(v => Math.round(v * inv));
+
+  // 5) Build 25 crops, insetting within each cell
+  const fullCanvas = toCanvasFromImage(img, W, H);
+  const urls = [];
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      const x0 = X[c],   x1 = X[c + 1];
+      const y0 = Y[r],   y1 = Y[r + 1];
+      let w = Math.max(1, x1 - x0), h = Math.max(1, y1 - y0);
+      const inset = Math.max(1, Math.floor(Math.min(w, h) * INSET_FRAC));
+      const sx = Math.max(0, x0 + inset);
+      const sy = Math.max(0, y0 + inset);
+      const sw = Math.max(1, x1 - inset - sx);
+      const sh = Math.max(1, y1 - inset - sy);
+      urls.push(cropToDataURL(fullCanvas, sx, sy, sw, sh, OUT_SIZE));
+    }
+  }
+  return urls;
 }
