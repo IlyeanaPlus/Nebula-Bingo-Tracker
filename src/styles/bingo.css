@@ -137,3 +137,83 @@
   font-size: 11px;
   opacity: 0.6;
 }
+
+/* === Dark Mode Base === */
+:root {
+  color-scheme: dark;
+  --bg: #0b0b0b;
+  --panel: #121212;
+  --panel-2: #181818;
+  --border: #2a2a2a;
+  --text: #e8e8e8;
+  --muted: #b6b6b6;
+  --accent: #8ab4f8; /* progress + links */
+}
+
+html, body, #root {
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+}
+* { box-sizing: border-box; }
+
+a { color: var(--accent); }
+
+/* Header */
+.app-header {
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+/* Buttons */
+button {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px;
+}
+button:hover { background: #202020; }
+button:active { background: #1a1a1a; }
+button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Inputs */
+.title-inline {
+  background: var(--panel);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+.title-inline::placeholder { color: var(--muted); }
+
+/* Cards / Cells */
+.card {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  box-shadow: 0 2px 12px rgba(0,0,0,.35);
+}
+.cell {
+  background: #1a1a1a;
+  border-color: #2a2a2a;
+  color: var(--muted);
+}
+.cell.complete { outline-color: #00d084; }
+
+/* Overlay */
+.fill-overlay { background: rgba(0,0,0,.6); }
+.fill-box { background: var(--panel); border-color: var(--border); }
+
+/* Progress bar */
+.fill-bar { background: #0f0f0f; border-color: #2a2a2a; }
+.fill-bar-inner { background: var(--accent); }
+
+/* Minor text */
+.manifest-progress { color: var(--muted); margin-left: 12px; }
+
+/* Scrollbars */
+* { scrollbar-color: #2c2c2c #0f0f0f; scrollbar-width: thin; }
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: #0f0f0f; }
+*::-webkit-scrollbar-thumb {
+  background: #2c2c2c; border: 2px solid #0f0f0f; border-radius: 10px;
+}
+*::-webkit-scrollbar-thumb:hover { background: #3a3a3a; }
