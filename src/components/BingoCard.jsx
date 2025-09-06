@@ -34,7 +34,7 @@ export default function BingoCard({card,onRename,onToggle,debug}){
               </div>
               {debug&&(
                 <div className="absolute bottom-1 left-1 right-1 text-[9px] opacity-70">
-                  <div>score:{t?.match?.score??"-"}</div>
+                  <div>hit:{hits[i]?"Y":"N"} score:{t?.match?.score??"-"}</div>
                 </div>
               )}
             </button>
