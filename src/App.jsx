@@ -1,7 +1,11 @@
 // src/App.jsx
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import BingoCard from './components/BingoCard.jsx';
-import { tryLoadDriveCacheJSON, listDriveImagesFast } from './services/drive.js';
+import {
+  tryLoadDriveCacheJSON,
+  listDriveImagesFast,
+  getConfiguredDriveInfo,
+} from './services/drive.js';
 import {
   loadImageFromURL,
   loadImageFromFile,
@@ -40,41 +44,23 @@ function toLibraryItems(arr) {
     .filter(Boolean);
 }
 
-// Accept whatever shape services/drive returns and yield a flat array
 function normalizeDriveList(list) {
   if (!list) return [];
   if (Array.isArray(list)) return list;
   return list.images ?? list.files ?? list.items ?? list.list ?? [];
 }
 
-// Discover Drive config from window/localStorage (no import.meta usage)
-function getDriveConfig() {
-  const apiKey =
-    (typeof window !== 'undefined' && window.NBT_DRIVE_API_KEY) ||
-    localStorage.getItem('drive:apiKey') ||
-    localStorage.getItem('google:apiKey') ||
-    undefined;
-  const folderId =
-    (typeof window !== 'undefined' && window.NBT_DRIVE_FOLDER_ID) ||
-    localStorage.getItem('drive:folderId') ||
-    localStorage.getItem('google:folderId') ||
-    undefined;
-  return { apiKey, folderId };
-}
-
-// Call the Drive list using the working pipeline; fall back to explicit config if needed
+// Preferred → zero-arg list; fallback → use exported config explicitly
 async function driveListWithFallback() {
-  // 1) Preferred: services/drive-configured call (no args)
   try {
     const res1 = await listDriveImagesFast();
     const arr1 = normalizeDriveList(res1);
     if (arr1 && arr1.length) return arr1;
   } catch {
-    /* continue to fallbacks */
+    /* fall through */
   }
 
-  // 2) Fallback: (apiKey, folderId) or { apiKey, folderId }
-  const { apiKey, folderId } = getDriveConfig();
+  const { apiKey, folderId } = getConfiguredDriveInfo() || {};
   if (apiKey && folderId) {
     try {
       const res2 = await listDriveImagesFast(apiKey, folderId);
@@ -88,7 +74,6 @@ async function driveListWithFallback() {
     } catch {}
   }
 
-  // 3) Nothing worked
   throw new Error('Drive listing returned no items. Check API key / folder config.');
 }
 
@@ -338,21 +323,22 @@ export default function App() {
     );
   }
 
-  function autofillActiveFromLibrary() {
-    if (!activeId || filteredLibrary.length === 0) return;
-    setCards((prev) =>
-      prev.map((c) => {
-        if (c.id !== activeId) return c;
-        const total = c.rows * c.cols;
-        const picked = filteredLibrary.slice(0, total).map((it) => it.url);
-        const filled =
-          picked.length === total
-            ? picked
-            : picked.concat(Array(total - picked.length).fill(null));
-        return { ...c, tiles: filled };
-      })
-    );
-  }
+function autofillActiveFromLibrary() {
+  if (!activeId || filteredLibrary.length === 0) return;
+  setCards((prev) =>
+    prev.map((c) => {
+      if (c.id !== activeId) return c;
+      const total = c.rows * c.cols;
+      const picked = filteredLibrary.slice(0, total).map((it) => it.url);
+      const filled =
+        picked.length === total
+          ? picked
+          : picked.concat(Array(total - picked.length).fill(null));
+      return { ...c, tiles: filled };
+    })
+  );
+}
+
 
   function onBuiltPNG({ id, dataURL }) {
     try {
