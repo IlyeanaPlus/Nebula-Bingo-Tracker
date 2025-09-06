@@ -1,53 +1,80 @@
 // src/utils/image.js
-export function loadImageFromFile(file){
-  return new Promise((res,rej)=>{const img=new Image(); img.onload=()=>res(img); img.onerror=rej; img.src=URL.createObjectURL(file);});
+export async function loadImageFromFile(file){
+  const blob = file instanceof Blob ? file : new Blob([file]);
+  const bitmap = await createImageBitmap(blob);
+  return bitmap; // ImageBitmap
 }
-function toCanvas(w,h){const c=document.createElement("canvas"); c.width=w; c.height=h; return c}
-function ctx2d(w,h){return toCanvas(w,h).getContext("2d",{willReadFrequently:true})}
-function getImageData(img,x,y,w,h){const c=ctx2d(w,h); c.drawImage(img,x,y,w,h,0,0,w,h); return c.getImageData(0,0,w,h)}
-function graySample(id,w,h){const g=new Uint8Array(w*h); for(let i=0,j=0;i<id.data.length;i+=4,j++){const r=id.data[i],gn=id.data[i+1],b=id.data[i+2]; g[j]=(r*299+gn*587+b*114)/1000|0} return g}
-function splitRGB(id){const R=[],G=[],B=[]; for(let i=0;i<id.data.length;i+=4){R.push(id.data[i]);G.push(id.data[i+1]);B.push(id.data[i+2]);} return {R,G,B}}
 
-export async function computeAHash(source,size=8){
-  const id=source instanceof ImageData?source:getImageData(source,0,0,size,size);
-  const g=source instanceof ImageData?graySample(source,source.width,source.height):graySample(id,size,size);
-  const avg=g.reduce((a,b)=>a+b,0)/(g.length||1); let h=0n; for(let i=0;i<g.length;i++) if(g[i]>=avg) h|=1n<<BigInt(i);
-  return Number(h & 0xffffffffn);
+function toCanvas(src, sx=0, sy=0, sw=src.width, sh=src.height, dw=sw, dh=sh){
+  const c = document.createElement("canvas");
+  c.width = dw; c.height = dh;
+  const g = c.getContext("2d", {alpha:false, willReadFrequently:true});
+  // drawImage accepts ImageBitmap | HTMLImageElement | HTMLCanvasElement
+  g.drawImage(src, sx, sy, sw, sh, 0, 0, dw, dh);
+  return c;
 }
-export async function computeDHashX(source,size=8){
-  const w=size+1,h=size; const id=getImageData(source,0,0,w,h); const g=graySample(id,w,h);
-  let bits=0,k=0; for(let y=0;y<h;y++) for(let x=0;x<size;x++,k++){const a=g[y*w+x],b=g[y*w+x+1]; if(a>b) bits|=(1<<k)} return bits>>>0;
-}
-export async function computeDHashY(source,size=8){
-  const w=size,h=size+1; const id=getImageData(source,0,0,w,h); const g=graySample(id,w,h);
-  let bits=0,k=0; for(let y=0;y<size;y++) for(let x=0;x*w;x++,k++){} // filler to keep pattern; fixed below
-  bits=0;k=0; for(let y=0;y<size;y++) for(let x=0;x<w;x++,k++){const a=g[y*w+x],b=g[(y+1)*w+x]; if(a>b) bits|=(1<<k)} return bits>>>0;
-}
-// RGB-channel hashes
-export async function computeAHashRGB(source,size=8){
-  const id=getImageData(source,0,0,size,size); const {R,G,B}=splitRGB(id);
-  function ch(v){const avg=v.reduce((a,b)=>a+b,0)/v.length; let h=0n; for(let i=0;i<v.length;i++) if(v[i]>=avg) h|=1n<<BigInt(i); return Number(h & 0xffffffffn)}
-  return {r:ch(R),g:ch(G),b:ch(B)};
-}
-export async function computeDHashXRGB(source,size=8){
-  const w=size+1,h=size; const id=getImageData(source,0,0,w,h); const {R,G,B}=splitRGB(id);
-  function ch(v){let bits=0,k=0; for(let y=0;y<h;y++) for(let x=0;x<size;x++,k++){const a=v[y*w+x],b=v[y*w+x+1]; if(a>b) bits|=(1<<k)} return bits>>>0}
-  return {r:ch(R),g:ch(G),b:ch(B)};
-}
-export async function computeDHashYRGB(source,size=8){
-  const w=size,h=size+1; const id=getImageData(source,0,0,w,h); const {R,G,B}=splitRGB(id);
-  function ch(v){let bits=0,k=0; for(let y=0;y<size;y++) for(let x=0;x<w;x++,k++){const a=v[y*w+x],b=v[(y+1)*w+x]; if(a>b) bits|=(1<<k)} return bits>>>0}
-  return {r:ch(R),g:ch(G),b:ch(B)};
-}
-export function detectGridCrops(img,{padFrac=0.07,minGap=4,debug=false}={}){
-  const W=img.naturalWidth||img.width,H=img.naturalHeight||img.height;
-  const s=Math.min(W,H), pad=Math.floor(s*padFrac);
-  const x0=((W-s)/2|0)+pad, y0=((H-s)/2|0)+pad;
-  const S=s-2*pad, cell=(S-minGap*4)/5, gap=minGap;
-  const boxes=[]; for(let r=0;r<5;r++) for(let c=0;c<5;c++){
-    const x=Math.round(x0+c*(cell+gap)), y=Math.round(y0+r*(cell+gap));
-    boxes.push({x,y,w:Math.round(cell),h:Math.round(cell)});
+
+// Very stable 5×5 grid crops. If you want auto-detect, we can add it back,
+// but this avoids type issues and works for the standard screenshot layout.
+export function detectGridCrops(image,{padFrac=0.07}={}){
+  const W=image.width, H=image.height;
+  const padX=W*padFrac, padY=H*padFrac;
+  const innerX=padX, innerY=padY, innerW=W-2*padX, innerH=H-2*padY;
+  const cellW=innerW/5, cellH=innerH/5;
+  const out=[];
+  for(let r=0;r<5;r++){
+    for(let c=0;c<5;c++){
+      const sx=Math.round(innerX + c*cellW);
+      const sy=Math.round(innerY + r*cellH);
+      const sw=Math.round(cellW), sh=Math.round(cellH);
+      out.push(toCanvas(image, sx, sy, sw, sh, 32, 32)); // normalize size for hashing
+    }
   }
-  const crops=boxes.map(b=>getImageData(img,b.x,b.y,b.w,b.h));
-  if(debug){window.__bingo_boxes=boxes} return crops;
+  return out; // Array<HTMLCanvasElement>
+}
+
+async function toImageData(src, w, h){
+  const cv = src instanceof HTMLCanvasElement ? src : toCanvas(src, 0,0, src.width, src.height, w, h);
+  const g = cv.getContext("2d", {alpha:false, willReadFrequently:true});
+  return g.getImageData(0,0,cv.width,cv.height);
+}
+
+export async function computeAHash(src){
+  const SIZE=8;
+  const id=await toImageData(src,SIZE,SIZE);
+  const data=id.data, w=SIZE, h=SIZE;
+  // grayscale aHash
+  let sum=0; const gray=new Array(w*h);
+  for(let i=0,j=0;i<data.length;i+=4,j++){ const g=(data[i]*299 + data[i+1]*587 + data[i+2]*114)/1000|0; gray[j]=g; sum+=g; }
+  const avg=sum/(w*h); let bits=0n;
+  for(let i=0;i<gray.length;i++) if(gray[i]>=avg) bits|=1n<<BigInt(i);
+  return Number(bits & 0xffffffffn);
+}
+
+export async function computeDHashX(src){
+  const W=9, H=8;
+  const id=await toImageData(src,W,H);
+  const d=id.data; let out=0, k=0;
+  const gy=(i)=>((d[i]*299 + d[i+1]*587 + d[i+2]*114)/1000|0);
+  for(let y=0;y<H;y++){
+    for(let x=0;x<W-1;x++,k++){
+      const i1=(y*W + x)*4, i2=(y*W + x + 1)*4;
+      if(gy(i1)>gy(i2)) out|=(1<<k);
+    }
+  }
+  return out>>>0;
+}
+
+export async function computeDHashY(src){
+  const W=8, H=9;
+  const id=await toImageData(src,W,H);
+  const d=id.data; let out=0, k=0;
+  const gy=(i)=>((d[i]*299 + d[i+1]*587 + d[i+2]*114)/1000|0);
+  for(let y=0;y<H-1;y++){
+    for(let x=0;x<W;x++,k++){
+      const i1=(y*W + x)*4, i2=((y+1)*W + x)*4;
+      if(gy(i1)>gy(i2)) out|=(1<<k);
+    }
+  }
+  return out>>>0;
 }

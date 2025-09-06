@@ -2,7 +2,7 @@
 import React,{useEffect,useRef,useState} from "react";
 import Header from "./components/Header.jsx";
 import BingoCard from "./components/BingoCard.jsx";
-import {loadImageFromFile,detectGridCrops,computeAHash,computeDHashX,computeDHashY} from "./utils/image.js";
+import { loadImageFromFile, detectGridCrops, computeAHash, computeDHashX, computeDHashY } from "./utils/image.js";
 
 const ABS_THRESH=8, MIN_GAP=4, PAD_FRAC=0.07;
 
@@ -10,30 +10,32 @@ export default function App(){
   const [cards,setCards]=useState(()=>JSON.parse(localStorage.getItem("cards_v2")||"[]"));
   const [cache,setCache]=useState([]);
   const [loadProg,setLoadProg]=useState({total:0,done:0,loading:false});
-  const fillInputRef=useRef();
 
-  // persist only saved cards
   useEffect(()=>{ const saved=cards.filter(c=>c.saved!==false); localStorage.setItem("cards_v2",JSON.stringify(saved)) },[cards]);
+
+  const BASE =
+    (import.meta?.env?.BASE_URL) ||
+    document.querySelector("base")?.getAttribute("href") ||
+    "/Nebula-Bingo-Tracker/";
 
   async function forceLoadSprites(){
     setLoadProg({total:0,done:0,loading:true});
     try{
-      const r=await fetch("/drive_cache.json",{cache:"reload"});
+      const r=await fetch(`${BASE}drive_cache.json`,{cache:"reload"});
+      if(!r.ok) throw new Error(`HTTP ${r.status}`);
       const j=await r.json();
-      const norm=[]; let i=0;
-      for(const it of j){
-        norm.push({
-          id:it.id??it.name, name:it.name??String(it.id),
-          ahash:it.ahash??it.ah, dhashX:it.dhashX??it.dx, dhashY:it.dhashY??it.dy,
-          ahashR:it.ahashR, ahashG:it.ahashG, ahashB:it.ahashB,
-          dhashXR:it.dhashXR, dhashXG:it.dhashXG, dhashXB:it.dhashXB,
-          dhashYR:it.dhashYR, dhashYG:it.dhashYG, dhashYB:it.dhashYB
-        });
-        i++; if(i%25===0) setLoadProg({total:j.length,done:i,loading:true});
-      }
+      const norm=j.map(it=>({
+        id:it.id??it.name, name:it.name??String(it.id),
+        ahash:it.ahash??it.ah, dhashX:it.dhashX??it.dx, dhashY:it.dhashY??it.dy,
+        ahashR:it.ahashR, ahashG:it.ahashG, ahashB:it.ahashB,
+        dhashXR:it.dhashXR, dhashXG:it.dhashXG, dhashXB:it.dhashXB,
+        dhashYR:it.dhashYR, dhashYG:it.dhashYG, dhashYB:it.dhashYB
+      }));
       setCache(norm);
       setLoadProg({total:norm.length,done:norm.length,loading:false});
-    }catch{ setCache([]); setLoadProg({total:0,done:0,loading:false}); }
+    }catch{
+      setCache([]); setLoadProg({total:0,done:0,loading:false});
+    }
   }
 
   function newBlankCard(){
@@ -45,11 +47,11 @@ export default function App(){
 
   async function fillFromScreenshot(cardId,file){
     if(!file) return;
-    const img=await loadImageFromFile(file);
-    const crops=detectGridCrops(img,{padFrac:PAD_FRAC,minGap:MIN_GAP});
-    const tiles=await Promise.all(crops.map(async (crop)=>{
-      const ah=await computeAHash(crop);
-      const dx=await computeDHashX(crop),dy=await computeDHashY(crop);
+    const img=await loadImageFromFile(file); // ImageBitmap
+    const crops=detectGridCrops(img,{padFrac:PAD_FRAC,minGap:MIN_GAP}); // returns canvases
+    const tiles=await Promise.all(crops.map(async (cv)=>{
+      const ah=await computeAHash(cv);
+      const dx=await computeDHashX(cv), dy=await computeDHashY(cv);
       const match=findBestMatch({ah,dx,dy});
       return {ah,dx,dy,match};
     }));
@@ -101,7 +103,6 @@ export default function App(){
         ))}
         {!cards.length && <div className="opacity-70">Create a blank card to begin.</div>}
       </div>
-      <input ref={fillInputRef} type="file" accept="image/*" className="hidden"/>
     </div>
   );
 }
