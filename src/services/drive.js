@@ -4,26 +4,18 @@
  * Google Drive service (API-key only; works with publicly readable folders/files).
  *
  * Exports:
- *  - GOOGLE_API_KEY, DRIVE_FOLDER_ID (hardcoded defaults)
- *  - getConfiguredDriveInfo(): { apiKey, folderId }
- *  - tryLoadDriveCacheJSON(): Promise<object|null>
+ *  - getConfiguredDriveInfo()
+ *  - tryLoadDriveCacheJSON()
  *  - listDriveImagesFast([apiKey], [folderId]) | listDriveImagesFast({ apiKey, folderId })
- *
- * Notes:
- *  - With API key, Drive will only list files that are publicly accessible
- *    (folder & files must be "Anyone with the link — Viewer").
- *  - If you use a Shared Drive, public link sharing must be allowed by your org.
  */
 
-// OPTIONAL hardcoded values (leave empty to use runtime config)
-export const GOOGLE_API_KEY  = 'AIzaSyCTsyJ6Q5fogdMdLTUVnsKOuDdkCnigIE8'; // e.g. 'AIzaSy...'
-export const DRIVE_FOLDER_ID = '1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB';       // e.g. '1AbCDefGh...'
+// ==== Your hardcoded values ====
+export const GOOGLE_API_KEY  = 'AIzaSyCTsyJ6Q5fogdMdLTUVnsKOuDdkCnigIE8';
+export const DRIVE_FOLDER_ID = '1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB';
 
-/** Resolve API key and folder ID from (in priority order):
- *  1) hardcoded constants above
- *  2) window.NBT_DRIVE_API_KEY / window.NBT_DRIVE_FOLDER_ID
- *  3) localStorage 'drive:apiKey' | 'google:apiKey' and 'drive:folderId' | 'google:folderId'
- */
+// Name filters applied server-side (Drive query) and client-side (extra safety)
+const EXCLUDE_NAME_CONTAINS = ['shiny']; // add more terms if needed
+
 export function getConfiguredDriveInfo() {
   const apiKey =
     GOOGLE_API_KEY ||
@@ -31,23 +23,15 @@ export function getConfiguredDriveInfo() {
     (typeof localStorage !== 'undefined' &&
       (localStorage.getItem('drive:apiKey') || localStorage.getItem('google:apiKey'))) ||
     '';
-
   const folderId =
     DRIVE_FOLDER_ID ||
     (typeof window !== 'undefined' && window.NBT_DRIVE_FOLDER_ID) ||
     (typeof localStorage !== 'undefined' &&
       (localStorage.getItem('drive:folderId') || localStorage.getItem('google:folderId'))) ||
     '';
-
   return { apiKey, folderId };
 }
 
-/** Fast-path cache loader; place one of these JSON files in /public:
- *   - drive_cache.json
- *   - sprites.json
- *   - cache/drive.json
- *  Shape can be an array or { files:[...] } / { images:[...] } / etc.
- */
 export async function tryLoadDriveCacheJSON() {
   const candidates = [
     'drive_cache.json',
@@ -61,34 +45,30 @@ export async function tryLoadDriveCacheJSON() {
       const res = await fetch(path, { cache: 'no-store' });
       if (!res.ok) continue;
       return await res.json();
-    } catch {
-      /* try next */
-    }
+    } catch {}
   }
   return null;
 }
 
-/** Normalize various list shapes into a flat array of file-like objects. */
 function normalizeDriveList(list) {
   if (!list) return [];
   if (Array.isArray(list)) return list;
   return list.files ?? list.images ?? list.items ?? list.list ?? [];
 }
 
-/** Build a direct content URL for a file ID using the API key. */
 function directContentURL(fileId, apiKey) {
   return `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
     fileId
   )}?alt=media&key=${encodeURIComponent(apiKey)}`;
 }
 
+function matchesExclusion(name = '') {
+  const n = String(name).toLowerCase();
+  return EXCLUDE_NAME_CONTAINS.some((term) => n.includes(term.toLowerCase()));
+}
+
 /**
- * List images in a Drive folder.
- * Usage:
- *   await listDriveImagesFast(); // uses getConfiguredDriveInfo()
- *   await listDriveImagesFast(apiKey, folderId);
- *   await listDriveImagesFast({ apiKey, folderId });
- *
+ * List images in a Drive folder (excludes shinies).
  * Returns: { files: Array<{ id, name, mimeType, url, thumbnailLink, webViewLink, webContentLink }> }
  */
 export async function listDriveImagesFast(arg1, arg2) {
@@ -102,24 +82,23 @@ export async function listDriveImagesFast(arg1, arg2) {
   } else {
     ({ apiKey, folderId } = getConfiguredDriveInfo());
   }
-
-  if (!apiKey || !folderId) {
-    throw new Error('Missing Google Drive API key or folder ID.');
-  }
+  if (!apiKey || !folderId) throw new Error('Missing Google Drive API key or folder ID.');
 
   const files = [];
   let pageToken = '';
 
-  // Safely encode parameters with URLSearchParams to avoid malformed URLs (400s).
   for (let guard = 0; guard < 50; guard++) {
-    const q = `'${folderId}' in parents and trashed=false and mimeType contains 'image/'`;
+    // Server-side filter: exclude names containing "shiny"
+    const q =
+      `'${folderId}' in parents and trashed=false and ` +
+      `mimeType contains 'image/' and not name contains 'shiny'`;
 
     const params = new URLSearchParams({
       q,
       fields: 'nextPageToken,files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink)',
       pageSize: '1000',
       key: apiKey,
-      // Minimal flags for public folders. If you need Shared Drives, uncomment below:
+      // Uncomment if you need Shared Drives:
       // includeItemsFromAllDrives: 'true',
       // supportsAllDrives: 'true',
       // corpora: 'allDrives',
@@ -143,6 +122,8 @@ export async function listDriveImagesFast(arg1, arg2) {
 
     const got = Array.isArray(data.files) ? data.files : [];
     for (const f of got) {
+      // Client-side safety filter too
+      if (matchesExclusion(f.name)) continue;
       files.push({
         id: f.id,
         name: f.name,
@@ -161,24 +142,26 @@ export async function listDriveImagesFast(arg1, arg2) {
   return { files };
 }
 
-/* -------- Optional helper: adapt external cache shapes to the same result ------- */
+// Optional helper to adapt a cached list to same shape (with exclusion)
 export function toFileObjectsFromCache(cacheJson) {
   const arr = normalizeDriveList(cacheJson);
-  return arr.map((it) => {
-    const id = it.id || it.fileId || it.name || '';
-    const name = it.name || it.title || id || 'image';
-    const url =
-      it.url ||
-      it.webContentLink ||
-      (id ? directContentURL(id, getConfiguredDriveInfo().apiKey) : '');
-    return {
-      id,
-      name,
-      mimeType: it.mimeType || 'image/*',
-      thumbnailLink: it.thumbnailLink,
-      webViewLink: it.webViewLink,
-      webContentLink: it.webContentLink,
-      url,
-    };
-  });
+  return arr
+    .filter((it) => !matchesExclusion(it.name || it.title || it.url))
+    .map((it) => {
+      const id = it.id || it.fileId || it.name || '';
+      const name = it.name || it.title || id || 'image';
+      const url =
+        it.url ||
+        it.webContentLink ||
+        (id ? directContentURL(id, getConfiguredDriveInfo().apiKey) : '');
+      return {
+        id,
+        name,
+        mimeType: it.mimeType || 'image/*',
+        thumbnailLink: it.thumbnailLink,
+        webViewLink: it.webViewLink,
+        webContentLink: it.webContentLink,
+        url,
+      };
+    });
 }

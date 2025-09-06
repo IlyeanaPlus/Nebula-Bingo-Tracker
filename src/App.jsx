@@ -1,5 +1,5 @@
 // src/App.jsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import BingoCard from './components/BingoCard.jsx';
 import {
   tryLoadDriveCacheJSON,
@@ -20,11 +20,6 @@ function uid() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return Math.random().toString(36).slice(2);
 }
-
-// filename stem (lowercased, no extension/query)
-const stem = (nameOrUrl = '') =>
-  (nameOrUrl.split('/').pop() || '').toLowerCase().replace(/\.[a-z0-9]+(?:\?.*)?$/, '');
-
 const bitsToString = (bits) => bits.join('');
 const stringToBits = (s) => Array.from(s, (ch) => (ch === '1' ? 1 : 0));
 
@@ -33,7 +28,6 @@ function extractUrl(item) {
   if (typeof item === 'string') return item;
   return item.url ?? item.webContentLink ?? item.thumbnailLink ?? item.webViewLink ?? '';
 }
-
 function toLibraryItems(arr) {
   return (arr ?? [])
     .map((it) => {
@@ -43,64 +37,25 @@ function toLibraryItems(arr) {
     })
     .filter(Boolean);
 }
-
 function normalizeDriveList(list) {
   if (!list) return [];
   if (Array.isArray(list)) return list;
   return list.images ?? list.files ?? list.items ?? list.list ?? [];
 }
 
-// Preferred → zero-arg list; fallback → use exported config explicitly
-async function driveListWithFallback() {
-  try {
-    const res1 = await listDriveImagesFast();
-    const arr1 = normalizeDriveList(res1);
-    if (arr1 && arr1.length) return arr1;
-  } catch {
-    /* fall through */
-  }
-
-  const { apiKey, folderId } = getConfiguredDriveInfo() || {};
-  if (apiKey && folderId) {
-    try {
-      const res2 = await listDriveImagesFast(apiKey, folderId);
-      const arr2 = normalizeDriveList(res2);
-      if (arr2 && arr2.length) return arr2;
-    } catch {}
-    try {
-      const res3 = await listDriveImagesFast({ apiKey, folderId });
-      const arr3 = normalizeDriveList(res3);
-      if (arr3 && arr3.length) return arr3;
-    } catch {}
-  }
-
-  throw new Error('Drive listing returned no items. Check API key / folder config.');
-}
-
 /* ------------------------------ app ------------------------------- */
 
 export default function App() {
-  // Library + search
+  // Library (not rendered as a grid)
   const [library, setLibrary] = useState([]); // [{id,url,name}]
-  const [libQuery, setLibQuery] = useState('');
-
-  // Left-pane progress (for Get Sprites + hashing)
-  const [getSpritesProg, setGetSpritesProg] = useState({
-    stage: 'idle', // idle|fetching|hashing|done
-    done: 0,
-    total: 0,
-  });
-
-  // Small status line for Drive ops
+  // Progress + status
+  const [getSpritesProg, setGetSpritesProg] = useState({ stage: 'idle', done: 0, total: 0 });
   const [driveMsg, setDriveMsg] = useState('');
-
-  // Name index (filename stem -> url)
-  const [refIndex, setRefIndex] = useState({ count: 0, byName: new Map() });
 
   // Library aHashes cache (url -> bitString). useRef to avoid rerenders
   const libHashesRef = useRef(new Map());
 
-  // Cards + active + per-card analysis flag
+  // Cards
   const [cards, setCards] = useState([]); // [{id,title,rows,cols,tiles}]
   const [activeId, setActiveId] = useState(null);
   const [analyzing, setAnalyzing] = useState(new Set()); // Set<cardId>
@@ -115,24 +70,12 @@ export default function App() {
         if (Array.isArray(parsed.cards)) setCards(parsed.cards);
         if (parsed.activeId) setActiveId(parsed.activeId);
       }
-      const rawIdx = localStorage.getItem('refIndex:names');
-      if (rawIdx) {
-        const obj = JSON.parse(rawIdx);
-        const m = new Map(obj.byName || []);
-        setRefIndex({ count: obj.count || m.size, byName: m });
-      }
       const rawHashes = localStorage.getItem('lib:ahash');
-      if (rawHashes) {
-        const obj = JSON.parse(rawHashes); // { url: bitString }
-        libHashesRef.current = new Map(Object.entries(obj));
-      }
+      if (rawHashes) libHashesRef.current = new Map(Object.entries(JSON.parse(rawHashes)));
     } catch {}
   }, []);
-
   useEffect(() => {
-    try {
-      localStorage.setItem('cards:v1', JSON.stringify({ cards, activeId }));
-    } catch {}
+    try { localStorage.setItem('cards:v1', JSON.stringify({ cards, activeId })); } catch {}
   }, [cards, activeId]);
 
   /* ----------------------- initial library load ---------------------- */
@@ -150,22 +93,15 @@ export default function App() {
             return;
           }
         }
-      } catch {
-        /* ignore and try live */
-      }
-
+      } catch {}
       try {
-        const arr = await driveListWithFallback();
-        if (!cancelled && arr) {
-          setLibrary(toLibraryItems(arr));
-        }
-      } catch (e) {
+        const arr = normalizeDriveList(await listDriveImagesFast());
+        if (!cancelled) setLibrary(toLibraryItems(arr));
+      } catch {
         if (!cancelled) setDriveMsg('Drive not available yet. You can still upload images.');
       }
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   /* ------------------------- get sprites flow ------------------------ */
@@ -175,59 +111,38 @@ export default function App() {
     setGetSpritesProg({ stage: 'fetching', done: 0, total: 0 });
 
     try {
-      const arr = await driveListWithFallback();
+      const arr = normalizeDriveList(await listDriveImagesFast());
       const items = toLibraryItems(arr);
       setLibrary(items);
-      setDriveMsg(`Fetched ${items.length} sprites from Drive.`);
+      setDriveMsg(`Fetched ${items.length} sprites (shinies excluded).`);
 
-      // build name index
-      const byName = new Map();
-      for (const it of items) {
-        const key = stem(it.name || it.url);
-        if (key) byName.set(key, it.url);
-      }
-      setRefIndex({ count: byName.size, byName });
-      try {
-        localStorage.setItem(
-          'refIndex:names',
-          JSON.stringify({ count: byName.size, byName: Array.from(byName.entries()) })
-        );
-      } catch {}
-
-      // compute aHash for library (with progress)
+      // Hash with progress
       setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
       const hashes = libHashesRef.current;
-      const persisted = Object.fromEntries(hashes); // to serialize later
+      const persisted = Object.fromEntries(hashes);
       let done = 0;
 
       for (const it of items) {
         if (!hashes.has(it.url)) {
           try {
             const img = await loadImageFromURL(it.url);
-            const bits = ahashFromImage(img, 8); // 64-bit aHash
+            const bits = ahashFromImage(img, 8);
             const bitStr = bitsToString(bits);
             hashes.set(it.url, bitStr);
             persisted[it.url] = bitStr;
-          } catch {
-            // ignore failed items
-          }
+          } catch {}
         }
         done++;
         setGetSpritesProg({ stage: 'hashing', done, total: items.length });
-        await new Promise((r) => setTimeout(r, 0)); // yield
+        await new Promise((r) => setTimeout(r, 0));
       }
-
-      try {
-        localStorage.setItem('lib:ahash', JSON.stringify(persisted));
-      } catch {}
+      try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
 
       setGetSpritesProg({ stage: 'done', done: items.length, total: items.length });
       setTimeout(() => setGetSpritesProg({ stage: 'idle', done: 0, total: 0 }), 1200);
     } catch (e) {
       console.error('[GetSprites] failed:', e);
-      setDriveMsg(
-        'Get Sprites failed. Check Drive API key / folder ID in services/drive.js or set them via window/localStorage.'
-      );
+      setDriveMsg('Get Sprites failed. Verify Drive API key/folder & public access.');
       setGetSpritesProg({ stage: 'idle', done: 0, total: 0 });
     }
   }
@@ -236,14 +151,12 @@ export default function App() {
     const items = library;
     const hashes = libHashesRef.current;
     const persisted = Object.fromEntries(hashes);
-
     let missing = 0;
     for (const it of items) if (!hashes.has(it.url)) missing++;
     if (missing === 0) return;
 
     setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
     let done = 0;
-
     for (const it of items) {
       if (!hashes.has(it.url)) {
         try {
@@ -258,23 +171,9 @@ export default function App() {
       setGetSpritesProg({ stage: 'hashing', done, total: items.length });
       await new Promise((r) => setTimeout(r, 0));
     }
-
-    try {
-      localStorage.setItem('lib:ahash', JSON.stringify(persisted));
-    } catch {}
-
+    try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
     setGetSpritesProg({ stage: 'idle', done: 0, total: 0 });
   }
-
-  /* ----------------------- derived: filtered lib --------------------- */
-
-  const filteredLibrary = useMemo(() => {
-    const q = libQuery.trim().toLowerCase();
-    if (!q) return library;
-    return library.filter(
-      (it) => it.name?.toLowerCase().includes(q) || it.url?.toLowerCase().includes(q)
-    );
-  }, [library, libQuery]);
 
   /* ------------------------------ cards ------------------------------ */
 
@@ -283,11 +182,9 @@ export default function App() {
     const filled =
       Array.isArray(tiles) && tiles.length === total ? tiles : Array(total).fill(null);
     const id = uid();
-    const card = { id, title, rows, cols, tiles: filled };
-    setCards((prev) => [...prev, card]);
+    setCards((prev) => [...prev, { id, title, rows, cols, tiles: filled }]);
     setActiveId(id);
   }
-
   function removeCard(id) {
     setCards((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
@@ -295,55 +192,31 @@ export default function App() {
       setActiveId(remaining[0]?.id ?? null);
     }
   }
-
   function renameCard(id, newTitle) {
     setCards((prev) => prev.map((c) => (c.id === id ? { ...c, title: newTitle } : c)));
   }
-
-  function addTileToActive(url) {
-    if (!activeId) return;
-    setCards((prev) =>
-      prev.map((c) => {
-        if (c.id !== activeId) return c;
-        const next = c.tiles.slice();
-        const emptyIdx = next.findIndex((t) => !t);
-        if (emptyIdx !== -1) next[emptyIdx] = url;
-        else next[next.length - 1] = url;
-        return { ...c, tiles: next };
-      })
-    );
-  }
-
   function clearActiveCard() {
     if (!activeId) return;
     setCards((prev) =>
-      prev.map((c) =>
-        c.id === activeId ? { ...c, tiles: Array(c.rows * c.cols).fill(null) } : c
-      )
+      prev.map((c) => (c.id === activeId ? { ...c, tiles: Array(c.rows * c.cols).fill(null) } : c))
     );
   }
-
-function autofillActiveFromLibrary() {
-  if (!activeId || filteredLibrary.length === 0) return;
-  setCards((prev) =>
-    prev.map((c) => {
-      if (c.id !== activeId) return c;
-      const total = c.rows * c.cols;
-      const picked = filteredLibrary.slice(0, total).map((it) => it.url);
-      const filled =
-        picked.length === total
-          ? picked
-          : picked.concat(Array(total - picked.length).fill(null));
-      return { ...c, tiles: filled };
-    })
-  );
-}
-
-
+  // Simple autofill (no UI library): take first N sprites
+  function autofillActiveFromLibrary() {
+    if (!activeId || library.length === 0) return;
+    setCards((prev) =>
+      prev.map((c) => {
+        if (c.id !== activeId) return c;
+        const total = c.rows * c.cols;
+        const picked = library.slice(0, total).map((it) => it.url);
+        const filled =
+          picked.length === total ? picked : picked.concat(Array(total - picked.length).fill(null));
+        return { ...c, tiles: filled };
+      })
+    );
+  }
   function onBuiltPNG({ id, dataURL }) {
-    try {
-      localStorage.setItem(`card:${id}:png`, dataURL);
-    } catch {}
+    try { localStorage.setItem(`card:${id}:png`, dataURL); } catch {}
   }
 
   /* ----------------------- screenshot analysis ---------------------- */
@@ -352,9 +225,7 @@ function autofillActiveFromLibrary() {
     setAnalyzing((s) => new Set([...s, id]));
     try {
       await ensureLibraryHashes();
-
       const img = await loadImageFromFile(file);
-
       const card = cards.find((c) => c.id === id);
       if (!card) return;
       const { rows, cols } = card;
@@ -374,7 +245,6 @@ function autofillActiveFromLibrary() {
           const cellCanvas = cropToCanvas(img, x, y, w, h);
 
           const cellBits = ahashFromImage(cellCanvas, 8);
-
           let bestUrl = null;
           let bestDist = Infinity;
           for (const it of library) {
@@ -382,25 +252,14 @@ function autofillActiveFromLibrary() {
             if (!bitStr) continue;
             const refBits = stringToBits(bitStr);
             const d = hammingDistanceBits(cellBits, refBits);
-            if (d < bestDist) {
-              bestDist = d;
-              bestUrl = it.url;
-            }
+            if (d < bestDist) { bestDist = d; bestUrl = it.url; }
           }
-
-          if (bestUrl) {
-            nextTiles[r * cols + c] = bestUrl;
-          }
+          if (bestUrl) nextTiles[r * cols + c] = bestUrl;
         }
       }
-
       setCards((prev) => prev.map((c) => (c.id === id ? { ...c, tiles: nextTiles } : c)));
     } finally {
-      setAnalyzing((s) => {
-        const n = new Set(s);
-        n.delete(id);
-        return n;
-      });
+      setAnalyzing((s) => { const n = new Set(s); n.delete(id); return n; });
     }
   }
 
@@ -416,16 +275,13 @@ function autofillActiveFromLibrary() {
     <div style={styles.page}>
       <header style={styles.header}>
         <h1 style={styles.h1}>Nebula Bingo Tracker</h1>
-
         <div style={styles.actions}>
-          <button style={styles.btn} onClick={() => addCard({})}>
-            New Card
-          </button>
+          <button style={styles.btn} onClick={() => addCard({})}>New Card</button>
           <button
             style={{ ...styles.btn, ...(activeId ? {} : styles.btnDisabled) }}
             disabled={!activeId}
             onClick={autofillActiveFromLibrary}
-            title={activeId ? 'Autofill from library' : 'Create/select a card first'}
+            title={activeId ? 'Autofill from sprites' : 'Create/select a card first'}
           >
             Autofill
           </button>
@@ -436,36 +292,14 @@ function autofillActiveFromLibrary() {
           >
             Clear Card
           </button>
-
-          {/* Uploads (adds to library) */}
-          <label style={styles.uploadLabel}>
-            <input
-              type="file"
-              multiple
-              accept="image/*"
-              onChange={(e) => {
-                const files = Array.from(e.target.files || []);
-                if (!files.length) return;
-                const items = files.map((file) => ({
-                  id: uid(),
-                  url: URL.createObjectURL(file),
-                  name: file.name,
-                }));
-                setLibrary((prev) => [...items, ...prev]);
-                e.target.value = '';
-              }}
-              style={{ display: 'none' }}
-            />
-            <span>Upload Images</span>
-          </label>
         </div>
       </header>
 
       <main style={styles.main}>
-        {/* Left: library pane with Get Sprites + progress */}
-        <section style={styles.libraryPane}>
+        {/* Left: minimal tools only */}
+        <section style={styles.toolsPane}>
           <div style={styles.libraryToolbar}>
-            <button style={styles.btn} onClick={getSprites} title="Fetch from Drive and build index">
+            <button style={styles.btn} onClick={getSprites} title="Fetch from Drive and index">
               Get Sprites
             </button>
             {progressPct !== null && (
@@ -474,40 +308,9 @@ function autofillActiveFromLibrary() {
               </div>
             )}
           </div>
-
           {!!driveMsg && <div style={styles.driveMsg}>{driveMsg}</div>}
-
-          <div style={styles.libraryHeader}>
-            <div style={styles.libraryTitle}>Image Library</div>
-            <input
-              placeholder="Search…"
-              value={libQuery}
-              onChange={(e) => setLibQuery(e.target.value)}
-              style={styles.search}
-            />
-            <span style={{ fontSize: 12, color: '#9bb4ff' }}>
-              {refIndex.count ? `Indexed: ${refIndex.count}` : ''}
-            </span>
-          </div>
-
-          <div style={styles.libraryGrid}>
-            {filteredLibrary.map((it) => (
-              <button
-                key={it.id}
-                style={styles.thumb}
-                title={it.name}
-                onClick={() => addTileToActive(it.url)}
-              >
-                <img
-                  src={it.url}
-                  alt={it.name}
-                  style={{ objectFit: 'contain', width: '100%', height: '100%' }}
-                />
-              </button>
-            ))}
-            {filteredLibrary.length === 0 && (
-              <div style={styles.emptyNote}>No images yet. Click “Get Sprites” or upload.</div>
-            )}
+          <div style={styles.smallInfo}>
+            Folder: {getConfiguredDriveInfo().folderId?.slice(0, 8) || '(none)'}… • Sprites: {library.length}
           </div>
         </section>
 
@@ -538,10 +341,7 @@ function autofillActiveFromLibrary() {
               );
             })}
           </div>
-
-          {cards.length === 0 && (
-            <div style={styles.emptyCards}>Create a card to get started.</div>
-          )}
+          {cards.length === 0 && <div style={styles.emptyCards}>Create a card to get started.</div>}
         </section>
       </main>
     </div>
@@ -577,14 +377,6 @@ const styles = {
     cursor: 'pointer',
   },
   btnDisabled: { opacity: 0.5, cursor: 'not-allowed' },
-  uploadLabel: {
-    background: '#2b2b2b',
-    border: '1px solid #3a3a3a',
-    padding: '8px 12px',
-    borderRadius: '12px',
-    cursor: 'pointer',
-    userSelect: 'none',
-  },
 
   main: {
     display: 'grid',
@@ -594,19 +386,18 @@ const styles = {
     minHeight: 0,
   },
 
-  // Library
-  libraryPane: {
+  // Minimal left pane
+  toolsPane: {
     borderRight: '1px solid #222',
     padding: '12px',
     display: 'flex',
     flexDirection: 'column',
-    minHeight: 0,
+    gap: '10px',
   },
   libraryToolbar: {
     display: 'flex',
     alignItems: 'center',
     gap: '10px',
-    marginBottom: '10px',
   },
   progressWrap: {
     flex: 1,
@@ -616,54 +407,9 @@ const styles = {
     borderRadius: 999,
     overflow: 'hidden',
   },
-  progressBar: {
-    height: '100%',
-    background: '#4e7cff',
-  },
-  driveMsg: {
-    color: '#9bb4ff',
-    fontSize: 12,
-    marginBottom: 8,
-  },
-  libraryHeader: {
-    display: 'grid',
-    gridTemplateColumns: 'auto 1fr auto',
-    alignItems: 'center',
-    gap: '8px',
-    marginBottom: '10px',
-  },
-  libraryTitle: { fontWeight: 600 },
-  search: {
-    flex: 1,
-    background: '#1b1b1b',
-    color: '#eee',
-    border: '1px solid #2c2c2c',
-    borderRadius: '10px',
-    padding: '6px 10px',
-  },
-  libraryGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(3, 1fr)',
-    gap: '8px',
-    overflowY: 'auto',
-    paddingRight: '4px',
-  },
-  thumb: {
-    width: '100%',
-    aspectRatio: '1 / 1',
-    borderRadius: '10px',
-    border: '1px solid #2a2a2a',
-    background: '#151515',
-    overflow: 'hidden',
-    cursor: 'pointer',
-  },
-  emptyNote: {
-    color: '#aaa',
-    fontSize: '0.9rem',
-    gridColumn: '1 / -1',
-    textAlign: 'center',
-    padding: '12px 0',
-  },
+  progressBar: { height: '100%', background: '#4e7cff' },
+  driveMsg: { color: '#9bb4ff', fontSize: 12 },
+  smallInfo: { color: '#aaa', fontSize: 12 },
 
   // Cards
   cardsPane: { padding: '12px', minWidth: 0 },
