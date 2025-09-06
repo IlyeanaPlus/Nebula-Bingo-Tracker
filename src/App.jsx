@@ -1,7 +1,6 @@
-// src/App.jsx
 import React, {useEffect,useMemo,useRef,useState} from "react";
 import BingoCard from "./components/BingoCard.jsx";
-import {loadImageFromFile,computeAHash,computeDHashX,computeDHashY,detectGridCrops} from "./utils/image.js";
+import {loadImageFromFile,computeAHash,computeDHashX,computeDHashY,computeAHashRGB,computeDHashXRGB,computeDHashYRGB,detectGridCrops} from "./utils/image.js";
 import {tryLoadDriveCacheJSON} from "./services/drive.js";
 
 const ABS_THRESH=8,MIN_GAP=4,PAD_FRAC=0.07;
@@ -23,8 +22,10 @@ export default function App(){
     const tiles=await Promise.all(crops.map(async (crop)=>{
       const ah=await computeAHash(crop);
       const dx=await computeDHashX(crop),dy=await computeDHashY(crop);
-      const match=findBestMatch({ah,dx,dy});
-      return {ah,dx,dy,match};
+      const ahRGB=await computeAHashRGB(crop);
+      const dxRGB=await computeDHashXRGB(crop), dyRGB=await computeDHashYRGB(crop);
+      const match=findBestMatch({ah,dx,dy,ahRGB,dxRGB,dyRGB});
+      return {ah,dx,dy,ahRGB,dxRGB,dyRGB,match};
     }));
     const id=`card_${Date.now()}`;
     const title=f.name.replace(/\.\w+$/,"");
@@ -36,14 +37,24 @@ export default function App(){
 
   function findBestMatch(sig){
     let best=null,score=1e9;
+    const useRGB = (it)=> it.ahashR!=null && it.ahashG!=null && it.ahashB!=null
+                      && it.dhashXR!=null && it.dhashXG!=null && it.dhashXB!=null
+                      && it.dhashYR!=null && it.dhashYG!=null && it.dhashYB!=null;
     for(const it of cache){
-      const a=it.ahash||it.ah, x=it.dhashX||it.dx, y=it.dhashY||it.dy;
-      if(a==null||x==null||y==null) continue;
-      const sa=popcnt(sig.ah^a), sx=popcnt(sig.dx^x), sy=popcnt(sig.dy^y);
-      const s=sa+sx+sy;
-      if(s<score){score=s;best=it}
+      if(useRGB(it) && sig.ahRGB){
+        const s =
+          popcnt(sig.ahRGB.r ^ it.ahashR) + popcnt(sig.ahRGB.g ^ it.ahashG) + popcnt(sig.ahRGB.b ^ it.ahashB) +
+          popcnt(sig.dxRGB.r ^ it.dhashXR) + popcnt(sig.dxRGB.g ^ it.dhashXG) + popcnt(sig.dxRGB.b ^ it.dhashXB) +
+          popcnt(sig.dyRGB.r ^ it.dhashYR) + popcnt(sig.dyRGB.g ^ it.dhashYG) + popcnt(sig.dyRGB.b ^ it.dhashYB);
+        if(s<score){score=s;best=it}
+      }else{
+        const a=it.ahash??it.ah, x=it.dhashX??it.dx, y=it.dhashY??it.dy;
+        if(a==null||x==null||y==null) continue;
+        const s = popcnt(sig.ah^a) + popcnt(sig.dx^x) + popcnt(sig.dy^y);
+        if(s<score){score=s;best=it}
+      }
     }
-    return score<=ABS_THRESH?{name:best.name,id:best.id||best.name,score}:null;
+    return (best && score<=ABS_THRESH)?{name:best.name,id:best.id||best.name,score}:null;
   }
 
   function popcnt(n){n=n>>>0;let c=0;while(n){n&=n-1;c++}return c}

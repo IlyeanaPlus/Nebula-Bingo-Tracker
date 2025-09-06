@@ -8,7 +8,16 @@ export async function tryLoadDriveCacheJSON(){
       name:x.name??x.title??String(x.id),
       ahash:x.ahash??x.ah,
       dhashX:x.dhashX??x.dx,
-      dhashY:x.dhashY??x.dy
+      dhashY:x.dhashY??x.dy,
+      ahashR:x.ahashR??x.ahr,
+      ahashG:x.ahashG??x.ahg,
+      ahashB:x.ahashB??x.ahb,
+      dhashXR:x.dhashXR??x.dxr,
+      dhashXG:x.dhashXG??x.dxg,
+      dhashXB:x.dhashXB??x.dxb,
+      dhashYR:x.dhashYR??x.dyr,
+      dhashYG:x.dhashYG??x.dyg,
+      dhashYB:x.dhashYB??x.dyb
     }));
   }catch{ return [] }
 }
