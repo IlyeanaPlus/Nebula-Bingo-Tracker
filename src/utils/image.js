@@ -1,352 +1,311 @@
-// src/utils/image.js
-// Outer-frame detection → optional calibrated inner grid via green overlay →
-// crop *square* interiors at native resolution (no scaling).
+/* src/utils/image.js
+   Nebula Bingo Tracker — grid & crop utilities (full drop-in)
 
-// ---------- Tunables ----------
-const ANALYZE_MAX = 900;       // analysis downscale cap (does not affect crop resolution)
-const EDGE_T = 26;             // gradient threshold for outer-frame detection (try 22–34)
-const SMOOTH_W = 9;            // smoothing window for projections
-const LINE_INNER_OFFSET = 2;   // px stepped inside detected outer border (full-res)
-const CELL_INSET_FRAC = 0.08;  // 8% inset within each cell to avoid gridlines
+   Features:
+   - Works strictly in NATURAL pixel space (uses naturalWidth/naturalHeight)
+   - Robust 6×6 line recovery:
+       * Prefer green-overlay detection (G high, R/B low)
+       * Merge jittery lines; NMS to pick peaks; ensure exactly six per axis
+       * Fallback to saved gridFractions; final fallback = equal spacing
+   - Builds 25 square interior crops with configurable inset
+   - Safe, clamped cropping to PNG dataURLs
+*/
 
-// ---------- Public: file -> HTMLImageElement ----------
-export function fileToImage(file) {
-  return new Promise((resolve, reject) => {
-    const u = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => { URL.revokeObjectURL(u); resolve(img); };
-    img.onerror = (e) => { URL.revokeObjectURL(u); reject(e); };
-    img.src = u;
-  });
-}
+const LINE_MERGE_TOL = 3;           // px, at natural size
+const MIN_PEAK_SEP   = 14;          // px, distance between line peaks at natural size
+const NMS_RADIUS     = 6;           // px, non-max suppression window
+const DEFAULT_INSET_FRAC = 0.08;    // 8% padding of square side on each edge
 
-// ---------- Canvas helpers ----------
-function toCanvasFromImage(img, w, h) {
-  const c = document.createElement('canvas');
-  c.width = w; c.height = h;
-  const ctx = c.getContext('2d', { willReadFrequently: true });
-  ctx.imageSmoothingEnabled = true;
-  ctx.drawImage(img, 0, 0, w, h);
-  return c;
-}
-function getImageData(cnv) {
-  return cnv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, cnv.width, cnv.height);
-}
-function cropToDataURLNative(srcCanvas, sx, sy, sw, sh) {
-  const out = document.createElement('canvas');
-  out.width  = Math.max(1, Math.round(sw));
-  out.height = Math.max(1, Math.round(sh));
-  out.getContext('2d', { willReadFrequently: true }).drawImage(
-    srcCanvas,
-    Math.round(sx), Math.round(sy), Math.round(sw), Math.round(sh),
-    0, 0, out.width, out.height
-  );
-  return out.toDataURL('image/png');
-}
-
-// ---------- Grayscale + Sobel projections (outer frame) ----------
-function toGray(im) {
-  const { data, width:w, height:h } = im;
-  const g = new Float32Array(w * h);
-  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-    g[p] = 0.2126 * data[i] + 0.7152 * data[i + 1] + 0.0722 * data[i + 2];
-  }
-  return { g, w, h };
-}
-function sobelProjections(gray) {
-  const { g, w, h } = gray;
-  const col = new Float32Array(w);
-  const row = new Float32Array(h);
-
-  for (let y = 1; y < h - 1; y++) {
-    for (let x = 1; x < w - 1; x++) {
-      const i  = y * w + x;
-      const gx = -g[i - w - 1] - 2 * g[i - 1] - g[i + w - 1]
-               +  g[i - w + 1] + 2 * g[i + 1] + g[i + w + 1];
-      const gy = -g[i - w - 1] - 2 * g[i - w] - g[i - w + 1]
-               +  g[i + w - 1] + 2 * g[i + w] + g[i + w + 1];
-      const magX = Math.abs(gx);
-      const magY = Math.abs(gy);
-      if (magX > EDGE_T) col[x] += magX;   // vertical line energy
-      if (magY > EDGE_T) row[y] += magY;   // horizontal line energy
-    }
-  }
-  return { col, row };
-}
-function smooth1D(arr, win = SMOOTH_W) {
-  const n = arr.length, out = new Float32Array(n);
-  const w = Math.max(1, win | 0), half = (w - 1) >> 1;
-  let sum = 0;
-  for (let i = 0; i < n + half; i++) {
-    const add = i < n ? arr[i] : 0;
-    const sub = (i - w >= 0) ? arr[i - w] : 0;
-    sum += add - sub;
-    if (i >= half) {
-      const idx = i - half;
-      if (idx < n) out[idx] = sum / Math.min(w, idx + half + 1, n - (idx - half));
-    }
-  }
-  return out;
-}
-function argmaxRange(arr, lo, hi) {
-  lo = Math.max(0, lo | 0); hi = Math.min(arr.length, hi | 0);
-  let best = lo, bestV = -Infinity;
-  for (let i = lo; i < hi; i++) { if (arr[i] > bestV) { best = i; bestV = arr[i]; } }
-  return best;
-}
-
-// Detect only the outer frame (left/right/top/bottom) robustly.
-function detectOuterFrame(im) {
-  const gray = toGray(im);
-  const { col, row } = sobelProjections(gray);
-  const colS = smooth1D(col);
-  const rowS = smooth1D(row);
-  const w = im.width, h = im.height;
-
-  const left   = argmaxRange(colS, 0, Math.floor(w * 0.25));
-  const right  = argmaxRange(colS, Math.floor(w * 0.75), w);
-  const top    = argmaxRange(rowS, 0, Math.floor(h * 0.25));
-  const bottom = argmaxRange(rowS, Math.floor(h * 0.75), h);
-
-  // enforce order & minimum width/height
-  const L = Math.max(0, Math.min(left, right - 10));
-  const R = Math.min(w - 1, Math.max(right, L + 10));
-  const T = Math.max(0, Math.min(top, bottom - 10));
-  const B = Math.min(h - 1, Math.max(bottom, T + 10));
-  return { L, R, T, B };
-}
-
-// ---------- Calibration via green overlay (robust to 1px AA lines) ----------
-function extractFractionsFromOverlayImage(overlayImg) {
-  const w = overlayImg.width, h = overlayImg.height;
-  const cnv = toCanvasFromImage(overlayImg, w, h);
-  const { data } = getImageData(cnv);
-
-  // Count green-dominant pixels per column/row
-  const colHits = new Float32Array(w);
-  const rowHits = new Float32Array(h);
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = (y * w + x) * 4;
-      const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-      if (a < 64) continue;
-      // Green-dominant (tolerant of anti-aliased neon)
-      if (g > 100 && g > r * 1.4 && g > b * 1.4) {
-        colHits[x] += 1;
-        rowHits[y] += 1;
-      }
-    }
-  }
-
-  // 1D dilation to thicken 1px lines
-  function dilate1D(arr) {
-    const n = arr.length, out = new Float32Array(n);
-    for (let i = 0; i < n; i++) {
-      const a = i > 0 ? arr[i - 1] : 0;
-      const b = arr[i];
-      const c = i + 1 < n ? arr[i + 1] : 0;
-      out[i] = a + b + c;
-    }
-    return out;
-  }
-  const colScore = dilate1D(colHits);
-  const rowScore = dilate1D(rowHits);
-
-  // Light smoothing
-  function smooth1(arr, win = 5) {
-    const n = arr.length, out = new Float32Array(n);
-    const half = Math.max(0, (win | 0) - 1) >> 1;
-    let sum = 0;
-    for (let i = 0; i < n + half; i++) {
-      const add = i < n ? arr[i] : 0;
-      const sub = i - (2 * half + 1) >= 0 ? arr[i - (2 * half + 1)] : 0;
-      sum += add - sub;
-      if (i >= half) {
-        const idx = i - half;
-        if (idx < n) out[idx] = sum / Math.min(2 * half + 1, idx + half + 1, n - (idx - half));
-      }
-    }
-    return out;
-  }
-  const colSmooth = smooth1(colScore, 5);
-  const rowSmooth = smooth1(rowScore, 5);
-
-  // Pick exactly 6 peaks with non-max suppression
-  function topKPeaksNMS(arr, K, radius = 3) {
-    const idxs = Array.from({ length: arr.length }, (_, i) => i)
-      .sort((a, b) => arr[b] - arr[a]);
-    const chosen = [];
-    const taken = new Uint8Array(arr.length);
-    for (const i of idxs) {
-      if (arr[i] <= 0) break;
-      if (taken[i]) continue;
-      chosen.push(i);
-      for (let d = -radius; d <= radius; d++) {
-        const j = i + d;
-        if (j >= 0 && j < taken.length) taken[j] = 1;
-      }
-      if (chosen.length === K) break;
-    }
-    return chosen.sort((a, b) => a - b);
-  }
-
-  let xCenters = topKPeaksNMS(colSmooth, 6, 3);
-  let yCenters = topKPeaksNMS(rowSmooth, 6, 3);
-
-  console.log('Overlay found lines:', xCenters.length, yCenters.length);
-  if (xCenters.length !== 6 || yCenters.length !== 6) {
-    console.warn('⚠ Overlay parse did not find 6x6. Got', xCenters, yCenters);
-  }
-
-  // Fractions inside the overlay’s own outer frame
-  const L = xCenters[0], R = xCenters[xCenters.length - 1];
-  const T = yCenters[0], B = yCenters[yCenters.length - 1];
-  const xFracs = xCenters.map(x => (x - L) / (R - L || 1));
-  const yFracs = yCenters.map(y => (y - T) / (B - T || 1));
-
-  return { xFracs, yFracs };
-}
-
-// Save/load calibration
-function saveGridFractions(fracs) {
-  localStorage.setItem('nbt.gridFractions', JSON.stringify(fracs));
-}
-function loadGridFractions() {
+// --- LocalStorage helpers (fractions: 0..1)
+function readSavedFractions() {
   try {
-    const raw = localStorage.getItem('nbt.gridFractions');
-    return raw ? JSON.parse(raw) : null;
+    const raw = localStorage.getItem("nbt.gridFractions");
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj) return null;
+    // expect { v: number[6], h: number[6] }
+    if (!Array.isArray(obj.v) || !Array.isArray(obj.h)) return null;
+    if (obj.v.length !== 6 || obj.h.length !== 6) return null;
+    return obj;
   } catch { return null; }
 }
 
-// Console helpers (must be triggered by a user gesture in some browsers)
-window.NebulaLoadGridOverlay = async function(file) {
-  const img = await fileToImage(file);
-  const fracs = extractFractionsFromOverlayImage(img);
-  saveGridFractions(fracs);
-  console.log('Saved grid fractions:', fracs);
-};
-window.NebulaPickGridOverlay = function() {
-  const inp = document.createElement('input');
-  inp.type = 'file';
-  inp.accept = 'image/png,image/*';
-  inp.onchange = async (e) => {
-    const f = e.target.files?.[0];
-    if (!f) return;
-    await window.NebulaLoadGridOverlay(f);
-    alert('Grid overlay loaded and fractions saved. Run Fill again.');
-  };
-  document.body.appendChild(inp);
-  inp.style.position = 'fixed';
-  inp.style.inset = '0';
-  inp.style.opacity = '0';
-  inp.click();
-  setTimeout(() => inp.remove(), 0);
-};
-
-// ---------- Public: crop25 (native-size crops) ----------
-export async function crop25(img) {
-  // analysis-only scale
-  const W = img.width, H = img.height;
-  const scale = Math.min(1, ANALYZE_MAX / Math.max(W, H));
-  const aW = Math.max(1, Math.round(W * scale));
-  const aH = Math.max(1, Math.round(H * scale));
-
-  const aCanvas = toCanvasFromImage(img, aW, aH);
-  const aData = getImageData(aCanvas);
-
-  // detect outer frame (analysis space)
-  const { L, R, T, B } = detectOuterFrame(aData);
-
-  // map to full-res + step inside lines
-  const inv = 1 / scale;
-  const innerL = Math.max(0, Math.round(L * inv) + LINE_INNER_OFFSET);
-  const innerR = Math.min(W, Math.round(R * inv) - LINE_INNER_OFFSET);
-  const innerT = Math.max(0, Math.round(T * inv) + LINE_INNER_OFFSET);
-  const innerB = Math.min(H, Math.round(B * inv) - LINE_INNER_OFFSET);
-
-  const frameW = Math.max(1, innerR - innerL);
-  const frameH = Math.max(1, innerB - innerT);
-
-  // Use calibrated fractions if present
-  const fr = loadGridFractions();
-  let xCenters, yCenters;
-  if (fr && Array.isArray(fr.xFracs) && fr.xFracs.length === 6 &&
-      Array.isArray(fr.yFracs) && fr.yFracs.length === 6) {
-    xCenters = fr.xFracs.map(f => innerL + f * frameW);
-    yCenters = fr.yFracs.map(f => innerT + f * frameH);
-  } else {
-    // fallback: equal spacing
-    xCenters = Array.from({ length: 6 }, (_, i) => innerL + (frameW * i) / 5);
-    yCenters = Array.from({ length: 6 }, (_, i) => innerT + (frameH * i) / 5);
-  }
-
-  // centers -> 6 boundaries (bracketing 5 cells)
-  const toBounds = (c, max) => {
-    const B = new Array(6);
-    B[0] = Math.max(0, Math.round(c[0] - (c[1] - c[0]) / 2));
-    for (let i = 1; i < 5; i++) B[i] = Math.round((c[i - 1] + c[i]) / 2);
-    B[5] = Math.min(max - 1, Math.round(c[5] + (c[5] - c[4]) / 2));
-    for (let i = 1; i < 6; i++) if (B[i] <= B[i - 1]) B[i] = B[i - 1] + 1;
-    return B;
-  };
-  const X = toBounds(xCenters, W);
-  const Y = toBounds(yCenters, H);
-
-  // crop 25 squares
-  const full = toCanvasFromImage(img, W, H);
-  const urls = [];
-  for (let r = 0; r < 5; r++) {
-    for (let c = 0; c < 5; c++) {
-      const x0 = X[c], x1 = X[c + 1];
-      const y0 = Y[r], y1 = Y[r + 1];
-      const w = Math.max(1, x1 - x0);
-      const h = Math.max(1, y1 - y0);
-      const side = Math.min(w, h);
-      let cx = x0 + (w - side) / 2;
-      let cy = y0 + (h - side) / 2;
-      const inset = side * CELL_INSET_FRAC;
-      cx += inset; cy += inset;
-      const sw = Math.max(1, side - inset * 2);
-      const sh = sw;
-      urls.push(cropToDataURLNative(full, cx, cy, sw, sh));
-    }
-  }
-
-  // Debug overlay (analysis space)
+export function saveGridFractions(vFractions, hFractions) {
   try {
-    if (/[?&]debug(=1|&|$)/.test(location.search)) {
-      const overlay = document.createElement('div');
-      Object.assign(overlay.style, {
-        position: 'fixed', inset: '10px', background: 'rgba(0,0,0,.65)', color: '#ddd',
-        font: '12px/1.4 system-ui,Segoe UI,Arial', padding: '10px', borderRadius: '10px',
-        zIndex: 9999, pointerEvents: 'auto', maxWidth: '420px'
-      });
-      overlay.innerHTML = '<b>Grid debug</b><div id="dbg"></div><div style="margin-top:6px;opacity:.8">'
-        + (fr ? 'using <b>calibrated</b> fractions' : 'using <b>equal</b> fractions')
-        + '</div><button id="x" style="margin-top:8px">close</button>';
-      document.body.appendChild(overlay);
-      overlay.querySelector('#x').onclick = () => overlay.remove();
+    localStorage.setItem("nbt.gridFractions", JSON.stringify({ v: vFractions, h: hFractions }));
+  } catch {}
+}
 
-      const vis = document.createElement('canvas');
-      vis.width = aW; vis.height = aH;
-      const ctx = vis.getContext('2d');
-      ctx.drawImage(aCanvas, 0, 0);
+export function clearGridFractions() {
+  try { localStorage.removeItem("nbt.gridFractions"); } catch {}
+}
 
-      // draw outer in analysis space
-      ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 2;
-      ctx.strokeRect(L, T, R - L, B - T);
+// --- Canvas helpers
+function naturalSize(img) {
+  return {
+    W: img.naturalWidth  || img.width,
+    H: img.naturalHeight || img.height,
+  };
+}
 
-      // draw inner grid (map full-res bounds back by scale)
-      ctx.strokeStyle = '#00ffa8'; ctx.lineWidth = 1;
-      for (let i = 1; i < 5; i++) {
-        const x = Math.round(X[i] * scale);
-        const y = Math.round(Y[i] * scale);
-        ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, B); ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke();
-      }
-      overlay.querySelector('#dbg').appendChild(vis);
+function imageToCanvas(img) {
+  const { W, H } = naturalSize(img);
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  g.drawImage(img, 0, 0, W, H);
+  return { canvas: c, ctx: g };
+}
+
+function getImageData(img) {
+  const { canvas, ctx } = imageToCanvas(img);
+  return ctx.getImageData(0, 0, canvas.width, canvas.height);
+}
+
+// If detector lines are in client/CSS space, convert to natural pixel space.
+export function clientToNaturalLines(img, clientVertical, clientHorizontal) {
+  const sx = (img.naturalWidth  || img.width)  / img.clientWidth;
+  const sy = (img.naturalHeight || img.height) / img.clientHeight;
+  return {
+    vertical: (clientVertical  || []).map(x => Math.round(x * sx)),
+    horizontal: (clientHorizontal || []).map(y => Math.round(y * sy)),
+  };
+}
+
+// --- Peak utilities (1D)
+function nonMaxSuppression1D(array, radius = NMS_RADIUS) {
+  const peaks = [];
+  for (let i = 0; i < array.length; i++) {
+    const v = array[i];
+    let isMax = true;
+    for (let j = Math.max(0, i - radius); j <= Math.min(array.length - 1, i + radius); j++) {
+      if (array[j] > v) { isMax = false; break; }
     }
+    if (isMax && v > 0) peaks.push(i);
+  }
+  return peaks;
+}
+
+function mergeClosePositions(positions, tol = LINE_MERGE_TOL) {
+  const sorted = [...positions].sort((a, b) => a - b);
+  const merged = [];
+  for (const p of sorted) {
+    if (!merged.length || Math.abs(p - merged[merged.length - 1]) > tol) {
+      merged.push(p);
+    }
+  }
+  return merged;
+}
+
+function enforceSixLines(positions, axisLen, savedFracs, useVertical) {
+  let arr = mergeClosePositions(positions);
+  // Too dense? spread with min separation
+  if (arr.length > 6) {
+    const kept = [arr[0]];
+    for (let i = 1; i < arr.length; i++) {
+      if (Math.abs(arr[i] - kept[kept.length - 1]) >= MIN_PEAK_SEP) kept.push(arr[i]);
+      if (kept.length === 6) break;
+    }
+    arr = kept;
+  }
+
+  // If not 6, try saved fractions
+  if (arr.length !== 6 && savedFracs) {
+    const fracs = useVertical ? savedFracs.v : savedFracs.h;
+    if (fracs?.length === 6) {
+      arr = fracs.map(f => Math.round(f * axisLen));
+    }
+  }
+
+  // If still not 6, equal spacing full-bleed
+  if (arr.length !== 6) {
+    arr = Array.from({ length: 6 }, (_, i) => Math.round((i / 5) * axisLen));
+  }
+
+  // strict ascending & clamped
+  arr = arr
+    .map((v, i) => (i && v <= arr[i - 1] ? arr[i - 1] + 1 : v))
+    .map(v => Math.max(0, Math.min(axisLen, v)));
+
+  // Guarantee exactly six
+  if (arr.length > 6) arr = arr.slice(0, 6);
+  while (arr.length < 6) arr.push(axisLen); // should be rare
+
+  return arr;
+}
+
+// --- GREEN overlay detector (bright-green lines)
+function greenMaskScores(imgData, axis) {
+  const { width: W, height: H, data } = imgData;
+  const scores = new Array(axis === "x" ? W : H).fill(0);
+
+  // thresholds are tolerant: green must lead, red & blue relatively low
+  const G_MIN = 140;       // allow bright or medium bright green
+  const RB_MAX = 110;      // suppress non-green
+  const DOM_FACTOR = 1.2;  // G must be >= 1.2 * max(R, B)
+
+  if (axis === "x") {
+    for (let x = 0; x < W; x++) {
+      let s = 0;
+      for (let y = 0; y < H; y++) {
+        const idx = (y * W + x) * 4;
+        const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
+        if (a > 0 && g >= G_MIN && r <= RB_MAX && b <= RB_MAX && g >= Math.max(r, b) * DOM_FACTOR) s++;
+      }
+      scores[x] = s;
+    }
+  } else {
+    for (let y = 0; y < H; y++) {
+      let s = 0;
+      for (let x = 0; x < W; x++) {
+        const idx = (y * W + x) * 4;
+        const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
+        if (a > 0 && g >= G_MIN && r <= RB_MAX && b <= RB_MAX && g >= Math.max(r, b) * DOM_FACTOR) s++;
+      }
+      scores[y] = s;
+    }
+  }
+  return scores;
+}
+
+function pickLinePositionsFromScores(scores) {
+  const peaks = nonMaxSuppression1D(scores, NMS_RADIUS);
+  // Keep strongest peaks first
+  const sorted = peaks.sort((a, b) => scores[b] - scores[a]);
+  return sorted;
+}
+
+/**
+ * Detect grid lines from a GREEN overlay image (preferred path).
+ * Returns { vertical: number[<=W], horizontal: number[<=H] } in NATURAL pixels.
+ */
+export function detectGridFromGreenOverlay(img) {
+  const id = getImageData(img);
+  const xScores = greenMaskScores(id, "x");
+  const yScores = greenMaskScores(id, "y");
+  const vRaw = pickLinePositionsFromScores(xScores);
+  const hRaw = pickLinePositionsFromScores(yScores);
+  return { vertical: vRaw, horizontal: hRaw };
+}
+
+// --- Public: normalize detected lines (whatever the source) to exactly six each
+export function normalizeGridLines(img, detected) {
+  const { W, H } = naturalSize(img);
+  const saved = readSavedFractions();
+
+  let v = Array.isArray(detected?.vertical) ? detected.vertical.map(v => Math.round(v)) : [];
+  let h = Array.isArray(detected?.horizontal) ? detected.horizontal.map(v => Math.round(v)) : [];
+
+  v = v.filter(n => Number.isFinite(n) && n >= 0 && n <= W);
+  h = h.filter(n => Number.isFinite(n) && n >= 0 && n <= H);
+
+  const v6 = enforceSixLines(v, W, saved, true);
+  const h6 = enforceSixLines(h, H, saved, false);
+
+  // Save fractions for future runs (0..1)
+  try {
+    const vFrac = v6.map(x => x / W);
+    const hFrac = h6.map(y => y / H);
+    saveGridFractions(vFrac, hFrac);
   } catch {}
 
-  return urls;
+  return { vertical: v6, horizontal: h6 };
 }
+
+// --- Build 5×5 cells then center a square with inset
+function buildCellRects(vLines, hLines) {
+  const rects = [];
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      const x0 = vLines[c], x1 = vLines[c + 1];
+      const y0 = hLines[r], y1 = hLines[r + 1];
+      rects.push({ x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) });
+    }
+  }
+  return rects;
+}
+
+function squareInterior(rect, insetFrac = DEFAULT_INSET_FRAC) {
+  const side = Math.floor(Math.min(rect.w, rect.h));
+  const inset = Math.floor(side * insetFrac);
+  const inner = Math.max(1, side - inset * 2);
+  const cx = rect.x + rect.w / 2;
+  const cy = rect.y + rect.h / 2;
+  return {
+    x: Math.round(cx - inner / 2),
+    y: Math.round(cy - inner / 2),
+    w: inner,
+    h: inner,
+  };
+}
+
+// --- Public: compute 25 square crops
+export function computeSquareCrops(img, normalizedLines, insetFrac = DEFAULT_INSET_FRAC) {
+  const cells = buildCellRects(normalizedLines.vertical, normalizedLines.horizontal);
+  return cells.map(r => squareInterior(r, insetFrac));
+}
+
+// --- Public: crop to PNG dataURL
+export function cropToDataURL(img, rect) {
+  const { W, H } = naturalSize(img);
+  const x = Math.max(0, Math.min(W - 1, rect.x));
+  const y = Math.max(0, Math.min(H - 1, rect.y));
+  const w = Math.max(1, Math.min(W - x, rect.w));
+  const h = Math.max(1, Math.min(H - y, rect.h));
+  const c = document.createElement("canvas");
+  c.width = w; c.height = h;
+  const g = c.getContext("2d", { willReadFrequently: true });
+  g.drawImage(img, x, y, w, h, 0, 0, w, h);
+  return c.toDataURL("image/png");
+}
+
+// --- Convenience: one-shot extractor using green overlay image
+// Pass the overlay image element (with green lines) that matches the same base.
+export async function extractCropsFromGreenOverlay(baseImg, overlayImg, insetFrac = DEFAULT_INSET_FRAC) {
+  // overlay detection
+  const detected = detectGridFromGreenOverlay(overlayImg);
+  // normalize to 6/6 in NATURAL space of BASE image
+  // (overlay & base should be same size; if not, rescale)
+  const { W: BW, H: BH } = naturalSize(baseImg);
+  const { W: OW, H: OH } = naturalSize(overlayImg);
+
+  let v = detected.vertical, h = detected.horizontal;
+  if (BW !== OW || BH !== OH) {
+    const sx = BW / OW, sy = BH / OH;
+    v = v.map(x => Math.round(x * sx));
+    h = h.map(y => Math.round(y * sy));
+  }
+
+  const normalized = normalizeGridLines(baseImg, { vertical: v, horizontal: h });
+  const rects = computeSquareCrops(baseImg, normalized, insetFrac);
+  return rects.map(r => cropToDataURL(baseImg, r));
+}
+
+// --- Debug: draw rect outlines (for your “Last Fill — Crops” modal)
+export function drawDebugRects(img, rects, { stroke = "rgba(255,255,255,0.9)", lineWidth = 2 } = {}) {
+  const { W, H } = naturalSize(img);
+  const c = document.createElement("canvas");
+  c.width = W; c.height = H;
+  const g = c.getContext("2d");
+  g.drawImage(img, 0, 0, W, H);
+  g.strokeStyle = stroke;
+  g.lineWidth = lineWidth;
+  for (const r of rects) {
+    g.strokeRect(r.x + 0.5, r.y + 0.5, r.w, r.h);
+  }
+  return c.toDataURL("image/png");
+}
+
+/* --- Typical usage in your fill flow ----
+
+  // 1) You already loaded the screenshot (baseImg).
+  // 2) If the user provided a green grid PNG (overlayImg), do:
+  const dataURLs = await extractCropsFromGreenOverlay(baseImg, overlayImg, 0.08);
+
+  // 3) If you have detector lines some other way, ensure NATURAL pixels, then:
+  const normalized = normalizeGridLines(baseImg, { vertical, horizontal });
+  const rects = computeSquareCrops(baseImg, normalized, 0.08);
+  const dataURLs = rects.map(r => cropToDataURL(baseImg, r));
+
+  // dataURLs are native-size squares; scale later as needed.
+*/
