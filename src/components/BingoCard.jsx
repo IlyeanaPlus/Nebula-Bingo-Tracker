@@ -1,7 +1,7 @@
 // src/components/BingoCard.jsx
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
-// v2 baseline helpers (natural-pixel)
+// v2 natural-pixel helpers
 import {
   fileToImage,
   crop25,
@@ -10,26 +10,27 @@ import {
   normalizeGridLines,
 } from "../utils/image";
 
-// Re-wire only your base card styles (no debug modal css here)
+// base card styles
 import "../styles/bingo.css";
 
 export default function BingoCard() {
-  // Title (click-to-rename)
+  // Title (click-to-rename, same as v2)
   const [title, setTitle] = useState("Bingo Card");
   const [editingTitle, setEditingTitle] = useState(false);
 
-  // Inputs for fill flow
+  // Inputs
   const [baseFile, setBaseFile] = useState(null);
   const [overlayFile, setOverlayFile] = useState(null);
 
-  // Debug crops (kept functional, but visual is plain)
-  const [lastFillCrops, setLastFillCrops] = useState([]); // 25 dataURLs
-  const [lastRects, setLastRects] = useState([]);         // 25 rects
+  // Crops for this card (used for preview + matcher upstream)
+  const [lastFillCrops, setLastFillCrops] = useState([]); // 25 PNG dataURLs
+  const [lastRects, setLastRects] = useState([]);         // 25 rects (debug)
   const [debugOpen, setDebugOpen] = useState(false);
 
   const baseImgRef = useRef(null);
   const overlayImgRef = useRef(null);
 
+  // Ensure Esc closes the modal
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && setDebugOpen(false);
     if (debugOpen) window.addEventListener("keydown", onKey);
@@ -38,6 +39,7 @@ export default function BingoCard() {
 
   const canFill = useMemo(() => !!baseFile, [baseFile]);
 
+  // ---- file pickers (same semantics) ----
   const handleChooseBase = (e) => {
     const f = e.target.files?.[0];
     if (f) setBaseFile(f);
@@ -52,7 +54,7 @@ export default function BingoCard() {
     if (overlayFile && !overlayImgRef.current) overlayImgRef.current = await fileToImage(overlayFile);
   }
 
-  // Fill flow: unchanged semantics, now also records rects for debug
+  // ---- Fill flow (kept; now also previews crops in grid) ----
   async function handleFill() {
     try {
       await ensureImagesLoaded();
@@ -71,51 +73,53 @@ export default function BingoCard() {
       const dataURLs = crop25(baseImg, norm);
 
       setLastRects(rects);
-      setLastFillCrops(dataURLs);
-      setDebugOpen(true);
+      setLastFillCrops(dataURLs);   // <- immediately visible in the grid
+      setDebugOpen(true);           // optional; can be toggled off if you prefer
     } catch (err) {
       console.error("[BingoCard] fill failed:", err);
     }
   }
 
+  // ---- Render ----
   return (
-    <div className="bingo-card w-full">
-      {/* Header / toolbar — classes left intact for bingo.css */}
-      <div className="bingo-toolbar flex items-center justify-between gap-3 mb-3">
-        {editingTitle ? (
-          <input
-            autoFocus
-            className="px-2 py-1 rounded-md bg-neutral-800 text-neutral-100 border border-neutral-700"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            onBlur={() => setEditingTitle(false)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === "Escape") setEditingTitle(false);
-            }}
-          />
-        ) : (
-          <h2
-            className="text-lg font-semibold cursor-text"
-            title="Click to rename"
-            onClick={() => setEditingTitle(true)}
-          >
-            {title}
-          </h2>
-        )}
+    <div className="bingo-card">
+      {/* Header / toolbar row (hooks preserved for bingo.css) */}
+      <div className="bingo-toolbar">
+        <div className="bingo-title">
+          {editingTitle ? (
+            <input
+              autoFocus
+              className="bingo-title-input"
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              onBlur={() => setEditingTitle(false)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" || e.key === "Escape") setEditingTitle(false);
+              }}
+            />
+          ) : (
+            <span className="bingo-title-text" onClick={() => setEditingTitle(true)} title="Click to rename">
+              {title}
+            </span>
+          )}
+        </div>
 
-        <div className="flex items-center gap-2">
-          <label className="inline-flex items-center px-3 py-1.5 rounded-md bg-neutral-800 border border-neutral-700 cursor-pointer hover:bg-neutral-750">
+        <div className="bingo-actions">
+          {/* Select Screenshot */}
+          <label className="btn btn-file">
             <input type="file" accept="image/*" className="hidden" onChange={handleChooseBase} />
             <span>Select Screenshot</span>
           </label>
 
-          <label className="inline-flex items-center px-3 py-1.5 rounded-md bg-neutral-800 border border-neutral-700 cursor-pointer hover:bg-neutral-750">
+          {/* Optional overlay grid PNG */}
+          <label className="btn btn-file">
             <input type="file" accept="image/*" className="hidden" onChange={handleChooseOverlay} />
             <span>Grid PNG (optional)</span>
           </label>
 
+          {/* Fill (disabled until screenshot selected) */}
           <button
-            className="px-3 py-1.5 rounded-md bg-neutral-200 text-neutral-900 disabled:opacity-40"
+            className="btn btn-primary"
             disabled={!canFill}
             onClick={handleFill}
             title={canFill ? "Analyze screenshot & fill" : "Select a screenshot first"}
@@ -123,8 +127,9 @@ export default function BingoCard() {
             Fill Card
           </button>
 
+          {/* Open last crops modal */}
           <button
-            className="px-3 py-1.5 rounded-md bg-neutral-800 border border-neutral-700"
+            className="btn"
             onClick={() => setDebugOpen(true)}
             disabled={!lastFillCrops.length}
             title="Open last crops"
@@ -134,42 +139,51 @@ export default function BingoCard() {
         </div>
       </div>
 
-      {/* NOTE: Your actual bingo card grid/content is rendered elsewhere in v2.
-               We do NOT add or change any base card markup here. */}
+      {/* Visible 5×5 card grid (restored) */}
+      <div className="bingo-grid">
+        {Array.from({ length: 25 }).map((_, i) => {
+          const imgUrl = lastFillCrops[i] || null;
+          return (
+            <div key={i} className="bingo-cell">
+              {imgUrl ? (
+                <img
+                  className="bingo-cell-img"
+                  src={imgUrl}
+                  alt={`slot ${i + 1}`}
+                  draggable={false}
+                />
+              ) : (
+                <div className="bingo-cell-empty">—</div>
+              )}
+              <div className="bingo-cell-meta">
+                <div className="bingo-cell-status">— no match</div>
+                <div className="bingo-cell-index">#{i + 1}</div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
 
-      {/* Debug Crops Modal — reverted to plain layout (no extra CSS) */}
+      {/* Debug Crops Modal (plain; won’t affect base CSS) */}
       {debugOpen && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center" role="dialog" aria-modal="true">
           <div className="absolute inset-0 bg-black/60" onClick={() => setDebugOpen(false)} />
           <div className="relative z-[1001] w-[360px] max-h-[85vh] overflow-auto rounded-2xl bg-neutral-900 text-neutral-200 shadow-2xl border border-neutral-800">
             <div className="sticky top-0 flex items-center justify-between px-4 py-3 border-b border-neutral-800 bg-neutral-900/90 backdrop-blur">
               <div className="font-semibold">Last Fill — Crops</div>
-              <button
-                className="px-2 py-1 rounded-md bg-neutral-800 border border-neutral-700"
-                onClick={() => setDebugOpen(false)}
-                aria-label="Close"
-              >
+              <button className="px-2 py-1 rounded-md bg-neutral-800 border border-neutral-700" onClick={() => setDebugOpen(false)}>
                 Close
               </button>
             </div>
-
             <div className="px-3 py-4">
-              {/* Simple, style-neutral list so it won't affect base visuals */}
               <div className="flex flex-wrap gap-2">
-                {lastFillCrops.map((dataURL, idx) => (
+                {lastFillCrops.map((url, idx) => (
                   <div key={idx} className="p-1 rounded border border-neutral-800 bg-neutral-900">
-                    <img
-                      src={dataURL}
-                      alt={`crop ${idx + 1}`}
-                      draggable={false}
-                      style={{ display: "block", width: 56, height: 56 }}
-                    />
+                    <img src={url} alt={`crop ${idx + 1}`} draggable={false} style={{ display: "block", width: 56, height: 56 }} />
                     <div className="mt-1 text-[11px] text-neutral-400 text-center">#{idx + 1}</div>
                   </div>
                 ))}
               </div>
-
-              {/* Optional: rect sanity (harmless; delete if noisy) */}
               {lastRects?.[0] && (
                 <pre className="mt-3 text-xs text-neutral-400 whitespace-pre-wrap break-all">
                   rect[1] (w × h): {lastRects[0].w} × {lastRects[0].h}
