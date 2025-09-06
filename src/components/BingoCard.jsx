@@ -19,6 +19,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
   const [refIndex, setRefIndex] = useState([]);
   const inputRef = useRef(null);
 
+  // normalize to 25 cells
   const cells = useMemo(
     () =>
       card.cells ||
@@ -30,7 +31,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
     [card]
   );
 
-  // Build the reference index once the manifest is ready
+  // Build reference index whenever manifest changes
   useEffect(() => {
     let alive = true;
     (async () => {
@@ -78,10 +79,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
     const f = e.dataTransfer?.files?.[0];
     if (f) runFillFromFile(f);
   }
-
-  function onDragOver(e) {
-    e.preventDefault();
-  }
+  function onDragOver(e) { e.preventDefault(); }
 
   async function runFillFromFile(file) {
     setIsFilling(true);
@@ -95,14 +93,14 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
       for (let i = 0; i < crops.length; i++) {
         const cropURL = crops[i];
 
-        let out = null;
-        if (refIndex.length) {
-          out = await findBestMatch(cropURL, refIndex, {
-            shortlistK: 24, // 16–48
-            ssimMin: 0.88,  // 0.86–0.92
-            mseMax: 600,    // 400–800
-          });
-        }
+        const out = refIndex.length
+          ? await findBestMatch(cropURL, refIndex, {
+              shortlistK: 48,  // wider shortlist while tuning
+              ssimMin: 0.80,   // looser for initial acceptance
+              mseMax: 1200,    // looser for initial acceptance
+              debug: true      // console logs: mask stats + top candidates
+            })
+          : null;
 
         if (out) {
           nextCells[i] = {

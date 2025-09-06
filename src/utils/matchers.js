@@ -1,12 +1,24 @@
 // src/utils/matchers.js
-// Histogram shortlist + SSIM/MSE final on a foreground mask.
-// Designed for 32x32 color sprites; composites transparency to board gray (#8b8b8b).
+// Histogram shortlist → SSIM/MSE final on a foreground mask.
+// Debug logging is controlled by URL (?debug) or localStorage('nbt.debug' = '1') or opts.debug.
 
 const BG = { r: 139, g: 139, b: 139 }; // #8b8b8b
 const SIZE = 32;
 const BINS = 8;
 const OFF = [-1, 0, 1];
 const SHORTLIST_K = 24;
+
+// ---------- Debug gate ----------
+function isDebugEnabled(explicitFlag) {
+  if (explicitFlag === true) return true;
+  if (explicitFlag === false) return false;
+  try {
+    if (typeof location !== 'undefined' && /[?&]debug(=1|&|$)/.test(location.search)) return true;
+    if (typeof localStorage !== 'undefined' && localStorage.getItem('nbt.debug') === '1') return true;
+  } catch {}
+  return false;
+}
+const dlog = (...args) => console.log('[matcher]', ...args);
 
 // ---------- Canvas helpers ----------
 function loadImage(url) {
@@ -72,16 +84,18 @@ function estimateBGFromBorder(im) {
   return { r: med(valsR), g: med(valsG), b: med(valsB) };
 }
 
-function makeMask(im, thr = 18) {
+function makeMask(im, thr = 24) { // ↑ default from 18 → 24 (keep more pixels)
   const { data, width: w, height: h } = im;
   const bg = estimateBGFromBorder(im);
   const mask = new Uint8Array(w * h);
+  let fg = 0;
   for (let i = 0, p = 0; i < data.length; i += 4, p++) {
     const dr = data[i] - bg.r, dg = data[i + 1] - bg.g, db = data[i + 2] - bg.b;
     const dist = Math.sqrt(dr * dr + dg * dg + db * db);
-    mask[p] = dist > thr ? 1 : 0;
+    const v = dist > thr ? 1 : 0;
+    mask[p] = v; fg += v;
   }
-  return mask;
+  return { mask, fg, total: w * h };
 }
 
 // ---------- Histograms + χ² ----------
@@ -196,7 +210,7 @@ function bestOffsetScores(refIm, cropIm, mask) {
   for (const dy of OFF) {
     for (const dx of OFF) {
       const mse = mseRGB(cropIm, refIm, mask, dx, dy);
-      const ssim = ssimLuma(cropL, refL, w, h, mask); // (approx) same offset; OK at 32x32
+      const ssim = ssimLuma(cropL, refL, w, h, mask); // approx same offset; OK at 32x32
       if (mse < best.mse || (Math.abs(mse - best.mse) < 1e-6 && ssim > best.ssim)) {
         best = { mse, ssim, dx, dy };
       }
@@ -214,7 +228,6 @@ export async function prepareRefIndex(manifest) {
     const rawSrc = e.src || e.image || e.url;
     if (!rawSrc) continue;
 
-    // Try size hint to reduce payload & sometimes improve CORS routing
     const src = rawSrc.includes('lh3.googleusercontent.com/d/')
       ? `${rawSrc}=s64`
       : rawSrc;
@@ -240,18 +253,24 @@ export async function prepareRefIndex(manifest) {
   return refs;
 }
 
-// ---------- Public: find best match ----------
+// ---------- Public: find best match (with debug logs) ----------
 export async function findBestMatch(cropDataURL, refIndex, opts = {}) {
   const {
     shortlistK = SHORTLIST_K,
-    ssimMin = 0.88,
-    mseMax = 600
+    ssimMin = 0.80,  // looser default so we can see real values
+    mseMax = 1200,   // looser default so we can see real values
+    debug
   } = opts;
+
+  const DBG = isDebugEnabled(debug);
 
   // Prepare crop image data + mask
   const cropIm = await imageDataFromDataURL(cropDataURL, SIZE, SIZE);
   const cropHist = histRGB(cropIm);
-  const mask = makeMask(cropIm);
+  const { mask, fg, total } = makeMask(cropIm);
+  const fgRatio = +(fg / total).toFixed(2);
+
+  if (DBG) dlog('crop: fg pixels', fg, '/', total, 'ratio', fgRatio);
 
   // Stage-1 shortlist
   const ranked = refIndex
@@ -259,16 +278,31 @@ export async function findBestMatch(cropDataURL, refIndex, opts = {}) {
     .sort((a, b) => a.d - b.d)
     .slice(0, Math.min(shortlistK, refIndex.length));
 
-  // Stage-2 precise scoring
-  let best = { score: Infinity, entry: null, mse: Infinity, ssim: -1 };
+  // Stage-2 precise scoring + collect top-3 for debug
+  const candidates = [];
   for (const { r } of ranked) {
     const { mse, ssim } = bestOffsetScores(r.im, cropIm, mask);
-    const combined = (mse / 255) + (1 - ssim) * 200; // weight SSIM strongly
-    if (combined < best.score) best = { score: combined, entry: r, mse, ssim };
+    const combined = (mse / 255) + (1 - ssim) * 200;
+    candidates.push({ r, mse, ssim, combined });
+  }
+  candidates.sort((a, b) => a.combined - b.combined);
+
+  const best = candidates[0] || null;
+
+  if (DBG) {
+    const top = candidates.slice(0, 3).map(c => ({
+      name: c.r.name, mse: +c.mse.toFixed(1), ssim: +c.ssim.toFixed(3), combined: +c.combined.toFixed(2)
+    }));
+    dlog('best candidates:', top);
   }
 
-  if (!best.entry) return null;
-  if (best.mse > mseMax || best.ssim < ssimMin) return null;
+  if (!best) return null;
+  if (best.mse > mseMax || best.ssim < ssimMin) {
+    if (DBG) dlog('rejected best', { name: best.r.name, mse: best.mse, ssim: best.ssim, mseMax, ssimMin });
+    return null;
+  }
 
-  return { name: best.entry.name, src: best.entry.src, mse: best.mse, ssim: best.ssim };
+  if (DBG) dlog('ACCEPT', { name: best.r.name, mse: best.mse, ssim: best.ssim });
+
+  return { name: best.r.name, src: best.r.src, mse: best.mse, ssim: best.ssim, debug: { fgRatio } };
 }

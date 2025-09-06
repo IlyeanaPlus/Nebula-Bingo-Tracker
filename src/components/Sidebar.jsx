@@ -1,20 +1,23 @@
+// src/components/Sidebar.jsx
 import React from 'react';
 
-export default function Sidebar({ onGetSprites, onNewCard, progress }) {
-  const { loaded, total } = progress || { loaded: 0, total: 0 };
-  const pct = total ? Math.round((loaded / total) * 100) : 0;
-
+export default function Sidebar({
+  onNewCard,
+  savedCount = 0,
+  onClearSaved
+}) {
   return (
     <aside className="sidebar">
-      <h2>Controls</h2>
+      <h2>Cards</h2>
       <div className="stack">
-        <button onClick={onGetSprites}>Get Sprites</button>
         <button onClick={onNewCard}>New Card</button>
-        {total > 0 && (
-          <>
-            <div className="fill-bar"><div className="fill-bar-inner" style={{width:`${pct}%`}} /></div>
-            <div className="progress-line">{loaded} / {total} ({pct}%)</div>
-          </>
+        <div className="progress-line">
+          Saved cards: {savedCount}
+        </div>
+        {onClearSaved && (
+          <button onClick={onClearSaved} title="Remove all saved cards from this browser">
+            Clear Saved
+          </button>
         )}
       </div>
     </aside>
