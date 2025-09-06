@@ -6,7 +6,7 @@
 const ANALYZE_MAX = 900;       // analysis downscale cap (does not affect crop resolution)
 const EDGE_T = 26;             // gradient threshold for outer-frame detection (try 22–34)
 const SMOOTH_W = 9;            // smoothing window for projections
-const LINE_INNER_OFFSET = 2;   // px stepped inside detected outer border (full-res space)
+const LINE_INNER_OFFSET = 2;   // px stepped inside detected outer border (full-res)
 const CELL_INSET_FRAC = 0.08;  // 8% inset within each cell to avoid gridlines
 
 // ---------- Public: file -> HTMLImageElement ----------
@@ -62,9 +62,9 @@ function sobelProjections(gray) {
     for (let x = 1; x < w - 1; x++) {
       const i  = y * w + x;
       const gx = -g[i - w - 1] - 2 * g[i - 1] - g[i + w - 1]
-                 + g[i - w + 1] + 2 * g[i + 1] + g[i + w + 1];
+               +  g[i - w + 1] + 2 * g[i + 1] + g[i + w + 1];
       const gy = -g[i - w - 1] - 2 * g[i - w] - g[i - w + 1]
-                 + g[i + w - 1] + 2 * g[i + w] + g[i + w + 1];
+               +  g[i + w - 1] + 2 * g[i + w] + g[i + w + 1];
       const magX = Math.abs(gx);
       const magY = Math.abs(gy);
       if (magX > EDGE_T) col[x] += magX;   // vertical line energy
@@ -116,51 +116,82 @@ function detectOuterFrame(im) {
   return { L, R, T, B };
 }
 
-// ---------- Calibration via green overlay ----------
-// Robust “green-dominant” detector for anti-aliased bright green lines.
+// ---------- Calibration via green overlay (robust to 1px AA lines) ----------
 function extractFractionsFromOverlayImage(overlayImg) {
   const w = overlayImg.width, h = overlayImg.height;
   const cnv = toCanvasFromImage(overlayImg, w, h);
   const { data } = getImageData(cnv);
 
-  const colHits = new Uint32Array(w);
-  const rowHits = new Uint32Array(h);
-
+  // Count green-dominant pixels per column/row
+  const colHits = new Float32Array(w);
+  const rowHits = new Float32Array(h);
   for (let y = 0; y < h; y++) {
     for (let x = 0; x < w; x++) {
       const i = (y * w + x) * 4;
       const r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
-      if (a < 128) continue;
-      // green-dominant (tolerant of anti-aliased neon)
-      if (g > 120 && g > r * 1.5 && g > b * 1.5) {
-        colHits[x]++;
-        rowHits[y]++;
+      if (a < 64) continue;
+      // Green-dominant (tolerant of anti-aliased neon)
+      if (g > 100 && g > r * 1.4 && g > b * 1.4) {
+        colHits[x] += 1;
+        rowHits[y] += 1;
       }
     }
   }
 
-  // convert contiguous runs to line centers
-  const centersFromRuns = (arr, minLen = 2) => {
-    const centers = [];
-    let runStart = -1;
-    for (let i = 0; i < arr.length; i++) {
-      if (arr[i] > 0) {
-        if (runStart === -1) runStart = i;
-      } else if (runStart !== -1) {
-        if (i - runStart >= minLen) {
-          centers.push(Math.round((runStart + i - 1) / 2));
-        }
-        runStart = -1;
+  // 1D dilation to thicken 1px lines
+  function dilate1D(arr) {
+    const n = arr.length, out = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+      const a = i > 0 ? arr[i - 1] : 0;
+      const b = arr[i];
+      const c = i + 1 < n ? arr[i + 1] : 0;
+      out[i] = a + b + c;
+    }
+    return out;
+  }
+  const colScore = dilate1D(colHits);
+  const rowScore = dilate1D(rowHits);
+
+  // Light smoothing
+  function smooth1(arr, win = 5) {
+    const n = arr.length, out = new Float32Array(n);
+    const half = Math.max(0, (win | 0) - 1) >> 1;
+    let sum = 0;
+    for (let i = 0; i < n + half; i++) {
+      const add = i < n ? arr[i] : 0;
+      const sub = i - (2 * half + 1) >= 0 ? arr[i - (2 * half + 1)] : 0;
+      sum += add - sub;
+      if (i >= half) {
+        const idx = i - half;
+        if (idx < n) out[idx] = sum / Math.min(2 * half + 1, idx + half + 1, n - (idx - half));
       }
     }
-    if (runStart !== -1 && arr.length - runStart >= minLen) {
-      centers.push(Math.round((runStart + arr.length - 1) / 2));
-    }
-    return centers.sort((a, b) => a - b);
-  };
+    return out;
+  }
+  const colSmooth = smooth1(colScore, 5);
+  const rowSmooth = smooth1(rowScore, 5);
 
-  const xCenters = centersFromRuns(colHits);
-  const yCenters = centersFromRuns(rowHits);
+  // Pick exactly 6 peaks with non-max suppression
+  function topKPeaksNMS(arr, K, radius = 3) {
+    const idxs = Array.from({ length: arr.length }, (_, i) => i)
+      .sort((a, b) => arr[b] - arr[a]);
+    const chosen = [];
+    const taken = new Uint8Array(arr.length);
+    for (const i of idxs) {
+      if (arr[i] <= 0) break;
+      if (taken[i]) continue;
+      chosen.push(i);
+      for (let d = -radius; d <= radius; d++) {
+        const j = i + d;
+        if (j >= 0 && j < taken.length) taken[j] = 1;
+      }
+      if (chosen.length === K) break;
+    }
+    return chosen.sort((a, b) => a - b);
+  }
+
+  let xCenters = topKPeaksNMS(colSmooth, 6, 3);
+  let yCenters = topKPeaksNMS(rowSmooth, 6, 3);
 
   console.log('Overlay found lines:', xCenters.length, yCenters.length);
   if (xCenters.length !== 6 || yCenters.length !== 6) {
@@ -170,8 +201,8 @@ function extractFractionsFromOverlayImage(overlayImg) {
   // Fractions inside the overlay’s own outer frame
   const L = xCenters[0], R = xCenters[xCenters.length - 1];
   const T = yCenters[0], B = yCenters[yCenters.length - 1];
-  const xFracs = xCenters.map(x => (x - L) / (R - L));
-  const yFracs = yCenters.map(y => (y - T) / (B - T));
+  const xFracs = xCenters.map(x => (x - L) / (R - L || 1));
+  const yFracs = yCenters.map(y => (y - T) / (B - T || 1));
 
   return { xFracs, yFracs };
 }
@@ -204,7 +235,6 @@ window.NebulaPickGridOverlay = function() {
     await window.NebulaLoadGridOverlay(f);
     alert('Grid overlay loaded and fractions saved. Run Fill again.');
   };
-  // some browsers require a user click, so expose the element to be clicked
   document.body.appendChild(inp);
   inp.style.position = 'fixed';
   inp.style.inset = '0';
@@ -221,18 +251,18 @@ export async function crop25(img) {
   const aW = Math.max(1, Math.round(W * scale));
   const aH = Math.max(1, Math.round(H * scale));
 
-  // analysis canvas/data
   const aCanvas = toCanvasFromImage(img, aW, aH);
   const aData = getImageData(aCanvas);
 
-  // detect outer frame on analysis image
+  // detect outer frame (analysis space)
   const { L, R, T, B } = detectOuterFrame(aData);
 
   // map to full-res + step inside lines
-  const innerL = Math.max(0, Math.round(L * (1 / (1 / scale))) + LINE_INNER_OFFSET); // == Math.round(L*scaleInv)
-  const innerR = Math.min(W, Math.round(R * (1 / (1 / scale))) - LINE_INNER_OFFSET);
-  const innerT = Math.max(0, Math.round(T * (1 / (1 / scale))) + LINE_INNER_OFFSET);
-  const innerB = Math.min(H, Math.round(B * (1 / (1 / scale))) - LINE_INNER_OFFSET);
+  const inv = 1 / scale;
+  const innerL = Math.max(0, Math.round(L * inv) + LINE_INNER_OFFSET);
+  const innerR = Math.min(W, Math.round(R * inv) - LINE_INNER_OFFSET);
+  const innerT = Math.max(0, Math.round(T * inv) + LINE_INNER_OFFSET);
+  const innerB = Math.min(H, Math.round(B * inv) - LINE_INNER_OFFSET);
 
   const frameW = Math.max(1, innerR - innerL);
   const frameH = Math.max(1, innerB - innerT);
@@ -262,7 +292,7 @@ export async function crop25(img) {
   const X = toBounds(xCenters, W);
   const Y = toBounds(yCenters, H);
 
-  // crop
+  // crop 25 squares
   const full = toCanvasFromImage(img, W, H);
   const urls = [];
   for (let r = 0; r < 5; r++) {
@@ -306,13 +336,11 @@ export async function crop25(img) {
       ctx.strokeStyle = '#00ff88'; ctx.lineWidth = 2;
       ctx.strokeRect(L, T, R - L, B - T);
 
-      // draw inner equal/calibrated grid (map full-res bounds back by *scale*)
+      // draw inner grid (map full-res bounds back by scale)
       ctx.strokeStyle = '#00ffa8'; ctx.lineWidth = 1;
-      const mapX = v => Math.round(v * scale);
-      const mapY = v => Math.round(v * scale);
       for (let i = 1; i < 5; i++) {
-        const x = mapX(X[i]);
-        const y = mapY(Y[i]);
+        const x = Math.round(X[i] * scale);
+        const y = Math.round(Y[i] * scale);
         ctx.beginPath(); ctx.moveTo(x, T); ctx.lineTo(x, B); ctx.stroke();
         ctx.beginPath(); ctx.moveTo(L, y); ctx.lineTo(R, y); ctx.stroke();
       }
