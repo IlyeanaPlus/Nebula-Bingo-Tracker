@@ -2,17 +2,22 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import BingoCard from './components/BingoCard.jsx';
 import { tryLoadDriveCacheJSON, listDriveImagesFast } from './services/drive.js';
-import { loadImageFromURL, loadImageFromFile, ahashFromImage, cropToCanvas, hammingDistanceBits } from './utils/image.js';
+import {
+  loadImageFromURL,
+  loadImageFromFile,
+  ahashFromImage,
+  cropToCanvas,
+  hammingDistanceBits,
+} from './utils/image.js';
 
-// --- Hardcoded config (replace with your real values or env) ---
-const DRIVE_FOLDER_ID = 'YOUR_GOOGLE_DRIVE_FOLDER_ID';
-const GOOGLE_API_KEY  = 'YOUR_GOOGLE_API_KEY';
+/* ----------------------------- helpers ----------------------------- */
 
-// ---------- Helper utils ----------
 function uid() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return Math.random().toString(36).slice(2);
 }
+
+// filename stem (lowercased, no extension/query)
 const stem = (nameOrUrl = '') =>
   (nameOrUrl.split('/').pop() || '').toLowerCase().replace(/\.[a-z0-9]+(?:\?.*)?$/, '');
 
@@ -24,6 +29,7 @@ function extractUrl(item) {
   if (typeof item === 'string') return item;
   return item.url ?? item.webContentLink ?? item.thumbnailLink ?? item.webViewLink ?? '';
 }
+
 function toLibraryItems(arr) {
   return (arr ?? [])
     .map((it) => {
@@ -34,32 +40,45 @@ function toLibraryItems(arr) {
     .filter(Boolean);
 }
 
-// ---------- App ----------
+// Accept whatever shape services/drive returns and yield a flat array
+function normalizeDriveList(list) {
+  if (!list) return [];
+  if (Array.isArray(list)) return list;
+  return list.images ?? list.files ?? list.items ?? list.list ?? [];
+}
+
+/* ------------------------------ app ------------------------------- */
+
 export default function App() {
   // Library + search
   const [library, setLibrary] = useState([]); // [{id,url,name}]
   const [libQuery, setLibQuery] = useState('');
 
-  // Drive-only progress (for "Get Sprites")
-  const [getSpritesProg, setGetSpritesProg] = useState({ stage: 'idle', done: 0, total: 0 }); // stage: idle|fetching|hashing|done
+  // Left-pane progress (for Get Sprites + hashing)
+  const [getSpritesProg, setGetSpritesProg] = useState({
+    stage: 'idle', // idle|fetching|hashing|done
+    done: 0,
+    total: 0,
+  });
 
   // Name index (filename stem -> url)
   const [refIndex, setRefIndex] = useState({ count: 0, byName: new Map() });
 
-  // Library aHashes (url -> bitString). UseRef to avoid heavy rerenders
-  const libHashesRef = useRef(new Map()); // Map<string, string>
+  // Library aHashes cache (url -> bitString). useRef to avoid rerenders
+  const libHashesRef = useRef(new Map());
 
   // Cards + active + per-card analysis flag
   const [cards, setCards] = useState([]); // [{id,title,rows,cols,tiles}]
   const [activeId, setActiveId] = useState(null);
   const [analyzing, setAnalyzing] = useState(new Set()); // Set<cardId>
 
-  // ---------- Persistence ----------
+  /* --------------------------- persistence --------------------------- */
+
   useEffect(() => {
     try {
-      const raw = localStorage.getItem('cards:v1');
-      if (raw) {
-        const parsed = JSON.parse(raw);
+      const rawCards = localStorage.getItem('cards:v1');
+      if (rawCards) {
+        const parsed = JSON.parse(rawCards);
         if (Array.isArray(parsed.cards)) setCards(parsed.cards);
         if (parsed.activeId) setActiveId(parsed.activeId);
       }
@@ -71,9 +90,8 @@ export default function App() {
       }
       const rawHashes = localStorage.getItem('lib:ahash');
       if (rawHashes) {
-        const obj = JSON.parse(rawHashes);
-        const m = new Map(Object.entries(obj)); // url -> bitString
-        libHashesRef.current = m;
+        const obj = JSON.parse(rawHashes); // { url: bitString }
+        libHashesRef.current = new Map(Object.entries(obj));
       }
     } catch {}
   }, []);
@@ -84,53 +102,51 @@ export default function App() {
     } catch {}
   }, [cards, activeId]);
 
-  // ---------- Initial library load (cache → live fallback) ----------
+  /* ----------------------- initial library load ---------------------- */
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const cached = await tryLoadDriveCacheJSON();
         if (!cancelled && cached) {
-          const arr = cached.images ?? cached.files ?? cached.items ?? cached.list ?? cached;
+          const arr = normalizeDriveList(cached);
           const items = toLibraryItems(arr);
           if (items.length) {
             setLibrary(items);
-            // don’t hash here; user will click Get Sprites for a fresh pass anyway
             return;
           }
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* ignore and try live */
+      }
 
       try {
-        let list;
-        try {
-          list = await listDriveImagesFast(GOOGLE_API_KEY, DRIVE_FOLDER_ID);
-        } catch {
-          list = await listDriveImagesFast({ apiKey: GOOGLE_API_KEY, folderId: DRIVE_FOLDER_ID });
-        }
+        const list = await listDriveImagesFast(); // uses configured key/id in services/drive.js
         if (!cancelled && list) {
-          const arr = list.images ?? list.files ?? list.items ?? list.list ?? list;
+          const arr = normalizeDriveList(list);
           setLibrary(toLibraryItems(arr));
         }
-      } catch { /* ignore */ }
+      } catch {
+        /* if Drive fails entirely, uploads still work */
+      }
     })();
-    return () => { cancelled = true; };
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
-  // ---------- Get Sprites (Drive-only, with progress bar) ----------
+  /* ------------------------- get sprites flow ------------------------ */
+
   async function getSprites() {
     setGetSpritesProg({ stage: 'fetching', done: 0, total: 0 });
-    // 1) fetch
+
+    // 1) fetch from Drive using central config
     let arr = [];
     try {
-      let list;
-      try {
-        list = await listDriveImagesFast(GOOGLE_API_KEY, DRIVE_FOLDER_ID);
-      } catch {
-        list = await listDriveImagesFast({ apiKey: GOOGLE_API_KEY, folderId: DRIVE_FOLDER_ID });
-      }
-      arr = list?.images ?? list?.files ?? list?.items ?? list?.list ?? list ?? [];
-    } catch {
+      const list = await listDriveImagesFast(); // no args; reuses existing config
+      arr = normalizeDriveList(list);
+    } catch (e) {
       arr = [];
     }
     const items = toLibraryItems(arr);
@@ -144,57 +160,99 @@ export default function App() {
     }
     setRefIndex({ count: byName.size, byName });
     try {
-      localStorage.setItem('refIndex:names', JSON.stringify({ count: byName.size, byName: Array.from(byName.entries()) }));
+      localStorage.setItem(
+        'refIndex:names',
+        JSON.stringify({ count: byName.size, byName: Array.from(byName.entries()) })
+      );
     } catch {}
 
     // 3) compute aHash for library (with progress)
     setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
     const hashes = libHashesRef.current;
+    const persisted = Object.fromEntries(hashes); // to serialize later
     let done = 0;
-
-    // Persisted hash cache
-    const persisted = Object.fromEntries(hashes);
 
     for (const it of items) {
       if (!hashes.has(it.url)) {
         try {
           const img = await loadImageFromURL(it.url);
-          const bits = ahashFromImage(img, 8); // 8x8 aHash → 64 bits
+          const bits = ahashFromImage(img, 8); // 64-bit aHash
           const bitStr = bitsToString(bits);
           hashes.set(it.url, bitStr);
           persisted[it.url] = bitStr;
         } catch {
-          // keep missing
+          // ignore failed items
         }
       }
       done++;
       setGetSpritesProg({ stage: 'hashing', done, total: items.length });
-      // yield to UI
-      await new Promise((r) => setTimeout(r, 0));
+      await new Promise((r) => setTimeout(r, 0)); // yield
     }
 
-    try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
+    try {
+      localStorage.setItem('lib:ahash', JSON.stringify(persisted));
+    } catch {}
+
     setGetSpritesProg({ stage: 'done', done: items.length, total: items.length });
-    // auto-clear "done" after a moment
     setTimeout(() => setGetSpritesProg({ stage: 'idle', done: 0, total: 0 }), 1200);
   }
 
-  // ---------- Derived: filtered library ----------
+  async function ensureLibraryHashes() {
+    const items = library;
+    const hashes = libHashesRef.current;
+    const persisted = Object.fromEntries(hashes);
+
+    let missing = 0;
+    for (const it of items) if (!hashes.has(it.url)) missing++;
+    if (missing === 0) return;
+
+    setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
+    let done = 0;
+
+    for (const it of items) {
+      if (!hashes.has(it.url)) {
+        try {
+          const img = await loadImageFromURL(it.url);
+          const bits = ahashFromImage(img, 8);
+          const bitStr = bitsToString(bits);
+          hashes.set(it.url, bitStr);
+          persisted[it.url] = bitStr;
+        } catch {}
+      }
+      done++;
+      setGetSpritesProg({ stage: 'hashing', done, total: items.length });
+      await new Promise((r) => setTimeout(r, 0));
+    }
+
+    try {
+      localStorage.setItem('lib:ahash', JSON.stringify(persisted));
+    } catch {}
+
+    setGetSpritesProg({ stage: 'idle', done: 0, total: 0 });
+  }
+
+  /* ----------------------- derived: filtered lib --------------------- */
+
   const filteredLibrary = useMemo(() => {
     const q = libQuery.trim().toLowerCase();
     if (!q) return library;
-    return library.filter((it) => it.name?.toLowerCase().includes(q) || it.url?.toLowerCase().includes(q));
+    return library.filter(
+      (it) => it.name?.toLowerCase().includes(q) || it.url?.toLowerCase().includes(q)
+    );
   }, [library, libQuery]);
 
-  // ---------- Card ops ----------
+  /* ------------------------------ cards ------------------------------ */
+
   function addCard({ title = `Card ${cards.length + 1}`, rows = 5, cols = 5, tiles } = {}) {
     const total = rows * cols;
-    const filled = Array.isArray(tiles) && tiles.length === total ? tiles : Array(total).fill(null);
+    const filled =
+      Array.isArray(tiles) && tiles.length === total ? tiles : Array(total).fill(null);
     const id = uid();
     const card = { id, title, rows, cols, tiles: filled };
     setCards((prev) => [...prev, card]);
     setActiveId(id);
   }
+
   function removeCard(id) {
     setCards((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
@@ -202,9 +260,11 @@ export default function App() {
       setActiveId(remaining[0]?.id ?? null);
     }
   }
+
   function renameCard(id, newTitle) {
     setCards((prev) => prev.map((c) => (c.id === id ? { ...c, title: newTitle } : c)));
   }
+
   function addTileToActive(url) {
     if (!activeId) return;
     setCards((prev) =>
@@ -218,10 +278,16 @@ export default function App() {
       })
     );
   }
+
   function clearActiveCard() {
     if (!activeId) return;
-    setCards((prev) => prev.map((c) => (c.id === activeId ? { ...c, tiles: Array(c.rows * c.cols).fill(null) } : c)));
+    setCards((prev) =>
+      prev.map((c) =>
+        c.id === activeId ? { ...c, tiles: Array(c.rows * c.cols).fill(null) } : c
+      )
+    );
   }
+
   function autofillActiveFromLibrary() {
     if (!activeId || filteredLibrary.length === 0) return;
     setCards((prev) =>
@@ -229,16 +295,23 @@ export default function App() {
         if (c.id !== activeId) return c;
         const total = c.rows * c.cols;
         const picked = filteredLibrary.slice(0, total).map((it) => it.url);
-        const filled = picked.length === total ? picked : picked.concat(Array(total - picked.length).fill(null));
+        const filled =
+          picked.length === total
+            ? picked
+            : picked.concat(Array(total - picked.length).fill(null));
         return { ...c, tiles: filled };
       })
     );
   }
+
   function onBuiltPNG({ id, dataURL }) {
-    try { localStorage.setItem(`card:${id}:png`, dataURL); } catch {}
+    try {
+      localStorage.setItem(`card:${id}:png`, dataURL);
+    } catch {}
   }
 
-  // ---------- Screenshot analysis ----------
+  /* ----------------------- screenshot analysis ---------------------- */
+
   async function analyzeScreenshotForCard(id, file) {
     // mark analyzing
     setAnalyzing((s) => new Set([...s, id]));
@@ -286,55 +359,27 @@ export default function App() {
             }
           }
 
-          // thresholding (optional): require at least some similarity
-          // 64-bit aHash -> typical good matches under ~20
-          if (bestUrl /* && bestDist <= 22 */) {
+          // Optional threshold: uncomment to require closeness (0..64)
+          // if (bestUrl && bestDist <= 22) {
+          if (bestUrl) {
             nextTiles[r * cols + c] = bestUrl;
           }
         }
       }
 
-      // update card tiles
+      // update the card
       setCards((prev) => prev.map((c) => (c.id === id ? { ...c, tiles: nextTiles } : c)));
     } finally {
       setAnalyzing((s) => {
-        const n = new Set(s); n.delete(id); return n;
+        const n = new Set(s);
+        n.delete(id);
+        return n;
       });
     }
   }
 
-  async function ensureLibraryHashes() {
-    const items = library;
-    const hashes = libHashesRef.current;
-    const persisted = Object.fromEntries(hashes);
+  /* ------------------------------- UI -------------------------------- */
 
-    let countMissing = 0;
-    for (const it of items) if (!hashes.has(it.url)) countMissing++;
-    if (countMissing === 0) return;
-
-    // show "hashing" progress in the left pane bar (reuse)
-    setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
-    let done = 0;
-
-    for (const it of items) {
-      if (!hashes.has(it.url)) {
-        try {
-          const img = await loadImageFromURL(it.url);
-          const bits = ahashFromImage(img, 8);
-          const bitStr = bitsToString(bits);
-          hashes.set(it.url, bitStr);
-          persisted[it.url] = bitStr;
-        } catch { /* ignore */ }
-      }
-      done++;
-      setGetSpritesProg({ stage: 'hashing', done, total: items.length });
-      await new Promise((r) => setTimeout(r, 0));
-    }
-    try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
-    setGetSpritesProg({ stage: 'idle', done: 0, total: 0 });
-  }
-
-  // ---------- UI ----------
   const progressPct = (() => {
     const { stage, done, total } = getSpritesProg;
     if (stage === 'idle' || total === 0) return null;
@@ -347,7 +392,9 @@ export default function App() {
         <h1 style={styles.h1}>Nebula Bingo Tracker</h1>
 
         <div style={styles.actions}>
-          <button style={styles.btn} onClick={() => addCard({})}>New Card</button>
+          <button style={styles.btn} onClick={() => addCard({})}>
+            New Card
+          </button>
           <button
             style={{ ...styles.btn, ...(activeId ? {} : styles.btnDisabled) }}
             disabled={!activeId}
@@ -366,13 +413,23 @@ export default function App() {
 
           {/* Uploads (adds to library) */}
           <label style={styles.uploadLabel}>
-            <input type="file" multiple accept="image/*" onChange={(e) => {
-              const files = Array.from(e.target.files || []);
-              if (!files.length) return;
-              const items = files.map((file) => ({ id: uid(), url: URL.createObjectURL(file), name: file.name }));
-              setLibrary((prev) => [...items, ...prev]);
-              e.target.value = '';
-            }} style={{ display: 'none' }} />
+            <input
+              type="file"
+              multiple
+              accept="image/*"
+              onChange={(e) => {
+                const files = Array.from(e.target.files || []);
+                if (!files.length) return;
+                const items = files.map((file) => ({
+                  id: uid(),
+                  url: URL.createObjectURL(file),
+                  name: file.name,
+                }));
+                setLibrary((prev) => [...items, ...prev]);
+                e.target.value = '';
+              }}
+              style={{ display: 'none' }}
+            />
             <span>Upload Images</span>
           </label>
         </div>
@@ -382,11 +439,7 @@ export default function App() {
         {/* Left: library pane with Get Sprites + progress */}
         <section style={styles.libraryPane}>
           <div style={styles.libraryToolbar}>
-            <button
-              style={styles.btn}
-              onClick={getSprites}
-              title="Fetch sprites from Drive and build index"
-            >
+            <button style={styles.btn} onClick={getSprites} title="Fetch from Drive and build index">
               Get Sprites
             </button>
             {progressPct !== null && (
@@ -417,7 +470,11 @@ export default function App() {
                 title={it.name}
                 onClick={() => addTileToActive(it.url)}
               >
-                <img src={it.url} alt={it.name} style={{ objectFit: 'contain', width: '100%', height: '100%' }} />
+                <img
+                  src={it.url}
+                  alt={it.name}
+                  style={{ objectFit: 'contain', width: '100%', height: '100%' }}
+                />
               </button>
             ))}
             {filteredLibrary.length === 0 && (
@@ -454,14 +511,17 @@ export default function App() {
             })}
           </div>
 
-          {cards.length === 0 && <div style={styles.emptyCards}>Create a card to get started.</div>}
+          {cards.length === 0 && (
+            <div style={styles.emptyCards}>Create a card to get started.</div>
+          )}
         </section>
       </main>
     </div>
   );
 }
 
-// ---------- Styles ----------
+/* ------------------------------ styles ----------------------------- */
+
 const styles = {
   page: {
     minHeight: '100vh',
@@ -564,12 +624,22 @@ const styles = {
     overflow: 'hidden',
     cursor: 'pointer',
   },
-  emptyNote: { color: '#aaa', fontSize: '0.9rem', gridColumn: '1 / -1', textAlign: 'center', padding: '12px 0' },
+  emptyNote: {
+    color: '#aaa',
+    fontSize: '0.9rem',
+    gridColumn: '1 / -1',
+    textAlign: 'center',
+    padding: '12px 0',
+  },
 
   // Cards
   cardsPane: { padding: '12px', minWidth: 0 },
   cardsGrid: { display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' },
-  cardWrap: { borderRadius: '18px', transition: 'box-shadow 120ms ease, border-color 120ms ease', border: '1px solid transparent' },
+  cardWrap: {
+    borderRadius: '18px',
+    transition: 'box-shadow 120ms ease, border-color 120ms ease',
+    border: '1px solid transparent',
+  },
   cardWrapActive: { border: '1px solid #4e7cff', boxShadow: '0 0 0 3px rgba(78,124,255,0.25)' },
   emptyCards: { color: '#aaa', padding: '12px' },
 };
