@@ -9,12 +9,18 @@ const GOOGLE_API_KEY  = 'YOUR_GOOGLE_API_KEY';
 
 // ---------- Helpers ----------
 function uid() {
-  if (crypto?.randomUUID) return crypto.randomUUID();
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
   return Math.random().toString(36).slice(2);
 }
 
+// Get filename stem (lowercased, no extension/query)
+const stem = (nameOrUrl = '') =>
+  (nameOrUrl.split('/').pop() || '')
+    .toLowerCase()
+    .replace(/\.[a-z0-9]+(?:\?.*)?$/, '');
+
+// Flexible URL extraction from Drive item shapes
 function extractUrl(item) {
-  // Flexible extraction from whatever the Drive service returns
   if (!item) return '';
   if (typeof item === 'string') return item;
   return (
@@ -26,6 +32,7 @@ function extractUrl(item) {
   );
 }
 
+// Normalize Drive items to {id,url,name}
 function toLibraryItems(arr) {
   return (arr ?? [])
     .map((it) => {
@@ -46,11 +53,15 @@ export default function App() {
   const [library, setLibrary] = useState([]); // [{id,url,name}]
   const [libQuery, setLibQuery] = useState('');
 
+  // Reference index (Drive only): nameStem -> url
+  const [refIndex, setRefIndex] = useState({ count: 0, byName: new Map() });
+  const [fetchingDrive, setFetchingDrive] = useState(false);
+
   // Cards
   const [cards, setCards] = useState([]); // [{id,title,rows,cols,tiles}]
   const [activeId, setActiveId] = useState(null);
 
-  // Load from Drive cache first; fall back to Drive API if available
+  // Load from Drive cache first; fall back to live Drive listing
   useEffect(() => {
     let cancelled = false;
 
@@ -58,13 +69,8 @@ export default function App() {
       try {
         const cached = await tryLoadDriveCacheJSON();
         if (!cancelled && cached) {
-          // Try multiple possible shapes
           const arr =
-            cached.images ??
-            cached.files ??
-            cached.items ??
-            cached.list ??
-            cached;
+            cached.images ?? cached.files ?? cached.items ?? cached.list ?? cached;
           const items = toLibraryItems(arr);
           if (items.length) {
             setLibrary(items);
@@ -101,7 +107,50 @@ export default function App() {
     };
   }, []);
 
-  // Filtered view of library
+  // --- Drive-only refresh & index (ignores cache) ---
+  async function fetchAndIndexDriveOnly() {
+    setFetchingDrive(true);
+    try {
+      let list;
+      try {
+        // preferred signature
+        list = await listDriveImagesFast(GOOGLE_API_KEY, DRIVE_FOLDER_ID);
+      } catch {
+        // alt signature
+        list = await listDriveImagesFast({
+          apiKey: GOOGLE_API_KEY,
+          folderId: DRIVE_FOLDER_ID,
+        });
+      }
+      const arr = list?.images ?? list?.files ?? list?.items ?? list?.list ?? list ?? [];
+      const items = toLibraryItems(arr);
+      setLibrary(items);
+
+      // Build simple name index: filename stem -> URL
+      const byName = new Map();
+      for (const it of items) {
+        const key = stem(it.name || it.url);
+        if (key) byName.set(key, it.url);
+      }
+      const index = { count: byName.size, byName };
+      setRefIndex(index);
+
+      // Optional: persist to localStorage for quick reuse
+      try {
+        localStorage.setItem(
+          'refIndex:names',
+          JSON.stringify({
+            count: index.count,
+            byName: Array.from(byName.entries()),
+          })
+        );
+      } catch {}
+    } finally {
+      setFetchingDrive(false);
+    }
+  }
+
+  // Filtered library view
   const filteredLibrary = useMemo(() => {
     const q = libQuery.trim().toLowerCase();
     if (!q) return library;
@@ -115,9 +164,10 @@ export default function App() {
   // Card helpers
   function addCard({ title = `Card ${cards.length + 1}`, rows = 5, cols = 5, tiles } = {}) {
     const total = rows * cols;
-    const filled = Array.isArray(tiles) && tiles.length === total
-      ? tiles
-      : Array(total).fill(null);
+    const filled =
+      Array.isArray(tiles) && tiles.length === total
+        ? tiles
+        : Array(total).fill(null);
     const id = uid();
     const card = { id, title, rows, cols, tiles: filled };
     setCards((prev) => [...prev, card]);
@@ -127,21 +177,9 @@ export default function App() {
   function removeCard(id) {
     setCards((prev) => prev.filter((c) => c.id !== id));
     if (activeId === id) {
-      setActiveId((prev) => {
-        const remaining = cards.filter((c) => c.id !== id);
-        return remaining[0]?.id ?? null;
-      });
+      const remaining = cards.filter((c) => c.id !== id);
+      setActiveId(remaining[0]?.id ?? null);
     }
-  }
-
-  function setActive(id) {
-    setActiveId(id);
-  }
-
-  function updateCard(id, updater) {
-    setCards((prev) =>
-      prev.map((c) => (c.id === id ? { ...c, ...updater(c) } : c))
-    );
   }
 
   function addTileToActive(url) {
@@ -166,7 +204,9 @@ export default function App() {
     if (!activeId) return;
     setCards((prev) =>
       prev.map((c) =>
-        c.id === activeId ? { ...c, tiles: Array(c.rows * c.cols).fill(null) } : c
+        c.id === activeId
+          ? { ...c, tiles: Array(c.rows * c.cols).fill(null) }
+          : c
       )
     );
   }
@@ -178,9 +218,10 @@ export default function App() {
         if (c.id !== activeId) return c;
         const total = c.rows * c.cols;
         const picked = filteredLibrary.slice(0, total).map((it) => it.url);
-        const filled = picked.length === total
-          ? picked
-          : picked.concat(Array(total - picked.length).fill(null));
+        const filled =
+          picked.length === total
+            ? picked
+            : picked.concat(Array(total - picked.length).fill(null));
         return { ...c, tiles: filled };
       })
     );
@@ -215,6 +256,20 @@ export default function App() {
           <button style={styles.btn} onClick={() => addCard({})}>
             New Card
           </button>
+
+          {/* Drive-only fetch & index */}
+          <button
+            style={{ ...styles.btn, ...(fetchingDrive ? styles.btnDisabled : {}) }}
+            disabled={fetchingDrive}
+            onClick={fetchAndIndexDriveOnly}
+            title="Fetch sprites from Drive and build name index"
+          >
+            {fetchingDrive ? 'Fetching…' : 'Fetch & Index (Drive)'}
+          </button>
+          <span style={{ color: '#9bb4ff', fontSize: 12 }}>
+            {refIndex.count ? `Indexed: ${refIndex.count}` : ''}
+          </span>
+
           <button
             style={{ ...styles.btn, ...(activeId ? {} : styles.btnDisabled) }}
             disabled={!activeId}
@@ -223,6 +278,7 @@ export default function App() {
           >
             Autofill
           </button>
+
           <button
             style={{ ...styles.btn, ...(activeId ? {} : styles.btnDisabled) }}
             disabled={!activeId}
@@ -293,7 +349,7 @@ export default function App() {
                     ...styles.cardWrap,
                     ...(isActive ? styles.cardWrapActive : {}),
                   }}
-                  onClick={() => setActive(card.id)}
+                  onClick={() => setActiveId(card.id)}
                 >
                   <BingoCard
                     id={card.id}
@@ -310,9 +366,7 @@ export default function App() {
           </div>
 
           {cards.length === 0 && (
-            <div style={styles.emptyCards}>
-              Create a card to get started.
-            </div>
+            <div style={styles.emptyCards}>Create a card to get started.</div>
           )}
         </section>
       </main>
@@ -387,7 +441,7 @@ const styles = {
     flex: 1,
     background: '#1b1b1b',
     color: '#eee',
-    border: '1px solid #2c2c2c',
+    border: '1px solid '#2c2c2c',
     borderRadius: '10px',
     padding: '6px 10px',
   },
