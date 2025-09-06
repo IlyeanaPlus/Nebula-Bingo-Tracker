@@ -29,3 +29,6 @@ Tuning:
 - In BingoCard.jsx, adjust MAX_SCORE (0.18–0.28 typical). Lower = stricter.
 - To bias matching, edit DEFAULT_WEIGHTS in src/utils/match.js (gray vs rgb).
 - PAD_FRAC in src/utils/image.js trims edges before 5×5 slicing.
+
+Additional:
+- src/utils/hashing.js (implements computeAhash64 / computeDhash64 used by image.js)

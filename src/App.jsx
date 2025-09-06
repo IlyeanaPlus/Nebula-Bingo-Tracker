@@ -1,7 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import Header from './components/Header';
 import BingoCard from './components/BingoCard';
-import './styles/bingo.css';   // ✅ new import for styles
 
 const LS_KEY = 'nebula_bingo_cards_v2';
 

@@ -1,3 +1,4 @@
+import { computeAhash64, computeDhash64 } from './hashing';
 // NOTE: Keep your existing implementations of computeAhash64 / computeDhash64.
 // This module adds wrappers and grid cropping helpers used by the new BingoCard.
 
