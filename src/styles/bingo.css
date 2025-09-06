@@ -211,3 +211,27 @@ button:hover {
   padding: 12px;
   overflow-y: auto;
 }
+
+
+/* === Debug Crops (modal) – keep tiles perfectly square without affecting rest of UI === */
+/* Target only the images we render for crops: <img alt="crop X"> inside the Fill modal */
+.fill-overlay .fill-box img[alt^="crop "] {
+  display: block;
+  width: 100% !important;     /* fill the tile wrapper */
+  height: auto !important;    /* prevent vertical stretching */
+  max-width: 64px;            /* visual cap (matches prior intent) */
+  aspect-ratio: 1 / 1;        /* preserve square shape */
+  object-fit: contain;        /* no distortion; letterbox if needed */
+  image-rendering: pixelated; /* keep crisp pixels */
+}
+
+/* Ensure each tile wrapper doesn’t force extra height */
+.fill-overlay .fill-box .debug-crop-tile,
+.fill-overlay .fill-box .debug-crop-wrap {
+  aspect-ratio: 1 / 1;
+}
+
+/* Don’t let grid stretch rows unevenly */
+.fill-overlay .fill-box .debug-crops-grid {
+  align-items: start;
+}
