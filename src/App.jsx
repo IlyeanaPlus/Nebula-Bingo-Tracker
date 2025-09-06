@@ -43,6 +43,140 @@ function normalizeDriveList(list) {
   return list.images ?? list.files ?? list.items ?? list.list ?? [];
 }
 
+/* ---- Grid detection helpers (1D projections + peak picking) ---- */
+
+function toGrayImageData(img) {
+  const w = img.naturalWidth || img.width;
+  const h = img.naturalHeight || img.height;
+  const cvs = document.createElement('canvas');
+  cvs.width = w; cvs.height = h;
+  const ctx = cvs.getContext('2d', { willReadFrequently: true });
+  ctx.drawImage(img, 0, 0);
+  const { data } = ctx.getImageData(0, 0, w, h);
+  const g = new Float32Array(w * h);
+  for (let i = 0, j = 0; i < data.length; i += 4, j++) {
+    g[j] = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+  }
+  return { w, h, g };
+}
+
+function projColsEdge({ w, h, g }) {
+  // Sum horizontal absolute differences column-wise: |I(x+1,y)-I(x,y)|
+  const col = new Float32Array(w);
+  for (let y = 0; y < h; y++) {
+    let off = y * w;
+    for (let x = 0; x < w - 1; x++) {
+      col[x] += Math.abs(g[off + x + 1] - g[off + x]);
+    }
+  }
+  // last column accumulation is smaller; smooth later anyway
+  return col;
+}
+function projRowsEdge({ w, h, g }) {
+  // Sum vertical absolute differences row-wise: |I(x,y+1)-I(x,y)|
+  const row = new Float32Array(h);
+  for (let y = 0; y < h - 1; y++) {
+    let off = y * w;
+    let off2 = (y + 1) * w;
+    for (let x = 0; x < w; x++) {
+      row[y] += Math.abs(g[off2 + x] - g[off + x]);
+    }
+  }
+  return row;
+}
+
+function smooth1D(arr, radius = 5) {
+  const n = arr.length;
+  const out = new Float32Array(n);
+  let sum = 0;
+  let win = 0;
+  for (let i = 0; i < n; i++) {
+    sum += arr[i];
+    win++;
+    if (i - (radius * 2) - 1 >= 0) { sum -= arr[i - (radius * 2) - 1]; win--; }
+    const left = Math.max(0, i - radius);
+    const right = Math.min(n - 1, i + radius);
+    const width = right - left + 1;
+    // recompute local mean more simply (cheap)
+    let s = 0;
+    for (let k = left; k <= right; k++) s += arr[k];
+    out[i] = s / width;
+  }
+  return out;
+}
+
+function peakIndices(arr, count, minSep) {
+  // Greedy NMS: pick top 'count' peaks separated by at least 'minSep' pixels
+  const n = arr.length;
+  const idx = Array.from({ length: n }, (_, i) => i);
+  idx.sort((a, b) => arr[b] - arr[a]);
+  const keep = [];
+  outer: for (const i of idx) {
+    for (const j of keep) if (Math.abs(i - j) < minSep) continue outer;
+    keep.push(i);
+    if (keep.length === count) break;
+  }
+  keep.sort((a, b) => a - b);
+  return keep;
+}
+
+/**
+ * Detect grid lines for a rows x cols board.
+ * Returns: { xs: number[cols+1], ys: number[rows+1] } in image coords, or null.
+ */
+function detectGridLines(img, rows, cols) {
+  const gi = toGrayImageData(img);
+  const colProj = smooth1D(projColsEdge(gi), 4);
+  const rowProj = smooth1D(projRowsEdge(gi), 4);
+
+  // We want exactly cols+1 and rows+1 lines
+  const wantX = cols + 1;
+  const wantY = rows + 1;
+
+  const minSepX = Math.floor((gi.w / cols) * 0.6); // lines at least ~60% cell width apart
+  const minSepY = Math.floor((gi.h / rows) * 0.6);
+
+  let xs = peakIndices(colProj, wantX, Math.max(4, minSepX));
+  let ys = peakIndices(rowProj, wantY, Math.max(4, minSepY));
+
+  // Validate monotonic spacing (roughly equal steps)
+  if (xs.length !== wantX || ys.length !== wantY) return null;
+  // optional sanity check: average step shouldn’t vary wildly
+  const avgDx = (xs[xs.length - 1] - xs[0]) / cols;
+  const avgDy = (ys[ys.length - 1] - ys[0]) / rows;
+  if (!(avgDx > 8 && avgDy > 8)) return null;
+
+  return { xs, ys };
+}
+
+/**
+ * Build cell boxes from detected grid lines, optionally shrinking inside each cell
+ * by 'padFrac' (to avoid drawing grid lines in the crop).
+ */
+function boxesFromLines(img, lines, rows, cols, padFrac = 0.06) {
+  const boxes = [];
+  for (let r = 0; r < rows; r++) {
+    const y0 = lines.ys[r];
+    const y1 = lines.ys[r + 1];
+    for (let c = 0; c < cols; c++) {
+      const x0 = lines.xs[c];
+      const x1 = lines.xs[c + 1];
+      const cw = Math.max(2, x1 - x0);
+      const ch = Math.max(2, y1 - y0);
+      const padX = Math.floor(cw * padFrac);
+      const padY = Math.floor(ch * padFrac);
+      boxes.push({
+        x: x0 + padX,
+        y: y0 + padY,
+        w: Math.max(2, cw - 2 * padX),
+        h: Math.max(2, ch - 2 * padY),
+      });
+    }
+  }
+  return boxes;
+}
+
+
 /* ------------------------------ app ------------------------------- */
 
 export default function App() {
@@ -235,31 +369,37 @@ export default function App() {
 
   /* ----------------------- screenshot analysis ---------------------- */
 
-  async function analyzeScreenshotForCard(id, file) {
-    setAnalyzing((s) => new Set([...s, id]));
-    try {
-      await ensureLibraryHashes();
-      const img = await loadImageFromFile(file);
+async function analyzeScreenshotForCard(id, file) {
+  setAnalyzing((s) => new Set([...s, id]));
+  try {
+    await ensureLibraryHashes();
+    const img = await loadImageFromFile(file);
 
-      const card = cards.find((c) => c.id === id);
-      if (!card) return;
-      const { rows, cols } = card;
+    const card = cards.find((c) => c.id === id);
+    if (!card) return;
+    const { rows, cols } = card;
 
-      // Prepare library list with bit arrays (skip missing)
-      const list = library.map((it) => ({
-        url: it.url,
-        a: aBitsRef.current.get(it.url),
-        dx: dxBitsRef.current.get(it.url),
-        dy: dyBitsRef.current.get(it.url),
-      })).filter((v) => v.a && v.dx && v.dy);
+    // Prepare library list with precomputed hash bit-arrays (a + dX + dY)
+    const list = library.map((it) => ({
+      url: it.url,
+      a: aBitsRef.current.get ? aBitsRef.current.get(it.url) : null,
+      dx: dxBitsRef.current.get ? dxBitsRef.current.get(it.url) : null,
+      dy: dyBitsRef.current.get ? dyBitsRef.current.get(it.url) : null,
+    })).filter((v) => v.a && v.dx && v.dy);
+    if (list.length === 0) return;
 
-      if (list.length === 0) return;
+    // 1) Try robust grid-line detection
+    let boxes = null;
+    const lines = detectGridLines(img, rows, cols);
+    if (lines) {
+      boxes = boxesFromLines(img, lines, rows, cols, 0.08); // slightly larger pad to avoid grid lines
+    }
 
+    // 2) Fallback to previous margin/pad search if needed
+    if (!boxes) {
       const margins = [0.00, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12];
-      const innerPads = [0.02, 0.05, 0.08]; // try a few inner paddings
-
+      const innerPads = [0.02, 0.05, 0.08];
       let best = { score: Infinity, filled: null };
-
       for (const m of margins) {
         const w = img.naturalWidth || img.width;
         const h = img.naturalHeight || img.height;
@@ -268,22 +408,57 @@ export default function App() {
         const ww = Math.max(4, Math.floor(w - 2 * x0));
         const hh = Math.max(4, Math.floor(h - 2 * y0));
         const cropped = cropToCanvas(img, x0, y0, ww, hh);
-
         for (const pad of innerPads) {
-          const result = matchGrid(cropped, rows, cols, list, pad);
-          if (result && result.score < best.score) best = result;
+          const res = matchGrid(cropped, rows, cols, list, pad);
+          if (res && res.score < best.score) best = res;
         }
       }
-
       if (best.filled) {
         setCards((prev) => prev.map((c) => (c.id === id ? { ...c, tiles: best.filled } : c)));
       }
-    } finally {
-      setAnalyzing((s) => {
-        const n = new Set(s); n.delete(id); return n;
-      });
+      return;
     }
+
+    // 3) With exact boxes, crop each and match strictly
+    const filled = Array(rows * cols).fill(null);
+    const WEIGHTS = { a: 0.5, dx: 0.25, dy: 0.25 };
+    const ABS_THRESH = 20;  // stricter now that crops are cleaner
+    const MIN_GAP = 5;
+
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      const cell = cropToCanvas(img, b.x, b.y, b.w, b.h);
+
+      const a  = ahashFromImage(cell, 8);
+      const dx = dhashFromImage(cell, 8, 'x');
+      const dy = dhashFromImage(cell, 8, 'y');
+
+      let bestUrl = null, bestScore = Infinity, second = Infinity;
+
+      for (let k = 0; k < list.length; k++) {
+        const cand = list[k];
+        const dA = hammingDistanceBits(a,  cand.a);
+        const dX = hammingDistanceBits(dx, cand.dx);
+        const dY = hammingDistanceBits(dy, cand.dy);
+        const score = WEIGHTS.a * dA + WEIGHTS.dx * dX + WEIGHTS.dy * dY;
+
+        if (score < bestScore) { second = bestScore; bestScore = score; bestUrl = cand.url; }
+        else if (score < second) { second = score; }
+      }
+
+      if (bestUrl && bestScore <= ABS_THRESH && (second - bestScore) >= MIN_GAP) {
+        filled[i] = { url: bestUrl, checked: false };
+      } else {
+        filled[i] = null;
+      }
+    }
+
+    setCards((prev) => prev.map((c) => (c.id === id ? { ...c, tiles: filled } : c)));
+  } finally {
+    setAnalyzing((s) => { const n = new Set(s); n.delete(id); return n; });
   }
+}
+
 
   /**
    * Split a cropped canvas into rows/cols, hash each cell with aHash+dHashX+dHashY,
