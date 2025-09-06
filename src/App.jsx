@@ -1,3 +1,4 @@
+// src/App.jsx
 import React, {useEffect,useMemo,useRef,useState} from "react";
 import BingoCard from "./components/BingoCard.jsx";
 import {loadImageFromFile,computeAHash,computeDHashX,computeDHashY,detectGridCrops} from "./utils/image.js";
@@ -25,7 +26,7 @@ export default function App(){
       const match=findBestMatch({ah,dx,dy});
       return {ah,dx,dy,match};
     }));
-    const id=\`card_\${Date.now()}\`;
+    const id=`card_${Date.now()}`;
     const title=f.name.replace(/\.\w+$/,"");
     const toggles=Array(25).fill(false);
     const card={id,title,tiles,toggles};
@@ -76,7 +77,7 @@ export default function App(){
           <div className="px-3 py-2 border-b border-neutral-700 text-neutral-300">Saved Cards</div>
           <ul className="max-h-[50vh] overflow-auto">
             {cards.map(c=>(
-              <li key={c.id} className={\`flex items-center justify-between px-3 py-2 hover:bg-neutral-800 \${c.id===activeId?"bg-neutral-800":""}\`}>
+              <li key={c.id} className={`flex items-center justify-between px-3 py-2 hover:bg-neutral-800 ${c.id===activeId?"bg-neutral-800":""}`}>
                 <button className="truncate text-left" onClick={()=>setActiveId(c.id)} title={c.title}>{c.title}</button>
                 <button onClick={()=>removeCard(c.id)} className="text-red-400 ml-2">✕</button>
               </li>
