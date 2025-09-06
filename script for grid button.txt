@@ -1,0 +1,41 @@
+(() => {
+  if (typeof window.NebulaLoadGridOverlay !== 'function') {
+    console.warn('NebulaLoadGridOverlay not found — make sure the new image.js is live and hard-refresh (Ctrl+F5).');
+  }
+  const wrap = document.createElement('div');
+  Object.assign(wrap.style, {
+    position:'fixed', top:'12px', right:'12px', zIndex: 99999,
+    background:'rgba(0,0,0,.8)', color:'#ddd', padding:'8px 10px',
+    borderRadius:'10px', font:'12px system-ui,Segoe UI,Arial'
+  });
+  wrap.innerHTML = `
+    <button id="nbt_load_overlay_btn" style="
+      all:unset; background:#16a34a; color:#fff; padding:6px 10px; border-radius:8px;
+      cursor:pointer; font-weight:600;">Load Grid Overlay PNG</button>
+    <button id="nbt_close_overlay_btn" style="
+      all:unset; margin-left:8px; color:#bbb; cursor:pointer;">close</button>
+  `;
+  document.body.appendChild(wrap);
+
+  const btn = wrap.querySelector('#nbt_load_overlay_btn');
+  const close = wrap.querySelector('#nbt_close_overlay_btn');
+  close.onclick = () => wrap.remove();
+
+  btn.onclick = () => {
+    const inp = document.createElement('input');
+    inp.type = 'file';
+    inp.accept = 'image/png,image/*';
+    inp.onchange = async (e) => {
+      const f = e.target.files?.[0];
+      if (!f) return;
+      if (typeof window.NebulaLoadGridOverlay === 'function') {
+        await window.NebulaLoadGridOverlay(f);
+        alert('Grid overlay loaded and fractions saved. Run Fill again.');
+      } else {
+        alert('NebulaLoadGridOverlay is not available on this page.');
+      }
+      wrap.remove();
+    };
+    inp.click();
+  };
+})();
