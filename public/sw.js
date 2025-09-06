@@ -1,52 +1,63 @@
-// public/sw.js
-const BASE = new URL(self.registration.scope).pathname; // e.g. "/Nebula-Bingo-Tracker/"
-const CACHE = "nebula-bingo-v3";
-const ASSETS = [BASE, BASE + "index.html"]; // don't precache drive_cache.json
+/* global self, caches, fetch */
+const BASE = self.registration.scope; // base-aware for GitHub Pages
+const CACHE_APP = 'nebula-bingo-app-v2-1';
+const CACHE_OTHER = 'nebula-bingo-other-v2-1';
 
-self.addEventListener("install", (e) => {
-  e.waitUntil(
-    caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())
-  );
+// Precaches only app shell
+const PRECACHE = [BASE, BASE + 'index.html'];
+
+self.addEventListener('install', (event) => {
+  event.waitUntil((async () => {
+    const cache = await caches.open(CACHE_APP);
+    await cache.addAll(PRECACHE);
+    self.skipWaiting();
+  })());
 });
 
-self.addEventListener("activate", (e) => {
-  e.waitUntil(
-    caches.keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
-      .then(() => self.clients.claim())
-  );
+self.addEventListener('activate', (event) => {
+  event.waitUntil((async () => {
+    const names = await caches.keys();
+    await Promise.all(names.map(n => {
+      if (n !== CACHE_APP && n !== CACHE_OTHER) {
+        return caches.delete(n);
+      }
+    }));
+    await self.clients.claim();
+  })());
 });
 
-self.addEventListener("fetch", (e) => {
-  const url = new URL(e.request.url);
-  const sameOrigin = url.origin === self.location.origin && url.pathname.startsWith(BASE);
+self.addEventListener('fetch', (event) => {
+  const req = event.request;
+  if (req.method !== 'GET' || new URL(req.url).origin !== location.origin) return;
 
-  // Network-first for the manifest regardless of base prefix
-  if (sameOrigin && url.pathname.endsWith("drive_cache.json")) {
-    e.respondWith(
-      fetch(e.request).then((r) => {
-        const copy = r.clone();
-        caches.open(CACHE).then((c) => c.put(e.request, copy));
-        return r;
-      }).catch(() => caches.match(e.request))
-    );
+  const url = new URL(req.url);
+  const isManifest = url.pathname.endsWith('/drive_cache.json') || url.pathname === BASE + 'drive_cache.json';
+
+  if (isManifest) {
+    // Network-first for manifest
+    event.respondWith((async () => {
+      try {
+        const fresh = await fetch(req);
+        const cache = await caches.open(CACHE_OTHER);
+        cache.put(req, fresh.clone());
+        return fresh;
+      } catch {
+        const cache = await caches.open(CACHE_OTHER);
+        const hit = await cache.match(req);
+        if (hit) return hit;
+        throw new Error('Offline and no manifest in cache');
+      }
+    })());
     return;
   }
 
-  // Cache-first for other same-origin GETs under BASE
-  if (sameOrigin && e.request.method === "GET") {
-    e.respondWith(
-      caches.match(e.request).then((cached) =>
-        cached ||
-        fetch(e.request).then((r) => {
-          const copy = r.clone();
-          caches.open(CACHE).then((c) => c.put(e.request, copy));
-          return r;
-        })
-      )
-    );
-    return;
-  }
-
-  e.respondWith(fetch(e.request));
+  // Cache-first for other same-origin GETs
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_OTHER);
+    const cached = await cache.match(req);
+    if (cached) return cached;
+    const resp = await fetch(req);
+    cache.put(req, resp.clone());
+    return resp;
+  })());
 });

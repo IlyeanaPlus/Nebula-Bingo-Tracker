@@ -1,80 +1,82 @@
-// src/utils/image.js
-export async function loadImageFromFile(file){
-  const blob = file instanceof Blob ? file : new Blob([file]);
-  const bitmap = await createImageBitmap(blob);
-  return bitmap; // ImageBitmap
+// NOTE: Keep your existing implementations of computeAhash64 / computeDhash64.
+// This module adds wrappers and grid cropping helpers used by the new BingoCard.
+
+export const PAD_FRAC = 0.04; // tunable
+export const HASH_CFG = {
+  ahashSize: 8,
+  dhashX: { w: 9, h: 8 },
+  dhashY: { w: 8, h: 9 }
+};
+
+export async function fileToImage(file) {
+  const url = URL.createObjectURL(file);
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
 }
 
-function toCanvas(src, sx=0, sy=0, sw=src.width, sh=src.height, dw=sw, dh=sh){
-  const c = document.createElement("canvas");
-  c.width = dw; c.height = dh;
-  const g = c.getContext("2d", {alpha:false, willReadFrequently:true});
-  // drawImage accepts ImageBitmap | HTMLImageElement | HTMLCanvasElement
-  g.drawImage(src, sx, sy, sw, sh, 0, 0, dw, dh);
-  return c;
-}
+export function crop25(img, padFrac = PAD_FRAC) {
+  const { width, height } = img;
+  const padX = Math.floor(width * padFrac);
+  const padY = Math.floor(height * padFrac);
+  const w = width - padX * 2;
+  const h = height - padY * 2;
+  const cellW = Math.floor(w / 5);
+  const cellH = Math.floor(h / 5);
 
-// Very stable 5×5 grid crops. If you want auto-detect, we can add it back,
-// but this avoids type issues and works for the standard screenshot layout.
-export function detectGridCrops(image,{padFrac=0.07}={}){
-  const W=image.width, H=image.height;
-  const padX=W*padFrac, padY=H*padFrac;
-  const innerX=padX, innerY=padY, innerW=W-2*padX, innerH=H-2*padY;
-  const cellW=innerW/5, cellH=innerH/5;
-  const out=[];
-  for(let r=0;r<5;r++){
-    for(let c=0;c<5;c++){
-      const sx=Math.round(innerX + c*cellW);
-      const sy=Math.round(innerY + r*cellH);
-      const sw=Math.round(cellW), sh=Math.round(cellH);
-      out.push(toCanvas(image, sx, sy, sw, sh, 32, 32)); // normalize size for hashing
+  const crops = [];
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+
+  canvas.width = cellW;
+  canvas.height = cellH;
+
+  for (let r = 0; r < 5; r++) {
+    for (let c = 0; c < 5; c++) {
+      const sx = padX + c * cellW;
+      const sy = padY + r * cellH;
+      ctx.clearRect(0,0,cellW,cellH);
+      ctx.drawImage(img, sx, sy, cellW, cellH, 0, 0, cellW, cellH);
+      crops.push(canvas.toDataURL('image/png'));
     }
   }
-  return out; // Array<HTMLCanvasElement>
+  return crops;
 }
 
-async function toImageData(src, w, h){
-  const cv = src instanceof HTMLCanvasElement ? src : toCanvas(src, 0,0, src.width, src.height, w, h);
-  const g = cv.getContext("2d", {alpha:false, willReadFrequently:true});
-  return g.getImageData(0,0,cv.width,cv.height);
+// ---- Hashing wrappers ----
+// These wrappers expect existing hash functions in your project:
+//   computeAhash64(dataURL, grayscale = true, channel?)
+//   computeDhash64(dataURL, mode: 'x'|'y', grayscale = true, cfg, channel?)
+// Return 64-bit values as hex strings (without 0x) or BigInt-compatible hex.
+
+export async function calcGrayHashes(dataURL) {
+  const a = await computeAhash64(dataURL, /*grayscale*/ true);
+  const dx = await computeDhash64(dataURL, 'x', true, HASH_CFG.dhashX);
+  const dy = await computeDhash64(dataURL, 'y', true, HASH_CFG.dhashY);
+  return { a, dx, dy };
 }
 
-export async function computeAHash(src){
-  const SIZE=8;
-  const id=await toImageData(src,SIZE,SIZE);
-  const data=id.data, w=SIZE, h=SIZE;
-  // grayscale aHash
-  let sum=0; const gray=new Array(w*h);
-  for(let i=0,j=0;i<data.length;i+=4,j++){ const g=(data[i]*299 + data[i+1]*587 + data[i+2]*114)/1000|0; gray[j]=g; sum+=g; }
-  const avg=sum/(w*h); let bits=0n;
-  for(let i=0;i<gray.length;i++) if(gray[i]>=avg) bits|=1n<<BigInt(i);
-  return Number(bits & 0xffffffffn);
-}
-
-export async function computeDHashX(src){
-  const W=9, H=8;
-  const id=await toImageData(src,W,H);
-  const d=id.data; let out=0, k=0;
-  const gy=(i)=>((d[i]*299 + d[i+1]*587 + d[i+2]*114)/1000|0);
-  for(let y=0;y<H;y++){
-    for(let x=0;x<W-1;x++,k++){
-      const i1=(y*W + x)*4, i2=(y*W + x + 1)*4;
-      if(gy(i1)>gy(i2)) out|=(1<<k);
-    }
+export async function calcRGBHashes(dataURL) {
+  const chans = ['R','G','B'];
+  const out = {};
+  for (const ch of chans) {
+    const a = await computeAhash64(dataURL, /*grayscale*/ false, ch);
+    const dx = await computeDhash64(dataURL, 'x', false, HASH_CFG.dhashX, ch);
+    const dy = await computeDhash64(dataURL, 'y', false, HASH_CFG.dhashY, ch);
+    out[ch] = { a, dx, dy };
   }
-  return out>>>0;
+  return out;
 }
 
-export async function computeDHashY(src){
-  const W=8, H=9;
-  const id=await toImageData(src,W,H);
-  const d=id.data; let out=0, k=0;
-  const gy=(i)=>((d[i]*299 + d[i+1]*587 + d[i+2]*114)/1000|0);
-  for(let y=0;y<H-1;y++){
-    for(let x=0;x<W;x++,k++){
-      const i1=(y*W + x)*4, i2=((y+1)*W + x)*4;
-      if(gy(i1)>gy(i2)) out|=(1<<k);
-    }
-  }
-  return out>>>0;
+// Hamming distance between two 64-bit numbers represented as BigInt or hex string
+export function hamming64(a, b) {
+  const ax = (typeof a === 'bigint') ? a : BigInt('0x' + a);
+  const bx = (typeof b === 'bigint') ? b : BigInt('0x' + b);
+  let x = ax ^ bx;
+  let count = 0n;
+  while (x) { x &= (x - 1n); count++; }
+  return Number(count);
 }

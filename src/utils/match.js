@@ -1,28 +1,36 @@
-export function findBestMatch(sig,cache,{ABS_LUMA=8,ABS_RGB=20,COLOR_W=0.5}={}){
-  let best=null,score=1e9;
-  for(const it of cache){
-    const a=it.ahash??it.ah, x=it.dhashX??it.dx, y=it.dhashY??it.dy;
-    if(a==null||x==null||y==null) continue;
-    const sL=pop(a^sig.ah)+pop(x^sig.dx)+pop(y^sig.dy);
-    let total=sL+9999;
-    if(hasRGB(it)&&sig.ahRGB){
-      const sC=pop((it.ahashR??it.ahr)^sig.ahRGB.r)+
-        pop((it.ahashG??it.ahg)^sig.ahRGB.g)+
-        pop((it.ahashB??it.ahb)^sig.ahRGB.b)+
-        pop((it.dhashXR??it.dxr)^sig.dxRGB.r)+
-        pop((it.dhashXG??it.dxg)^sig.dxRGB.g)+
-        pop((it.dhashXB??it.dxb)^sig.dxRGB.b)+
-        pop((it.dhashYR??it.dyr)^sig.dyRGB.r)+
-        pop((it.dhashYG??it.dyg)^sig.dyRGB.g)+
-        pop((it.dhashYB??it.dyb)^sig.dyRGB.b);
-      if(sC<=ABS_RGB) total=sL+COLOR_W*sC;
-    }
-    if(total<score){score=total;best=it}
-  }
-  if(!best) return null;
-  const sLum=pop((best.ahash??best.ah)^sig.ah)+pop((best.dhashX??best.dx)^sig.dx)+pop((best.dhashY??best.dy)^sig.dy);
-  if(sLum>ABS_LUMA) return null;
-  return {name:best.name,id:best.id||best.name,score:Math.round(score)};
+// Weighted matching across grayscale + RGB hash distances
+// Normalizes Hamming distances to [0,1], then combines with weights.
+
+export const DEFAULT_WEIGHTS = {
+  gray: 0.6,   // ahash + dhashX + dhashY combined
+  rgb: 0.4     // average of R/G/B (each: a,dX,dY)
+};
+
+// For 64-bit aHash and 64-bit dHash-equivalents
+const MAX_BITS = 64;
+
+function norm(d) {
+  return d / MAX_BITS;
 }
-function hasRGB(o){return ["ahashR","ahashG","ahashB","dhashXR","dhashXG","dhashXB","dhashYR","dhashYG","dhashYB"].every(k=>o[k]!=null)}
-function pop(n){n=n>>>0;let c=0;while(n){n&=n-1;c++}return c}
+
+export function scoreGray(distA, distDX, distDY) {
+  return (norm(distA) + norm(distDX) + norm(distDY)) / 3;
+}
+
+export function scoreRGB(rgbDistances /* {R:{a,dx,dy}, G:{...}, B:{...}} */) {
+  const chans = ['R','G','B'];
+  let sum = 0, count = 0;
+  for (const c of chans) {
+    const v = rgbDistances[c];
+    if (!v) { sum += 1; count += 1; continue; }
+    const { a, dx, dy } = v;
+    sum += (norm(a ?? 64) + (norm(dx ?? 64)) + (norm(dy ?? 64))) / 3;
+    count += 1;
+  }
+  return count ? (sum / count) : 1;
+}
+
+// Final score in [0,1], lower is better. Use MAX_SCORE as acceptance threshold.
+export function weightedScore({ gray, rgb }, weights = DEFAULT_WEIGHTS) {
+  return (weights.gray * gray) + (weights.rgb * rgb);
+}
