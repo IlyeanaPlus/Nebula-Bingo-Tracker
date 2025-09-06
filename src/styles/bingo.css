@@ -1,7 +1,171 @@
-/* Ensure sidebar is always a full column */
+/* src/styles/bingo.css */
+
+/* Dark mode base */
+:root {
+  --bg: #121212;
+  --fg: #e8e8e8;
+  --panel: #1a1a1a;
+  --panel-2: #181818;
+  --border: #2a2a2a;
+  --accent: #8ab4f8;
+  --muted: #b6b6b6;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+}
+
+/* Header */
+.app-header {
+  background: #000;
+  color: var(--fg);
+  padding: 10px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.app-header .title {
+  font-weight: bold;
+}
+
+/* Layout: sidebar always full column */
 .layout {
   display: grid;
-  grid-template-columns: 300px 1fr;
+  grid-template-columns: 300px 1fr; /* sidebar + content */
   gap: 16px;
   padding: 16px;
+}
+
+/* Sidebar */
+.sidebar {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+.sidebar h2 {
+  margin: 0 0 8px 0;
+  font-size: 1rem;
+}
+.sidebar .stack { display: grid; gap: 8px; }
+.sidebar .progress-line { color: var(--muted); font-size: 12px; }
+.fill-bar {
+  height: 8px;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fill-bar-inner {
+  height: 100%;
+  background: var(--accent);
+}
+
+/* Cards container */
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+/* Individual bingo card: 50% bigger */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  width: 450px; /* increased from ~300px */
+  box-shadow: 0 2px 6px rgba(0,0,0,.4);
+}
+
+/* Card header */
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.card-header input.title-inline {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.card-header .actions button {
+  margin-left: 4px;
+}
+
+/* Grid of 25 cells */
+.grid-5x5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.cell {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+  overflow: hidden;
+}
+.cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.cell.complete {
+  background: #2a4;
+  border-color: #3c6;
+}
+.cell-text {
+  padding: 2px;
+  text-align: center;
+  word-break: break-word;
+}
+
+/* Fill overlay */
+.fill-overlay {
+  position: absolute;
+  top: 0; left: 0;
+  right: 0; bottom: 0;
+  background: rgba(0,0,0,.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fill-box {
+  background: #1e1e1e;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  width: 280px;
+}
+.fill-title { margin-bottom: 6px; }
+.fill-bar { margin: 6px 0; }
+.fill-meta { font-size: 12px; margin-bottom: 4px; }
+.fill-hint { font-size: 11px; color: var(--muted); }
+
+/* Buttons */
+button {
+  background: #222;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+button:hover {
+  background: #333;
 }
