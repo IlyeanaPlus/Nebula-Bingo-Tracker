@@ -1,4 +1,3 @@
-// src/App.jsx
 import React, { useEffect, useRef, useState } from 'react';
 import BingoCard from './components/BingoCard.jsx';
 import {
@@ -46,8 +45,9 @@ function normalizeDriveList(list) {
 /* ------------------------------ app ------------------------------- */
 
 export default function App() {
-  // Library (not rendered as a grid)
+  // Internal sprite library (not rendered as a grid)
   const [library, setLibrary] = useState([]); // [{id,url,name}]
+
   // Progress + status
   const [getSpritesProg, setGetSpritesProg] = useState({ stage: 'idle', done: 0, total: 0 });
   const [driveMsg, setDriveMsg] = useState('');
@@ -56,27 +56,49 @@ export default function App() {
   const libHashesRef = useRef(new Map());
 
   // Cards
-  const [cards, setCards] = useState([]); // [{id,title,rows,cols,tiles}]
-  const [activeId, setActiveId] = useState(null);
+  const [cards, setCards] = useState([]); // [{id,title,rows,cols,tiles:[{url,checked}|null]}]
   const [analyzing, setAnalyzing] = useState(new Set()); // Set<cardId>
 
   /* --------------------------- persistence --------------------------- */
 
+  // migrate old saves where tile was 'string url' -> {url,checked:false}
+  function migrateTiles(tiles, rows, cols) {
+    const total = rows * cols;
+    const arr = Array.isArray(tiles) ? tiles.slice(0, total) : [];
+    const out = Array(total).fill(null);
+    for (let i = 0; i < total; i++) {
+      const t = arr[i];
+      if (!t) { out[i] = null; continue; }
+      if (typeof t === 'string') out[i] = { url: t, checked: false };
+      else if (t && typeof t === 'object') out[i] = { url: t.url || '', checked: !!t.checked };
+      else out[i] = null;
+    }
+    return out;
+  }
+
   useEffect(() => {
     try {
-      const rawCards = localStorage.getItem('cards:v1');
-      if (rawCards) {
-        const parsed = JSON.parse(rawCards);
-        if (Array.isArray(parsed.cards)) setCards(parsed.cards);
-        if (parsed.activeId) setActiveId(parsed.activeId);
+      const raw = localStorage.getItem('cards:v1');
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        const saved = Array.isArray(parsed.cards) ? parsed.cards : [];
+        const migrated = saved.map((c) => ({
+          id: c.id || uid(),
+          title: c.title || 'Card',
+          rows: c.rows || 5,
+          cols: c.cols || 5,
+          tiles: migrateTiles(c.tiles, c.rows || 5, c.cols || 5),
+        }));
+        setCards(migrated);
       }
       const rawHashes = localStorage.getItem('lib:ahash');
       if (rawHashes) libHashesRef.current = new Map(Object.entries(JSON.parse(rawHashes)));
     } catch {}
   }, []);
+
   useEffect(() => {
-    try { localStorage.setItem('cards:v1', JSON.stringify({ cards, activeId })); } catch {}
-  }, [cards, activeId]);
+    try { localStorage.setItem('cards:v1', JSON.stringify({ cards })); } catch {}
+  }, [cards]);
 
   /* ----------------------- initial library load ---------------------- */
 
@@ -98,7 +120,7 @@ export default function App() {
         const arr = normalizeDriveList(await listDriveImagesFast());
         if (!cancelled) setLibrary(toLibraryItems(arr));
       } catch {
-        if (!cancelled) setDriveMsg('Drive not available yet. You can still upload images.');
+        if (!cancelled) setDriveMsg('Drive not available yet. You can still use local screenshots.');
       }
     })();
     return () => { cancelled = true; };
@@ -139,7 +161,7 @@ export default function App() {
       try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
 
       setGetSpritesProg({ stage: 'done', done: items.length, total: items.length });
-      setTimeout(() => setGetSpritesProg({ stage: 'idle', done: 0, total: 0 }), 1200);
+      setTimeout(() => setGetSpritesProg({ stage: 'idle', done: 0, total: 0 }), 1000);
     } catch (e) {
       console.error('[GetSprites] failed:', e);
       setDriveMsg('Get Sprites failed. Verify Drive API key/folder & public access.');
@@ -180,43 +202,40 @@ export default function App() {
   function addCard({ title = `Card ${cards.length + 1}`, rows = 5, cols = 5, tiles } = {}) {
     const total = rows * cols;
     const filled =
-      Array.isArray(tiles) && tiles.length === total ? tiles : Array(total).fill(null);
+      Array.isArray(tiles) && tiles.length === total
+        ? migrateTiles(tiles, rows, cols)
+        : Array(total).fill(null);
     const id = uid();
     setCards((prev) => [...prev, { id, title, rows, cols, tiles: filled }]);
-    setActiveId(id);
   }
+
   function removeCard(id) {
     setCards((prev) => prev.filter((c) => c.id !== id));
-    if (activeId === id) {
-      const remaining = cards.filter((c) => c.id !== id);
-      setActiveId(remaining[0]?.id ?? null);
-    }
   }
+
   function renameCard(id, newTitle) {
     setCards((prev) => prev.map((c) => (c.id === id ? { ...c, title: newTitle } : c)));
   }
-  function clearActiveCard() {
-    if (!activeId) return;
+
+  function clearCard(id) {
     setCards((prev) =>
-      prev.map((c) => (c.id === activeId ? { ...c, tiles: Array(c.rows * c.cols).fill(null) } : c))
+      prev.map((c) =>
+        c.id === id ? { ...c, tiles: Array(c.rows * c.cols).fill(null) } : c
+      )
     );
   }
-  // Simple autofill (no UI library): take first N sprites
-  function autofillActiveFromLibrary() {
-    if (!activeId || library.length === 0) return;
+
+  function toggleCell(id, idx) {
     setCards((prev) =>
       prev.map((c) => {
-        if (c.id !== activeId) return c;
-        const total = c.rows * c.cols;
-        const picked = library.slice(0, total).map((it) => it.url);
-        const filled =
-          picked.length === total ? picked : picked.concat(Array(total - picked.length).fill(null));
-        return { ...c, tiles: filled };
+        if (c.id !== id) return c;
+        const tiles = c.tiles.slice();
+        const t = tiles[idx];
+        if (!t) return c; // nothing to toggle
+        tiles[idx] = { url: t.url, checked: !t.checked };
+        return { ...c, tiles };
       })
     );
-  }
-  function onBuiltPNG({ id, dataURL }) {
-    try { localStorage.setItem(`card:${id}:png`, dataURL); } catch {}
   }
 
   /* ----------------------- screenshot analysis ---------------------- */
@@ -226,6 +245,7 @@ export default function App() {
     try {
       await ensureLibraryHashes();
       const img = await loadImageFromFile(file);
+
       const card = cards.find((c) => c.id === id);
       if (!card) return;
       const { rows, cols } = card;
@@ -245,6 +265,7 @@ export default function App() {
           const cellCanvas = cropToCanvas(img, x, y, w, h);
 
           const cellBits = ahashFromImage(cellCanvas, 8);
+
           let bestUrl = null;
           let bestDist = Infinity;
           for (const it of library) {
@@ -252,14 +273,23 @@ export default function App() {
             if (!bitStr) continue;
             const refBits = stringToBits(bitStr);
             const d = hammingDistanceBits(cellBits, refBits);
-            if (d < bestDist) { bestDist = d; bestUrl = it.url; }
+            if (d < bestDist) {
+              bestDist = d;
+              bestUrl = it.url;
+            }
           }
-          if (bestUrl) nextTiles[r * cols + c] = bestUrl;
+
+          if (bestUrl) nextTiles[r * cols + c] = { url: bestUrl, checked: false };
         }
       }
+
       setCards((prev) => prev.map((c) => (c.id === id ? { ...c, tiles: nextTiles } : c)));
     } finally {
-      setAnalyzing((s) => { const n = new Set(s); n.delete(id); return n; });
+      setAnalyzing((s) => {
+        const n = new Set(s);
+        n.delete(id);
+        return n;
+      });
     }
   }
 
@@ -273,41 +303,23 @@ export default function App() {
 
   return (
     <div style={styles.page}>
+      {/* Header: title only */}
       <header style={styles.header}>
         <h1 style={styles.h1}>Nebula Bingo Tracker</h1>
-        <div style={styles.actions}>
-          <button style={styles.btn} onClick={() => addCard({})}>New Card</button>
-          <button
-            style={{ ...styles.btn, ...(activeId ? {} : styles.btnDisabled) }}
-            disabled={!activeId}
-            onClick={autofillActiveFromLibrary}
-            title={activeId ? 'Autofill from sprites' : 'Create/select a card first'}
-          >
-            Autofill
-          </button>
-          <button
-            style={{ ...styles.btn, ...(activeId ? {} : styles.btnDisabled) }}
-            disabled={!activeId}
-            onClick={clearActiveCard}
-          >
-            Clear Card
-          </button>
-        </div>
       </header>
 
       <main style={styles.main}>
-        {/* Left: minimal tools only */}
+        {/* Left: tools */}
         <section style={styles.toolsPane}>
-          <div style={styles.libraryToolbar}>
-            <button style={styles.btn} onClick={getSprites} title="Fetch from Drive and index">
-              Get Sprites
-            </button>
-            {progressPct !== null && (
-              <div style={styles.progressWrap} aria-label="progress">
-                <div style={{ ...styles.progressBar, width: `${progressPct}%` }} />
-              </div>
-            )}
+          <div style={styles.toolbarRow}>
+            <button style={styles.btn} onClick={getSprites}>Get Sprites</button>
+            <button style={styles.btn} onClick={() => addCard({})}>New Card</button>
           </div>
+          {progressPct !== null && (
+            <div style={styles.progressWrap} aria-label="progress">
+              <div style={{ ...styles.progressBar, width: `${progressPct}%` }} />
+            </div>
+          )}
           {!!driveMsg && <div style={styles.driveMsg}>{driveMsg}</div>}
           <div style={styles.smallInfo}>
             Folder: {getConfiguredDriveInfo().folderId?.slice(0, 8) || '(none)'}… • Sprites: {library.length}
@@ -317,29 +329,23 @@ export default function App() {
         {/* Right: cards */}
         <section style={styles.cardsPane}>
           <div style={styles.cardsGrid}>
-            {cards.map((card) => {
-              const isActive = card.id === activeId;
-              return (
-                <div
-                  key={card.id}
-                  style={{ ...styles.cardWrap, ...(isActive ? styles.cardWrapActive : {}) }}
-                  onClick={() => setActiveId(card.id)}
-                >
-                  <BingoCard
-                    id={card.id}
-                    title={card.title}
-                    rows={card.rows}
-                    cols={card.cols}
-                    tiles={card.tiles}
-                    onRemove={removeCard}
-                    onBuilt={onBuiltPNG}
-                    onUploadScreenshot={analyzeScreenshotForCard}
-                    onRename={renameCard}
-                    analyzing={analyzing.has(card.id)}
-                  />
-                </div>
-              );
-            })}
+            {cards.map((card) => (
+              <div key={card.id} style={styles.cardWrap}>
+                <BingoCard
+                  id={card.id}
+                  title={card.title}
+                  rows={card.rows}
+                  cols={card.cols}
+                  tiles={card.tiles}
+                  analyzing={analyzing.has(card.id)}
+                  onRename={renameCard}
+                  onUploadScreenshot={analyzeScreenshotForCard}
+                  onClear={clearCard}
+                  onRemove={removeCard}
+                  onToggleCell={toggleCell}
+                />
+              </div>
+            ))}
           </div>
           {cards.length === 0 && <div style={styles.emptyCards}>Create a card to get started.</div>}
         </section>
@@ -361,13 +367,28 @@ const styles = {
   header: {
     padding: '12px 16px',
     borderBottom: '1px solid #222',
-    display: 'flex',
-    alignItems: 'center',
-    gap: '16px',
-    justifyContent: 'space-between',
   },
   h1: { fontSize: '1.15rem', margin: 0, fontWeight: 700 },
-  actions: { display: 'flex', alignItems: 'center', gap: '10px', flexWrap: 'wrap' },
+
+  main: {
+    display: 'grid',
+    gridTemplateColumns: '320px 1fr',
+    flex: 1,
+    minHeight: 0,
+  },
+
+  toolsPane: {
+    borderRight: '1px solid #222',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+  toolbarRow: {
+    display: 'flex',
+    gap: '10px',
+    flexWrap: 'wrap',
+  },
   btn: {
     background: '#2b2b2b',
     color: '#fff',
@@ -376,31 +397,8 @@ const styles = {
     borderRadius: '12px',
     cursor: 'pointer',
   },
-  btnDisabled: { opacity: 0.5, cursor: 'not-allowed' },
-
-  main: {
-    display: 'grid',
-    gridTemplateColumns: '360px 1fr',
-    gap: '0px',
-    flex: 1,
-    minHeight: 0,
-  },
-
-  // Minimal left pane
-  toolsPane: {
-    borderRight: '1px solid #222',
-    padding: '12px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-  },
-  libraryToolbar: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-  },
   progressWrap: {
-    flex: 1,
+    width: '100%',
     height: 8,
     background: '#1b1b1b',
     border: '1px solid #2a2a2a',
@@ -411,14 +409,16 @@ const styles = {
   driveMsg: { color: '#9bb4ff', fontSize: 12 },
   smallInfo: { color: '#aaa', fontSize: 12 },
 
-  // Cards
   cardsPane: { padding: '12px', minWidth: 0 },
-  cardsGrid: { display: 'grid', gap: '12px', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))' },
+  cardsGrid: {
+    display: 'grid',
+    gap: '12px',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+  },
   cardWrap: {
     borderRadius: '18px',
-    transition: 'box-shadow 120ms ease, border-color 120ms ease',
-    border: '1px solid transparent',
+    border: '1px solid #2a2a2a',
+    background: '#141414',
   },
-  cardWrapActive: { border: '1px solid #4e7cff', boxShadow: '0 0 0 3px rgba(78,124,255,0.25)' },
   emptyCards: { color: '#aaa', padding: '12px' },
 };
