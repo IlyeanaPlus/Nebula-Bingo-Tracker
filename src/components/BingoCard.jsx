@@ -151,7 +151,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
         {cells.map((cell, idx) => (
           <div
             key={idx}
-            className={\`cell \${cell.complete ? 'complete' : ''}\`}
+            className={`cell ${cell.complete ? 'complete' : ''}`}
             onClick={() => toggleComplete(idx)}
             title={cell.name || '—'}
           >
@@ -167,7 +167,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
           <div className="fill-box">
             <div className="fill-title">Analyzing screenshot…</div>
             <div className="fill-bar">
-              <div className="fill-bar-inner" style={{ width: \`\${(fillStep/25)*100}%\` }} />
+              <div className="fill-bar-inner" style={{ width: `${(fillStep/25)*100}%` }} />
             </div>
             <div className="fill-meta">{fillStep} / 25</div>
             <div className="fill-hint">Tip: Drop an image anywhere on this card to start.</div>

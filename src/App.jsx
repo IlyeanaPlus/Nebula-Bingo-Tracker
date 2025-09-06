@@ -29,7 +29,7 @@ export default function App() {
     setTotal(0);
     try {
       const base = import.meta?.env?.BASE_URL || '/';
-      const res = await fetch(\`\${base}drive_cache.json\`, { cache: 'reload' });
+      const res = await fetch(`${base}drive_cache.json`, { cache: 'reload' });
       const data = await res.json();
       setManifest(data);
       setTotal(data.length);
