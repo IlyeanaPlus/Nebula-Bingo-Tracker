@@ -1,62 +1,99 @@
-// utils/image.js
-import { getBlob } from "./net";
+// src/utils/image.js
 
-export async function loadImageFromURL(originUrl) {
-  const blob = await getBlob(originUrl, "downloading image");
-  const url = URL.createObjectURL(blob);
-  const img = new Image();
-  img.decoding = "async";
-  img.src = url;
-  await img.decode();
-  return { img, url, originUrl };
-}
-
-export function ahashFromImage(img, size = 16) {
-  const c = document.createElement("canvas");
-  const ctx = c.getContext("2d", { willReadFrequently: true });
-  c.width = size; c.height = size;
-  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, size, size);
-  ctx.drawImage(img, 0, 0, size, size);
-  const data = ctx.getImageData(0, 0, size, size).data;
-  let gray = new Array(size * size), sum = 0;
-  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
-    const r = data[i], g = data[i + 1], b = data[i + 2];
-    const v = Math.round(0.299 * r + 0.587 * g + 0.114 * b);
-    gray[p] = v; sum += v;
+/**
+ * Load an image from a File or Blob.
+ */
+export async function loadImageFromFile(file) {
+  if (!(file instanceof Blob)) {
+    throw new TypeError('loadImageFromFile expects a File or Blob.');
   }
-  const avg = sum / gray.length;
-  return gray.map((v) => (v >= avg ? 1 : 0));
+  const url = URL.createObjectURL(file);
+  try {
+    const img = await loadImageFromURL(url);
+    return img;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
-export function hammingDistanceBits(aBits, bBits) {
-  const n = Math.min(aBits.length, bBits.length);
-  let d = 0; for (let i = 0; i < n; i++) if (aBits[i] !== bBits[i]) d++;
-  return d + Math.max(aBits.length, bBits.length) - n;
+/**
+ * Load an image from a URL.
+ */
+export function loadImageFromURL(url) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = 'anonymous'; // needed for canvas + hashing
+    img.onload = () => resolve(img);
+    img.onerror = (e) => reject(e);
+    img.src = url;
+  });
 }
 
-export function cropToCanvas(srcImg, box) {
-  const { x, y, w, h } = box;
-  const c = document.createElement("canvas");
-  c.width = Math.max(1, Math.floor(w));
-  c.height = Math.max(1, Math.floor(h));
-  const ctx = c.getContext("2d", { willReadFrequently: true });
-  ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height);
-  ctx.drawImage(srcImg, x, y, w, h, 0, 0, c.width, c.height);
-  return c;
+/**
+ * Average hash (aHash) from an image.
+ * Produces a binary string representing luminance grid.
+ */
+export function ahashFromImage(img, size = 8) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = size;
+  canvas.height = size;
+  ctx.drawImage(img, 0, 0, size, size);
+
+  const data = ctx.getImageData(0, 0, size, size).data;
+  const gray = [];
+  for (let i = 0; i < data.length; i += 4) {
+    const r = data[i];
+    const g = data[i + 1];
+    const b = data[i + 2];
+    gray.push((r + g + b) / 3);
+  }
+  const avg = gray.reduce((a, b) => a + b, 0) / gray.length;
+  return gray.map((v) => (v > avg ? 1 : 0));
 }
 
-export function evenGridBoxes(imgW, imgH, rows, cols, inset = 0, startX = 0, startY = 0, cellW, cellH, gapX = 0, gapY = 0) {
-  const w = cellW ?? Math.floor((imgW - startX - (cols - 1) * gapX) / cols);
-  const h = cellH ?? Math.floor((imgH - startY - (rows - 1) * gapY) / rows);
+/**
+ * Crop an image to a canvas (returns canvas element).
+ */
+export function cropToCanvas(img, x, y, w, h) {
+  const canvas = document.createElement('canvas');
+  const ctx = canvas.getContext('2d');
+  canvas.width = w;
+  canvas.height = h;
+  ctx.drawImage(img, x, y, w, h, 0, 0, w, h);
+  return canvas;
+}
+
+/**
+ * Divide an area into an even grid of boxes.
+ */
+export function evenGridBoxes(width, height, rows, cols) {
   const boxes = [];
+  const boxW = width / cols;
+  const boxH = height / rows;
   for (let r = 0; r < rows; r++) {
     for (let c = 0; c < cols; c++) {
-      const x = startX + c * (w + gapX) + inset;
-      const y = startY + r * (h + gapY) + inset;
-      const bw = Math.max(1, w - 2 * inset);
-      const bh = Math.max(1, h - 2 * inset);
-      boxes.push({ r, c, x, y, w: bw, h: bh });
+      boxes.push({
+        x: c * boxW,
+        y: r * boxH,
+        w: boxW,
+        h: boxH,
+      });
     }
   }
   return boxes;
+}
+
+/**
+ * Hamming distance between two bit arrays.
+ */
+export function hammingDistanceBits(a, b) {
+  if (a.length !== b.length) {
+    throw new Error('Bit arrays must be same length');
+  }
+  let dist = 0;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) dist++;
+  }
+  return dist;
 }
