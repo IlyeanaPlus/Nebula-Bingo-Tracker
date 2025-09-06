@@ -1,22 +1,29 @@
 // src/services/drive.js
 
 /**
- * Central point for Google Drive access.
- * - Set GOOGLE_API_KEY / DRIVE_FOLDER_ID below (optional).
- * - Or provide them at runtime:
- *   - window.NBT_DRIVE_API_KEY / window.NBT_DRIVE_FOLDER_ID
- *   - localStorage: drive:apiKey / drive:folderId (or google:apiKey / google:folderId)
+ * Google Drive service (API-key only; works with publicly readable folders/files).
  *
  * Exports:
- * - getConfiguredDriveInfo(): { apiKey, folderId }
- * - tryLoadDriveCacheJSON(): tries to load a cached JSON list from the app (fast path)
- * - listDriveImagesFast(): list images from a Drive folder (0-arg uses configured key/folder)
+ *  - GOOGLE_API_KEY, DRIVE_FOLDER_ID (hardcoded defaults)
+ *  - getConfiguredDriveInfo(): { apiKey, folderId }
+ *  - tryLoadDriveCacheJSON(): Promise<object|null>
+ *  - listDriveImagesFast([apiKey], [folderId]) | listDriveImagesFast({ apiKey, folderId })
+ *
+ * Notes:
+ *  - With API key, Drive will only list files that are publicly accessible
+ *    (folder & files must be "Anyone with the link — Viewer").
+ *  - If you use a Shared Drive, public link sharing must be allowed by your org.
  */
 
 // OPTIONAL hardcoded values (leave empty to use runtime config)
-export const GOOGLE_API_KEY = 'AIzaSyCTsyJ6Q5fogdMdLTUVnsKOuDdkCnigIE8';     // e.g. 'AIzaSy...'
-export const DRIVE_FOLDER_ID = '1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB';    // e.g. '1AbCDefGh...'
+export const GOOGLE_API_KEY  = 'AIzaSyCTsyJ6Q5fogdMdLTUVnsKOuDdkCnigIE8'; // e.g. 'AIzaSy...'
+export const DRIVE_FOLDER_ID = '1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB';       // e.g. '1AbCDefGh...'
 
+/** Resolve API key and folder ID from (in priority order):
+ *  1) hardcoded constants above
+ *  2) window.NBT_DRIVE_API_KEY / window.NBT_DRIVE_FOLDER_ID
+ *  3) localStorage 'drive:apiKey' | 'google:apiKey' and 'drive:folderId' | 'google:folderId'
+ */
 export function getConfiguredDriveInfo() {
   const apiKey =
     GOOGLE_API_KEY ||
@@ -24,19 +31,22 @@ export function getConfiguredDriveInfo() {
     (typeof localStorage !== 'undefined' &&
       (localStorage.getItem('drive:apiKey') || localStorage.getItem('google:apiKey'))) ||
     '';
+
   const folderId =
     DRIVE_FOLDER_ID ||
     (typeof window !== 'undefined' && window.NBT_DRIVE_FOLDER_ID) ||
     (typeof localStorage !== 'undefined' &&
       (localStorage.getItem('drive:folderId') || localStorage.getItem('google:folderId'))) ||
     '';
+
   return { apiKey, folderId };
 }
 
-/**
- * tryLoadDriveCacheJSON()
- * Attempts to fetch a prebuilt JSON (fast path) from the app's public assets.
- * Return value is the parsed JSON or null if not found.
+/** Fast-path cache loader; place one of these JSON files in /public:
+ *   - drive_cache.json
+ *   - sprites.json
+ *   - cache/drive.json
+ *  Shape can be an array or { files:[...] } / { images:[...] } / etc.
  */
 export async function tryLoadDriveCacheJSON() {
   const candidates = [
@@ -46,31 +56,43 @@ export async function tryLoadDriveCacheJSON() {
     '/sprites.json',
     '/cache/drive.json',
   ];
-
   for (const path of candidates) {
     try {
       const res = await fetch(path, { cache: 'no-store' });
-      if (res.ok) {
-        const json = await res.json();
-        return json;
-      }
+      if (!res.ok) continue;
+      return await res.json();
     } catch {
-      // try next candidate
+      /* try next */
     }
   }
   return null;
 }
 
+/** Normalize various list shapes into a flat array of file-like objects. */
+function normalizeDriveList(list) {
+  if (!list) return [];
+  if (Array.isArray(list)) return list;
+  return list.files ?? list.images ?? list.items ?? list.list ?? [];
+}
+
+/** Build a direct content URL for a file ID using the API key. */
+function directContentURL(fileId, apiKey) {
+  return `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
+    fileId
+  )}?alt=media&key=${encodeURIComponent(apiKey)}`;
+}
+
 /**
- * listDriveImagesFast([apiKey], [folderId]) or listDriveImagesFast({ apiKey, folderId })
- * If called with no args, it uses getConfiguredDriveInfo().
+ * List images in a Drive folder.
+ * Usage:
+ *   await listDriveImagesFast(); // uses getConfiguredDriveInfo()
+ *   await listDriveImagesFast(apiKey, folderId);
+ *   await listDriveImagesFast({ apiKey, folderId });
  *
- * Returns an object: { files: Array<DriveFileLike> }
- * Each file includes: id, name, url (direct content), thumbnailLink, webViewLink, webContentLink, mimeType
+ * Returns: { files: Array<{ id, name, mimeType, url, thumbnailLink, webViewLink, webContentLink }> }
  */
 export async function listDriveImagesFast(arg1, arg2) {
   let apiKey, folderId;
-
   if (typeof arg1 === 'object' && arg1) {
     apiKey = arg1.apiKey;
     folderId = arg1.folderId;
@@ -78,52 +100,49 @@ export async function listDriveImagesFast(arg1, arg2) {
     apiKey = arg1;
     folderId = arg2;
   } else {
-    const cfg = getConfiguredDriveInfo();
-    apiKey = cfg.apiKey;
-    folderId = cfg.folderId;
+    ({ apiKey, folderId } = getConfiguredDriveInfo());
   }
 
   if (!apiKey || !folderId) {
     throw new Error('Missing Google Drive API key or folder ID.');
   }
 
-  const base = 'https://www.googleapis.com/drive/v3/files';
-  const q = `'${folderId}' in parents and trashed=false and mimeType contains 'image/'`;
-  const fields = [
-    'nextPageToken',
-    'files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink)',
-  ].join(',');
-
-  let pageToken = '';
   const files = [];
+  let pageToken = '';
 
-  // paginate until done
+  // Safely encode parameters with URLSearchParams to avoid malformed URLs (400s).
   for (let guard = 0; guard < 50; guard++) {
-    const url =
-      `${base}?q=${encodeURIComponent(q)}` +
-      `&fields=${encodeURIComponent(fields)}` +
-      `&pageSize=1000` +
-      (pageToken ? `&pageToken=${encodeURIComponent(pageToken)}` : '') +
-      `&includeItemsFromAllDrives=true&supportsAllDrives=true&corpora=allDrives` +
-      `&key=${encodeURIComponent(apiKey)}`;
+    const q = `'${folderId}' in parents and trashed=false and mimeType contains 'image/'`;
+
+    const params = new URLSearchParams({
+      q,
+      fields: 'nextPageToken,files(id,name,mimeType,thumbnailLink,webViewLink,webContentLink)',
+      pageSize: '1000',
+      key: apiKey,
+      // Minimal flags for public folders. If you need Shared Drives, uncomment below:
+      // includeItemsFromAllDrives: 'true',
+      // supportsAllDrives: 'true',
+      // corpora: 'allDrives',
+    });
+    if (pageToken) params.set('pageToken', pageToken);
+
+    const url = `https://www.googleapis.com/drive/v3/files?${params.toString()}`;
 
     let data;
     try {
       const res = await fetch(url, { mode: 'cors' });
-      if (!res.ok) throw new Error(`Drive list error ${res.status}`);
+      if (!res.ok) {
+        let detail = '';
+        try { detail = JSON.stringify(await res.json()); } catch {}
+        throw new Error(`Drive list error ${res.status}${detail ? `: ${detail}` : ''}`);
+      }
       data = await res.json();
     } catch (e) {
-      // If listing fails, bail with what we have so far (or rethrow)
       throw e;
     }
 
     const got = Array.isArray(data.files) ? data.files : [];
     for (const f of got) {
-      // Build a direct content URL that works with API key
-      const directURL = `https://www.googleapis.com/drive/v3/files/${encodeURIComponent(
-        f.id
-      )}?alt=media&key=${encodeURIComponent(apiKey)}`;
-
       files.push({
         id: f.id,
         name: f.name,
@@ -131,7 +150,7 @@ export async function listDriveImagesFast(arg1, arg2) {
         thumbnailLink: f.thumbnailLink,
         webViewLink: f.webViewLink,
         webContentLink: f.webContentLink,
-        url: directURL,
+        url: directContentURL(f.id, apiKey),
       });
     }
 
@@ -140,4 +159,26 @@ export async function listDriveImagesFast(arg1, arg2) {
   }
 
   return { files };
+}
+
+/* -------- Optional helper: adapt external cache shapes to the same result ------- */
+export function toFileObjectsFromCache(cacheJson) {
+  const arr = normalizeDriveList(cacheJson);
+  return arr.map((it) => {
+    const id = it.id || it.fileId || it.name || '';
+    const name = it.name || it.title || id || 'image';
+    const url =
+      it.url ||
+      it.webContentLink ||
+      (id ? directContentURL(id, getConfiguredDriveInfo().apiKey) : '');
+    return {
+      id,
+      name,
+      mimeType: it.mimeType || 'image/*',
+      thumbnailLink: it.thumbnailLink,
+      webViewLink: it.webViewLink,
+      webContentLink: it.webContentLink,
+      url,
+    };
+  });
 }
