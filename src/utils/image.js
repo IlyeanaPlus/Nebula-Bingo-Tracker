@@ -1,12 +1,9 @@
 /* src/utils/image.js
-   Nebula Bingo Tracker — grid & crop utilities (full drop-in)
+   Nebula Bingo Tracker — grid & crop utilities (full drop-in, with fileToImage)
 
-   Features:
-   - Works strictly in NATURAL pixel space (uses naturalWidth/naturalHeight)
-   - Robust 6×6 line recovery:
-       * Prefer green-overlay detection (G high, R/B low)
-       * Merge jittery lines; NMS to pick peaks; ensure exactly six per axis
-       * Fallback to saved gridFractions; final fallback = equal spacing
+   - fileToImage(File|Blob|string): Promise<HTMLImageElement>
+   - Green overlay grid detection (bright green → lines)
+   - Normalizes to exactly 6 vertical + 6 horizontal lines in NATURAL pixels
    - Builds 25 square interior crops with configurable inset
    - Safe, clamped cropping to PNG dataURLs
 */
@@ -16,14 +13,47 @@ const MIN_PEAK_SEP   = 14;          // px, distance between line peaks at natura
 const NMS_RADIUS     = 6;           // px, non-max suppression window
 const DEFAULT_INSET_FRAC = 0.08;    // 8% padding of square side on each edge
 
-// --- LocalStorage helpers (fractions: 0..1)
+// -----------------------------
+// Loading helpers
+// -----------------------------
+export function fileToImage(src) {
+  // Accepts File, Blob, or string (URL/dataURL). Returns a loaded <img>.
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.decoding = "async";
+    img.crossOrigin = "anonymous";
+
+    let objectUrl = null;
+    if (typeof src === "string") {
+      img.src = src; // URL or dataURL
+    } else if (src instanceof Blob) {
+      objectUrl = URL.createObjectURL(src);
+      img.src = objectUrl;
+    } else {
+      return reject(new Error("fileToImage: expected File|Blob|string"));
+    }
+
+    img.onload = () => {
+      // Revoke later to avoid upsetting some browsers while decoding
+      if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      resolve(img);
+    };
+    img.onerror = (e) => {
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+      reject(new Error("fileToImage: failed to load image"));
+    };
+  });
+}
+
+// -----------------------------
+// LocalStorage helpers (fractions: 0..1)
+// -----------------------------
 function readSavedFractions() {
   try {
     const raw = localStorage.getItem("nbt.gridFractions");
     if (!raw) return null;
     const obj = JSON.parse(raw);
     if (!obj) return null;
-    // expect { v: number[6], h: number[6] }
     if (!Array.isArray(obj.v) || !Array.isArray(obj.h)) return null;
     if (obj.v.length !== 6 || obj.h.length !== 6) return null;
     return obj;
@@ -40,7 +70,9 @@ export function clearGridFractions() {
   try { localStorage.removeItem("nbt.gridFractions"); } catch {}
 }
 
-// --- Canvas helpers
+// -----------------------------
+// Canvas helpers
+// -----------------------------
 function naturalSize(img) {
   return {
     W: img.naturalWidth  || img.width,
@@ -72,7 +104,9 @@ export function clientToNaturalLines(img, clientVertical, clientHorizontal) {
   };
 }
 
-// --- Peak utilities (1D)
+// -----------------------------
+// Peak utilities (1D)
+// -----------------------------
 function nonMaxSuppression1D(array, radius = NMS_RADIUS) {
   const peaks = [];
   for (let i = 0; i < array.length; i++) {
@@ -99,7 +133,6 @@ function mergeClosePositions(positions, tol = LINE_MERGE_TOL) {
 
 function enforceSixLines(positions, axisLen, savedFracs, useVertical) {
   let arr = mergeClosePositions(positions);
-  // Too dense? spread with min separation
   if (arr.length > 6) {
     const kept = [arr[0]];
     for (let i = 1; i < arr.length; i++) {
@@ -109,7 +142,6 @@ function enforceSixLines(positions, axisLen, savedFracs, useVertical) {
     arr = kept;
   }
 
-  // If not 6, try saved fractions
   if (arr.length !== 6 && savedFracs) {
     const fracs = useVertical ? savedFracs.v : savedFracs.h;
     if (fracs?.length === 6) {
@@ -117,32 +149,30 @@ function enforceSixLines(positions, axisLen, savedFracs, useVertical) {
     }
   }
 
-  // If still not 6, equal spacing full-bleed
   if (arr.length !== 6) {
     arr = Array.from({ length: 6 }, (_, i) => Math.round((i / 5) * axisLen));
   }
 
-  // strict ascending & clamped
   arr = arr
     .map((v, i) => (i && v <= arr[i - 1] ? arr[i - 1] + 1 : v))
     .map(v => Math.max(0, Math.min(axisLen, v)));
 
-  // Guarantee exactly six
   if (arr.length > 6) arr = arr.slice(0, 6);
-  while (arr.length < 6) arr.push(axisLen); // should be rare
+  while (arr.length < 6) arr.push(axisLen);
 
   return arr;
 }
 
-// --- GREEN overlay detector (bright-green lines)
+// -----------------------------
+// GREEN overlay detector (bright-green lines)
+// -----------------------------
 function greenMaskScores(imgData, axis) {
   const { width: W, height: H, data } = imgData;
   const scores = new Array(axis === "x" ? W : H).fill(0);
 
-  // thresholds are tolerant: green must lead, red & blue relatively low
-  const G_MIN = 140;       // allow bright or medium bright green
-  const RB_MAX = 110;      // suppress non-green
-  const DOM_FACTOR = 1.2;  // G must be >= 1.2 * max(R, B)
+  const G_MIN = 140;
+  const RB_MAX = 110;
+  const DOM_FACTOR = 1.2;
 
   if (axis === "x") {
     for (let x = 0; x < W; x++) {
@@ -170,15 +200,10 @@ function greenMaskScores(imgData, axis) {
 
 function pickLinePositionsFromScores(scores) {
   const peaks = nonMaxSuppression1D(scores, NMS_RADIUS);
-  // Keep strongest peaks first
-  const sorted = peaks.sort((a, b) => scores[b] - scores[a]);
-  return sorted;
+  return peaks.sort((a, b) => scores[b] - scores[a]);
 }
 
-/**
- * Detect grid lines from a GREEN overlay image (preferred path).
- * Returns { vertical: number[<=W], horizontal: number[<=H] } in NATURAL pixels.
- */
+/** Detect grid lines from a GREEN overlay image (preferred path). */
 export function detectGridFromGreenOverlay(img) {
   const id = getImageData(img);
   const xScores = greenMaskScores(id, "x");
@@ -188,7 +213,9 @@ export function detectGridFromGreenOverlay(img) {
   return { vertical: vRaw, horizontal: hRaw };
 }
 
-// --- Public: normalize detected lines (whatever the source) to exactly six each
+// -----------------------------
+// Normalize detected lines to exactly six each
+// -----------------------------
 export function normalizeGridLines(img, detected) {
   const { W, H } = naturalSize(img);
   const saved = readSavedFractions();
@@ -202,7 +229,6 @@ export function normalizeGridLines(img, detected) {
   const v6 = enforceSixLines(v, W, saved, true);
   const h6 = enforceSixLines(h, H, saved, false);
 
-  // Save fractions for future runs (0..1)
   try {
     const vFrac = v6.map(x => x / W);
     const hFrac = h6.map(y => y / H);
@@ -212,7 +238,9 @@ export function normalizeGridLines(img, detected) {
   return { vertical: v6, horizontal: h6 };
 }
 
-// --- Build 5×5 cells then center a square with inset
+// -----------------------------
+// Build cells → square interiors
+// -----------------------------
 function buildCellRects(vLines, hLines) {
   const rects = [];
   for (let r = 0; r < 5; r++) {
@@ -239,13 +267,13 @@ function squareInterior(rect, insetFrac = DEFAULT_INSET_FRAC) {
   };
 }
 
-// --- Public: compute 25 square crops
+// Public: compute 25 square crops
 export function computeSquareCrops(img, normalizedLines, insetFrac = DEFAULT_INSET_FRAC) {
   const cells = buildCellRects(normalizedLines.vertical, normalizedLines.horizontal);
   return cells.map(r => squareInterior(r, insetFrac));
 }
 
-// --- Public: crop to PNG dataURL
+// Public: crop to PNG dataURL
 export function cropToDataURL(img, rect) {
   const { W, H } = naturalSize(img);
   const x = Math.max(0, Math.min(W - 1, rect.x));
@@ -259,13 +287,9 @@ export function cropToDataURL(img, rect) {
   return c.toDataURL("image/png");
 }
 
-// --- Convenience: one-shot extractor using green overlay image
-// Pass the overlay image element (with green lines) that matches the same base.
+// Convenience: one-shot extractor using green overlay image
 export async function extractCropsFromGreenOverlay(baseImg, overlayImg, insetFrac = DEFAULT_INSET_FRAC) {
-  // overlay detection
   const detected = detectGridFromGreenOverlay(overlayImg);
-  // normalize to 6/6 in NATURAL space of BASE image
-  // (overlay & base should be same size; if not, rescale)
   const { W: BW, H: BH } = naturalSize(baseImg);
   const { W: OW, H: OH } = naturalSize(overlayImg);
 
@@ -281,7 +305,7 @@ export async function extractCropsFromGreenOverlay(baseImg, overlayImg, insetFra
   return rects.map(r => cropToDataURL(baseImg, r));
 }
 
-// --- Debug: draw rect outlines (for your “Last Fill — Crops” modal)
+// Debug: draw rect outlines for your modal
 export function drawDebugRects(img, rects, { stroke = "rgba(255,255,255,0.9)", lineWidth = 2 } = {}) {
   const { W, H } = naturalSize(img);
   const c = document.createElement("canvas");
@@ -295,17 +319,3 @@ export function drawDebugRects(img, rects, { stroke = "rgba(255,255,255,0.9)", l
   }
   return c.toDataURL("image/png");
 }
-
-/* --- Typical usage in your fill flow ----
-
-  // 1) You already loaded the screenshot (baseImg).
-  // 2) If the user provided a green grid PNG (overlayImg), do:
-  const dataURLs = await extractCropsFromGreenOverlay(baseImg, overlayImg, 0.08);
-
-  // 3) If you have detector lines some other way, ensure NATURAL pixels, then:
-  const normalized = normalizeGridLines(baseImg, { vertical, horizontal });
-  const rects = computeSquareCrops(baseImg, normalized, 0.08);
-  const dataURLs = rects.map(r => cropToDataURL(baseImg, r));
-
-  // dataURLs are native-size squares; scale later as needed.
-*/
