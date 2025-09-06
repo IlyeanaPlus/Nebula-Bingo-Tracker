@@ -11,17 +11,17 @@ export default function App(){
   const [cache,setCache]=useState([]);
   const [loadProg,setLoadProg]=useState({total:0,done:0,loading:false});
 
-  useEffect(()=>{ const saved=cards.filter(c=>c.saved!==false); localStorage.setItem("cards_v2",JSON.stringify(saved)) },[cards]);
-
-  const BASE =
-    (import.meta?.env?.BASE_URL) ||
-    document.querySelector("base")?.getAttribute("href") ||
-    "/Nebula-Bingo-Tracker/";
+  useEffect(()=>{
+    const saved=cards.filter(c=>c.saved!==false);
+    localStorage.setItem("cards_v2",JSON.stringify(saved));
+  },[cards]);
 
   async function forceLoadSprites(){
     setLoadProg({total:0,done:0,loading:true});
     try{
-      const r=await fetch(`${BASE}drive_cache.json`,{cache:"reload"});
+      const base = (import.meta?.env?.BASE_URL) || document.querySelector("base")?.getAttribute("href") || "./";
+      let r = await fetch("drive_cache.json",{cache:"reload"});
+      if(!r.ok) r = await fetch(`${base.replace(/\/?$/,"/")}drive_cache.json`,{cache:"reload"});
       if(!r.ok) throw new Error(`HTTP ${r.status}`);
       const j=await r.json();
       const norm=j.map(it=>({
@@ -48,7 +48,7 @@ export default function App(){
   async function fillFromScreenshot(cardId,file){
     if(!file) return;
     const img=await loadImageFromFile(file); // ImageBitmap
-    const crops=detectGridCrops(img,{padFrac:PAD_FRAC,minGap:MIN_GAP}); // returns canvases
+    const crops=detectGridCrops(img,{padFrac:PAD_FRAC,minGap:MIN_GAP}); // canvases
     const tiles=await Promise.all(crops.map(async (cv)=>{
       const ah=await computeAHash(cv);
       const dx=await computeDHashX(cv), dy=await computeDHashY(cv);

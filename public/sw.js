@@ -1,8 +1,7 @@
 // public/sw.js
-// Base-aware SW for GitHub Pages project sites
 const BASE = new URL(self.registration.scope).pathname; // e.g. "/Nebula-Bingo-Tracker/"
 const CACHE = "nebula-bingo-v3";
-const ASSETS = [BASE, BASE + "index.html"]; // do NOT precache drive_cache.json
+const ASSETS = [BASE, BASE + "index.html"]; // don't precache drive_cache.json
 
 self.addEventListener("install", (e) => {
   e.waitUntil(
@@ -20,12 +19,10 @@ self.addEventListener("activate", (e) => {
 
 self.addEventListener("fetch", (e) => {
   const url = new URL(e.request.url);
-
-  // Only handle same-origin files under our BASE
   const sameOrigin = url.origin === self.location.origin && url.pathname.startsWith(BASE);
 
-  // Network-first JUST for the manifest
-  if (sameOrigin && url.pathname === BASE + "drive_cache.json") {
+  // Network-first for the manifest regardless of base prefix
+  if (sameOrigin && url.pathname.endsWith("drive_cache.json")) {
     e.respondWith(
       fetch(e.request).then((r) => {
         const copy = r.clone();
@@ -51,6 +48,5 @@ self.addEventListener("fetch", (e) => {
     return;
   }
 
-  // Pass-through for everything else
   e.respondWith(fetch(e.request));
 });
