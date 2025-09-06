@@ -1,13 +1,11 @@
 import React, { useEffect, useRef, useState } from 'react';
 import BingoCard from './components/BingoCard.jsx';
-import {
-  tryLoadDriveCacheJSON,
-  getConfiguredDriveInfo, // just to show folder snippet in UI if you like
-} from './services/drive.js';
+import { tryLoadDriveCacheJSON } from './services/drive.js';
 import {
   loadImageFromURL,
   loadImageFromFile,
   ahashFromImage,
+  dhashFromImage,
   cropToCanvas,
   hammingDistanceBits,
 } from './utils/image.js';
@@ -19,7 +17,11 @@ function uid() {
   return Math.random().toString(36).slice(2);
 }
 const bitsToString = (bits) => bits.join('');
-const stringToBits = (s) => Array.from(s, (ch) => (ch === '1' ? 1 : 0));
+const parseBits = (s) => {
+  const arr = new Int8Array(s.length);
+  for (let i = 0; i < s.length; i++) arr[i] = s[i] === '1' ? 1 : 0;
+  return arr;
+};
 
 function extractUrl(item) {
   if (!item) return '';
@@ -44,25 +46,27 @@ function normalizeDriveList(list) {
 /* ------------------------------ app ------------------------------- */
 
 export default function App() {
-  // Internal sprite library (not rendered as a grid)
+  // Loaded from manifest
   const [library, setLibrary] = useState([]); // [{id,url,name}]
-
-  // Indexing progress + status (for hashing only)
   const [indexProg, setIndexProg] = useState({ stage: 'idle', done: 0, total: 0 });
   const [statusMsg, setStatusMsg] = useState('');
 
-  // Library aHashes cache (url -> bitString). useRef to avoid rerenders
-  const libHashesRef = useRef(new Map());
-  // Cache for parsed bit arrays to speed up matching (url -> Int8Array of bits)
-  const libBitsRef = useRef(new Map());
+  // Hash caches (url -> bitString)
+  const libARef = useRef(new Map());
+  const libDXRef = useRef(new Map());
+  const libDYRef = useRef(new Map());
+
+  // Fast bit arrays (url -> Int8Array)
+  const aBitsRef = useRef(new Map());
+  const dxBitsRef = useRef(new Map());
+  const dyBitsRef = useRef(new Map());
 
   // Cards
-  const [cards, setCards] = useState([]); // [{id,title,rows,cols,tiles:[{url,checked}|null]}]
-  const [analyzing, setAnalyzing] = useState(new Set()); // Set<cardId>
+  const [cards, setCards] = useState([]); // tiles: {url, checked} | null
+  const [analyzing, setAnalyzing] = useState(new Set());
 
   /* --------------------------- persistence --------------------------- */
 
-  // migrate old saves where tile was 'string url' -> {url,checked:false}
   function migrateTiles(tiles, rows, cols) {
     const total = (rows || 5) * (cols || 5);
     const arr = Array.isArray(tiles) ? tiles.slice(0, total) : [];
@@ -92,8 +96,12 @@ export default function App() {
         }));
         setCards(migrated);
       }
-      const rawHashes = localStorage.getItem('lib:ahash');
-      if (rawHashes) libHashesRef.current = new Map(Object.entries(JSON.parse(rawHashes)));
+      const rawA = localStorage.getItem('lib:ahash');
+      const rawDX = localStorage.getItem('lib:dhashx');
+      const rawDY = localStorage.getItem('lib:dhashy');
+      if (rawA) libARef.current = new Map(Object.entries(JSON.parse(rawA)));
+      if (rawDX) libDXRef.current = new Map(Object.entries(JSON.parse(rawDX)));
+      if (rawDY) libDYRef.current = new Map(Object.entries(JSON.parse(rawDY)));
     } catch {}
   }, []);
 
@@ -115,13 +123,12 @@ export default function App() {
           setStatusMsg(
             items.length
               ? `Loaded ${items.length} sprites from manifest.`
-              : 'No sprites found in manifest (public/drive_cache.json).'
+              : 'No sprites found in /public/drive_cache.json.'
           );
-          // Start indexing (hashing) in background
           if (items.length) await indexSprites(items);
         }
-      } catch (e) {
-        if (!cancelled) setStatusMsg('Could not load sprite manifest. Add public/drive_cache.json.');
+      } catch {
+        if (!cancelled) setStatusMsg('Could not load sprite manifest.');
       }
     })();
     return () => { cancelled = true; };
@@ -130,26 +137,30 @@ export default function App() {
   /* -------------------------- hashing/indexing ----------------------- */
 
   async function indexSprites(items) {
-    const hashes = libHashesRef.current;
-    const persisted = Object.fromEntries(hashes);
-
-    // Count how many new
-    let newCount = 0;
-    for (const it of items) if (!hashes.has(it.url)) newCount++;
+    const A = libARef.current, DX = libDXRef.current, DY = libDYRef.current;
+    const persistedA = Object.fromEntries(A);
+    const persistedDX = Object.fromEntries(DX);
+    const persistedDY = Object.fromEntries(DY);
 
     setIndexProg({ stage: 'hashing', done: 0, total: items.length });
     let done = 0;
 
     for (const it of items) {
-      if (!hashes.has(it.url)) {
+      const url = it.url;
+      if (!A.has(url) || !DX.has(url) || !DY.has(url)) {
         try {
-          const img = await loadImageFromURL(it.url);
-          const bits = ahashFromImage(img, 8);
-          const bitStr = bitsToString(bits);
-          hashes.set(it.url, bitStr);
-          persisted[it.url] = bitStr;
+          const img = await loadImageFromURL(url);
+          const a = ahashFromImage(img, 8);
+          const dx = dhashFromImage(img, 8, 'x');
+          const dy = dhashFromImage(img, 8, 'y');
+          const sa = bitsToString(a);
+          const sdx = bitsToString(dx);
+          const sdy = bitsToString(dy);
+          A.set(url, sa); persistedA[url] = sa;
+          DX.set(url, sdx); persistedDX[url] = sdx;
+          DY.set(url, sdy); persistedDY[url] = sdy;
         } catch {
-          // ignore individual failures
+          // ignore failures for individual URLs
         }
       }
       done++;
@@ -157,26 +168,26 @@ export default function App() {
       await new Promise((r) => setTimeout(r, 0));
     }
 
-    try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
-    buildLibBitsCache();
+    try {
+      localStorage.setItem('lib:ahash', JSON.stringify(persistedA));
+      localStorage.setItem('lib:dhashx', JSON.stringify(persistedDX));
+      localStorage.setItem('lib:dhashy', JSON.stringify(persistedDY));
+    } catch {}
+
+    // Build fast Int8 caches
+    buildBitCaches();
     setIndexProg({ stage: 'idle', done: 0, total: 0 });
-    if (newCount > 0) setStatusMsg(`Indexed ${items.length} sprites.`);
   }
 
-  function buildLibBitsCache() {
-    const hashes = libHashesRef.current;
-    const bitsCache = libBitsRef.current;
-    for (const [url, bitStr] of hashes.entries()) {
-      if (!bitsCache.has(url)) {
-        const arr = new Int8Array(bitStr.length);
-        for (let i = 0; i < bitStr.length; i++) arr[i] = bitStr[i] === '1' ? 1 : 0;
-        bitsCache.set(url, arr);
-      }
-    }
+  function buildBitCaches() {
+    const AB = aBitsRef.current, DXB = dxBitsRef.current, DYB = dyBitsRef.current;
+    for (const [url, str] of libARef.current) if (!AB.has(url)) AB.set(url, parseBits(str));
+    for (const [url, str] of libDXRef.current) if (!DXB.has(url)) DXB.set(url, parseBits(str));
+    for (const [url, str] of libDYRef.current) if (!DYB.has(url)) DYB.set(url, parseBits(str));
   }
 
   async function ensureLibraryHashes() {
-    if (libBitsRef.current.size > 0) return;
+    if (aBitsRef.current.size > 0) return;
     if (library.length === 0) return;
     await indexSprites(library);
   }
@@ -215,7 +226,7 @@ export default function App() {
         if (c.id !== id) return c;
         const tiles = c.tiles.slice();
         const t = tiles[idx];
-        if (!t) return c; // nothing to toggle
+        if (!t) return c;
         tiles[idx] = { url: t.url, checked: !t.checked };
         return { ...c, tiles };
       })
@@ -223,13 +234,6 @@ export default function App() {
   }
 
   /* ----------------------- screenshot analysis ---------------------- */
-  /**
-   * Enhanced "Fill Card":
-   *  - Takes a full screenshot (not perfectly cropped)
-   *  - Tries multiple auto-crops (margin search)
-   *  - For the best crop, divides into rows/cols and matches each cell
-   *  - Fills relevant cells with best-match sprites (skips if distance > threshold)
-   */
 
   async function analyzeScreenshotForCard(id, file) {
     setAnalyzing((s) => new Set([...s, id]));
@@ -241,20 +245,18 @@ export default function App() {
       if (!card) return;
       const { rows, cols } = card;
 
-      // Precompute library bit arrays
-      const libBits = libBitsRef.current;
-      const libList = library
-        .map((it) => {
-          const bits = libBits.get(it.url);
-          return bits ? { url: it.url, bits } : null;
-        })
-        .filter(Boolean);
+      // Prepare library list with bit arrays (skip missing)
+      const list = library.map((it) => ({
+        url: it.url,
+        a: aBitsRef.current.get(it.url),
+        dx: dxBitsRef.current.get(it.url),
+        dy: dyBitsRef.current.get(it.url),
+      })).filter((v) => v.a && v.dx && v.dy);
 
-      if (libList.length === 0) return;
+      if (list.length === 0) return;
 
-      // Search some margin percentages to auto-crop the card area
-      const margins = [0.00, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12, 0.15, 0.18];
-      const innerPad = 0.02; // small inner padding per cell (to avoid borders)
+      const margins = [0.00, 0.02, 0.04, 0.06, 0.08, 0.10, 0.12];
+      const innerPads = [0.02, 0.05, 0.08]; // try a few inner paddings
 
       let best = { score: Infinity, filled: null };
 
@@ -267,8 +269,10 @@ export default function App() {
         const hh = Math.max(4, Math.floor(h - 2 * y0));
         const cropped = cropToCanvas(img, x0, y0, ww, hh);
 
-        const result = matchGrid(cropped, rows, cols, libList, innerPad);
-        if (result && result.score < best.score) best = result;
+        for (const pad of innerPads) {
+          const result = matchGrid(cropped, rows, cols, list, pad);
+          if (result && result.score < best.score) best = result;
+        }
       }
 
       if (best.filled) {
@@ -276,17 +280,15 @@ export default function App() {
       }
     } finally {
       setAnalyzing((s) => {
-        const n = new Set(s);
-        n.delete(id);
-        return n;
+        const n = new Set(s); n.delete(id); return n;
       });
     }
   }
 
   /**
-   * Split a cropped canvas into rows/cols (with inner padding),
-   * aHash each cell, match against library, return { filled, score }.
-   * score = sum of best distances (lower is better).
+   * Split a cropped canvas into rows/cols, hash each cell with aHash+dHashX+dHashY,
+   * and pick the library sprite minimizing the weighted distance.
+   * Uses strict acceptance: both absolute threshold and margin over #2.
    */
   function matchGrid(cropped, rows, cols, libList, innerPadFrac = 0.0) {
     const W = cropped.width, H = cropped.height;
@@ -298,7 +300,12 @@ export default function App() {
     const padY = Math.floor(cellH * innerPadFrac);
 
     const filled = Array(rows * cols).fill(null);
-    let totalDist = 0;
+    let totalScore = 0;
+
+    // Tunables
+    const WEIGHTS = { a: 0.5, dx: 0.25, dy: 0.25 };
+    const ABS_THRESH = 22;     // combined distance must be <= this (0..64)
+    const MIN_GAP = 4;         // best must beat #2 by at least this
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
@@ -306,33 +313,44 @@ export default function App() {
         const y = Math.max(0, Math.floor(r * cellH + padY));
         const w = Math.max(2, Math.floor(cellW - 2 * padX));
         const h = Math.max(2, Math.floor(cellH - 2 * padY));
-        const cellCanvas = cropToCanvas(cropped, x, y, w, h);
+        const cell = cropToCanvas(cropped, x, y, w, h);
 
-        const cellBits = ahashFromImage(cellCanvas, 8); // 64-bit
+        const a = ahashFromImage(cell, 8);
+        const dx = dhashFromImage(cell, 8, 'x');
+        const dy = dhashFromImage(cell, 8, 'y');
+
         let bestUrl = null;
-        let bestDist = Infinity;
+        let bestScore = Infinity;
+        let second = Infinity;
 
         for (let i = 0; i < libList.length; i++) {
           const cand = libList[i];
-          const d = hammingDistanceBits(cellBits, cand.bits);
-          if (d < bestDist) {
-            bestDist = d;
+          const dA  = hammingDistanceBits(a,  cand.a);
+          const dX  = hammingDistanceBits(dx, cand.dx);
+          const dY  = hammingDistanceBits(dy, cand.dy);
+          const score = WEIGHTS.a * dA + WEIGHTS.dx * dX + WEIGHTS.dy * dY;
+
+          if (score < bestScore) {
+            second = bestScore;
+            bestScore = score;
             bestUrl = cand.url;
+          } else if (score < second) {
+            second = score;
           }
         }
 
-        // Threshold: if too far from any known sprite, leave empty.
-        if (bestUrl && bestDist <= 12) {
+        // Strict acceptance: absolute threshold AND margin to #2
+        if (bestUrl && bestScore <= ABS_THRESH && (second - bestScore) >= MIN_GAP) {
           filled[r * cols + c] = { url: bestUrl, checked: false };
-          totalDist += bestDist;
+          totalScore += bestScore;
         } else {
           filled[r * cols + c] = null;
-          totalDist += 20; // small penalty for unmatched
+          totalScore += 25; // penalty
         }
       }
     }
 
-    return { filled, score: totalDist };
+    return { filled, score: totalScore };
   }
 
   /* ------------------------------- UI -------------------------------- */
@@ -345,13 +363,11 @@ export default function App() {
 
   return (
     <div style={styles.page}>
-      {/* Header: title only */}
       <header style={styles.header}>
         <h1 style={styles.h1}>Nebula Bingo Tracker</h1>
       </header>
 
       <main style={styles.main}>
-        {/* Left: ONLY New Card; shows hashing progress if running */}
         <section style={styles.toolsPane}>
           <button style={styles.btnBlock} onClick={() => addCard({})}>New Card</button>
 
@@ -360,15 +376,10 @@ export default function App() {
               <div style={{ ...styles.progressBar, width: `${progressPct}%` }} />
             </div>
           )}
-
           {!!statusMsg && <div style={styles.statusMsg}>{statusMsg}</div>}
-          <div style={styles.smallInfo}>
-            Sprites: {library.length}
-            {library.length > 0 ? ' • Ready for screenshot analysis' : ''}
-          </div>
+          <div style={styles.smallInfo}>Sprites: {library.length}</div>
         </section>
 
-        {/* Right: cards */}
         <section style={styles.cardsPane}>
           <div style={styles.cardsGrid}>
             {cards.map((card) => (
@@ -380,7 +391,7 @@ export default function App() {
                   cols={card.cols}
                   tiles={card.tiles}
                   analyzing={analyzing.has(card.id)}
-                  onRename={renameCard}
+                  onRename={(id, t) => renameCard(id, t)}
                   onUploadScreenshot={analyzeScreenshotForCard}
                   onClear={clearCard}
                   onRemove={removeCard}
