@@ -133,22 +133,20 @@ export default function App() {
     [cards, manifest, refIndex.length]
   );
 
-  return (
-    <div className="layout">
-      <Sidebar onNewCard={addCard} savedCount={savedCount} onClearSaved={clearSaved} />
-
-      <div>
-        <Header
-          totalSprites={totalSprites}
-          loadedSprites={loadedSprites}
-          spritesLoading={spritesLoading}
-          onGetSprites={onGetSprites}
-          onNewCard={addCard} // still available in header if you keep the button there
-        />
-        <main className="cards">
-          {cardsView}
-        </main>
+return (
+  <div className="layout">
+    <div className="main-column">
+      <Header
+        totalSprites={totalSprites}
+        loadedSprites={loadedSprites}
+        spritesLoading={spritesLoading}
+        onGetSprites={onGetSprites}
+      />
+      <div className="body">
+        <Sidebar onNewCard={addCard} savedCount={savedCount} onClearSaved={clearSaved} />
+        <main className="cards">{cardsView}</main>
       </div>
     </div>
-  );
+  </div>
+);
 }

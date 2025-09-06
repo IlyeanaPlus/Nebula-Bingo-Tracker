@@ -1,37 +1,66 @@
 // src/utils/matchers.js
-// Histogram shortlist → SSIM/MSE final on a foreground mask.
-// Debug logging is controlled by URL (?debug) or localStorage('nbt.debug' = '1') or opts.debug.
+// Robust reference loading + histogram shortlist → (SSIM/MSE or NCC) final with a foreground mask.
+// Composites transparency to board gray (#8b8b8b). Includes debug logging.
 
 const BG = { r: 139, g: 139, b: 139 }; // #8b8b8b
 const SIZE = 32;
 const BINS = 8;
-const OFF = [-1, 0, 1];
-const SHORTLIST_K = 24;
+const OFF = [-2, -1, 0, 1, 2]; // wider offset search
+const SHORTLIST_K = 36;        // a bit wider
 
-// ---------- Debug gate ----------
-function isDebugEnabled(explicitFlag) {
-  if (explicitFlag === true) return true;
-  if (explicitFlag === false) return false;
+// ---------- Debug ----------
+function dbgOn(flag) {
+  if (flag === true) return true;
   try {
     if (typeof location !== 'undefined' && /[?&]debug(=1|&|$)/.test(location.search)) return true;
     if (typeof localStorage !== 'undefined' && localStorage.getItem('nbt.debug') === '1') return true;
   } catch {}
   return false;
 }
-const dlog = (...args) => console.log('[matcher]', ...args);
+const dlog = (...a) => console.log('[matcher]', ...a);
 
-// ---------- Canvas helpers ----------
-function loadImage(url) {
+// ---------- Image load with retries ----------
+function loadImageOnce(url) {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.referrerPolicy = 'no-referrer';
+    img.decoding = 'async';
     img.onload = () => resolve(img);
-    img.onerror = reject;
+    img.onerror = (e) => reject(e);
     img.src = url;
   });
 }
 
+function buildFallbackUrls(raw) {
+  // prefer =s64 thumb (fast), then raw, then UC view
+  const u = new URL(raw, location.origin);
+  const list = [];
+  if (raw.includes('lh3.googleusercontent.com/d/')) {
+    list.push(raw.endsWith('=s64') ? raw : `${raw}=s64`);
+    list.push(raw.replace(/=s\d+$/, '')); // raw
+    const id = raw.split('/d/')[1]?.split(/[/?#]/)[0];
+    if (id) list.push(`https://drive.google.com/uc?export=view&id=${id}`);
+  } else {
+    list.push(raw);
+  }
+  return Array.from(new Set(list));
+}
+
+async function loadImageRobust(raw) {
+  const tries = buildFallbackUrls(raw);
+  let lastErr;
+  for (const url of tries) {
+    try {
+      return await loadImageOnce(url);
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error('image load failed');
+}
+
+// ---------- Canvas ----------
 function toCanvas(img, w = SIZE, h = SIZE) {
   const c = document.createElement('canvas');
   c.width = w; c.height = h;
@@ -41,7 +70,6 @@ function toCanvas(img, w = SIZE, h = SIZE) {
   return c;
 }
 
-// Composite transparent pixels over BG gray
 function compositeToBG(cnv) {
   const ctx = cnv.getContext('2d', { willReadFrequently: true });
   const im = ctx.getImageData(0, 0, cnv.width, cnv.height);
@@ -54,7 +82,7 @@ function compositeToBG(cnv) {
     d[i + 3] = 255;
   }
   ctx.putImageData(im, 0, 0);
-  return im; // ImageData
+  return im;
 }
 
 function imageDataFromDataURL(dataURL, w = SIZE, h = SIZE) {
@@ -70,7 +98,25 @@ function imageDataFromDataURL(dataURL, w = SIZE, h = SIZE) {
   });
 }
 
-// ---------- Foreground mask ----------
+// Central shrink to avoid gridlines (crop 1px border → 30x30 → back to 32x32)
+function shrinkImageData(im, border = 1) {
+  if (!border) return im;
+  const { width: w, height: h, data } = im;
+  const s = document.createElement('canvas');
+  s.width = w - border * 2;
+  s.height = h - border * 2;
+  const ctx = s.getContext('2d');
+  const tmp = document.createElement('canvas');
+  tmp.width = w; tmp.height = h;
+  tmp.getContext('2d').putImageData(im, 0, 0);
+  ctx.drawImage(tmp, border, border, w - border * 2, h - border * 2, 0, 0, s.width, s.height);
+  const back = document.createElement('canvas');
+  back.width = w; back.height = h;
+  back.getContext('2d').drawImage(s, 0, 0, w, h);
+  return back.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h);
+}
+
+// ---------- Mask ----------
 function estimateBGFromBorder(im) {
   const { data, width: w, height: h } = im;
   const valsR = [], valsG = [], valsB = [];
@@ -84,7 +130,7 @@ function estimateBGFromBorder(im) {
   return { r: med(valsR), g: med(valsG), b: med(valsB) };
 }
 
-function makeMask(im, thr = 24) { // ↑ default from 18 → 24 (keep more pixels)
+function makeMask(im, thr = 22) { // slightly looser than before
   const { data, width: w, height: h } = im;
   const bg = estimateBGFromBorder(im);
   const mask = new Uint8Array(w * h);
@@ -108,7 +154,6 @@ function histRGB(im, bins = BINS) {
     hist[bins + ((data[i + 1] / step) | 0)] += 1;        // G
     hist[2 * bins + ((data[i + 2] / step) | 0)] += 1;    // B
   }
-  // L1 normalize
   let s = 0; for (let i = 0; i < hist.length; i++) s += hist[i];
   for (let i = 0; i < hist.length; i++) hist[i] /= (s || 1);
   return hist;
@@ -124,7 +169,7 @@ function chiSq(h1, h2, eps = 1e-9) {
   return v;
 }
 
-// ---------- Luma + SSIM ----------
+// ---------- Luma / SSIM / MSE / NCC ----------
 function lumaArray(im) {
   const { data } = im;
   const out = new Float32Array(im.width * im.height);
@@ -135,58 +180,40 @@ function lumaArray(im) {
 }
 
 function ssimLuma(a, b, w, h, mask = null) {
-  // Single-scale SSIM, 8x8 windows, wrap-around (cheap at 32x32)
   const W = 8; const C1 = (0.01 * 255) ** 2; const C2 = (0.03 * 255) ** 2;
   let scoreSum = 0, count = 0;
-
   function meanVar(arr, x0, y0) {
     let sum = 0, sum2 = 0, n = 0;
-    for (let y = 0; y < W; y++) {
-      for (let x = 0; x < W; x++) {
-        const xi = (x0 + x) % w;
-        const yi = (y0 + y) % h;
-        const idx = yi * w + xi;
-        if (mask && !mask[idx]) continue;
-        const v = arr[idx];
-        sum += v; sum2 += v * v; n++;
-      }
+    for (let y = 0; y < W; y++) for (let x = 0; x < W; x++) {
+      const xi = (x0 + x) % w, yi = (y0 + y) % h, idx = yi * w + xi;
+      if (mask && !mask[idx]) continue;
+      const v = arr[idx]; sum += v; sum2 += v * v; n++;
     }
     const mu = n ? sum / n : 0;
     const sig = n ? Math.max(0, sum2 / n - mu * mu) : 0;
     return { mu, sig, n };
   }
-
-  for (let y = 0; y < h; y += W) {
-    for (let x = 0; x < w; x += W) {
-      const A = meanVar(a, x, y), B = meanVar(b, x, y);
-      const n = Math.min(A.n, B.n);
-      if (!n) continue;
-
-      let cov = 0, nn = 0;
-      for (let j = 0; j < W; j++) {
-        for (let i = 0; i < W; i++) {
-          const xi = (x + i) % w, yi = (y + j) % h, idx = yi * w + xi;
-          if (mask && !mask[idx]) continue;
-          cov += (a[idx] - A.mu) * (b[idx] - B.mu); nn++;
-        }
-      }
-      cov = nn ? cov / nn : 0;
-
-      const num = (2 * A.mu * B.mu + C1) * (2 * cov + C2);
-      const den = (A.mu ** 2 + B.mu ** 2 + C1) * (A.sig + B.sig + C2);
-      scoreSum += den ? num / den : 0;
-      count++;
+  for (let y = 0; y < h; y += W) for (let x = 0; x < w; x += W) {
+    const A = meanVar(a, x, y), B = meanVar(b, x, y); const n = Math.min(A.n, B.n);
+    if (!n) continue;
+    let cov = 0, nn = 0;
+    for (let j = 0; j < W; j++) for (let i = 0; i < W; i++) {
+      const xi = (x + i) % w, yi = (y + j) % h, idx = yi * w + xi;
+      if (mask && !mask[idx]) continue;
+      cov += (a[idx] - A.mu) * (b[idx] - B.mu); nn++;
     }
+    cov = nn ? cov / nn : 0;
+    const num = (2 * A.mu * B.mu + C1) * (2 * cov + C2);
+    const den = (A.mu ** 2 + B.mu ** 2 + C1) * (A.sig + B.sig + C2);
+    scoreSum += den ? num / den : 0; count++;
   }
   return count ? scoreSum / count : 0;
 }
 
-// ---------- MSE with small offset search ----------
 function mseRGB(imA, imB, mask = null, dx = 0, dy = 0) {
   const { data: A, width: w, height: h } = imA;
   const { data: B } = imB;
   let sum = 0, n = 0;
-
   for (let y = 0; y < h; y++) {
     const yb = y + dy; if (yb < 0 || yb >= h) continue;
     for (let x = 0; x < w; x++) {
@@ -194,27 +221,59 @@ function mseRGB(imA, imB, mask = null, dx = 0, dy = 0) {
       const ai = (y * w + x) * 4; const bi = (yb * w + xb) * 4;
       if (mask && !mask[y * w + x]) continue;
       const dr = A[ai] - B[bi], dg = A[ai + 1] - B[bi + 1], db = A[ai + 2] - B[bi + 2];
-      sum += dr * dr + dg * dg + db * db;
-      n++;
+      sum += dr * dr + dg * dg + db * db; n++;
     }
   }
   return n ? sum / (3 * n) : Infinity;
 }
 
-function bestOffsetScores(refIm, cropIm, mask) {
-  const cropL = lumaArray(cropIm);
-  const refL = lumaArray(refIm);
-  const w = cropIm.width, h = cropIm.height;
-
-  let best = { mse: Infinity, ssim: -1, dx: 0, dy: 0 };
-  for (const dy of OFF) {
-    for (const dx of OFF) {
-      const mse = mseRGB(cropIm, refIm, mask, dx, dy);
-      const ssim = ssimLuma(cropL, refL, w, h, mask); // approx same offset; OK at 32x32
-      if (mse < best.mse || (Math.abs(mse - best.mse) < 1e-6 && ssim > best.ssim)) {
-        best = { mse, ssim, dx, dy };
-      }
+// Normalized cross-correlation (mean/std normalized), with offsets
+function nccScore(imA, imB, mask = null, dx = 0, dy = 0) {
+  const { data: A, width: w, height: h } = imA;
+  const { data: B } = imB;
+  // compute mean/std for masked pixels
+  let sumA = 0, sumB = 0, n = 0;
+  for (let y = 0; y < h; y++) {
+    const yb = y + dy; if (yb < 0 || yb >= h) continue;
+    for (let x = 0; x < w; x++) {
+      const xb = x + dx; if (xb < 0 || xb >= w) continue;
+      if (mask && !mask[y * w + x]) continue;
+      const ai = (y * w + x) * 4; const bi = (yb * w + xb) * 4;
+      const la = 0.2126 * A[ai] + 0.7152 * A[ai + 1] + 0.0722 * A[ai + 2];
+      const lb = 0.2126 * B[bi] + 0.7152 * B[bi + 1] + 0.0722 * B[bi + 2];
+      sumA += la; sumB += lb; n++;
     }
+  }
+  if (!n) return -1;
+  const muA = sumA / n, muB = sumB / n;
+  let num = 0, da2 = 0, db2 = 0;
+  for (let y = 0; y < h; y++) {
+    const yb = y + dy; if (yb < 0 || yb >= h) continue;
+    for (let x = 0; x < w; x++) {
+      const xb = x + dx; if (xb < 0 || xb >= w) continue;
+      if (mask && !mask[y * w + x]) continue;
+      const ai = (y * w + x) * 4; const bi = (yb * w + xb) * 4;
+      const la = 0.2126 * A[ai] + 0.7152 * A[ai + 1] + 0.0722 * A[ai + 2] - muA;
+      const lb = 0.2126 * B[bi] + 0.7152 * B[bi + 1] + 0.0722 * B[bi + 2] - muB;
+      num += la * lb; da2 += la * la; db2 += lb * lb;
+    }
+  }
+  const den = Math.sqrt(da2 * db2) || 1;
+  return num / den; // [-1..1]
+}
+
+function bestOffsetScores(refIm, cropIm, mask) {
+  const w = cropIm.width, h = cropIm.height;
+  let best = { mse: Infinity, ssim: -1, ncc: -1, dx: 0, dy: 0 };
+  for (const dy of OFF) for (const dx of OFF) {
+    const mse = mseRGB(cropIm, refIm, mask, dx, dy);
+    const ncc = nccScore(cropIm, refIm, mask, dx, dy);
+    // SSIM (no shift) is fine at 32x32 — keeps cost down
+    const ssim = ssimLuma(lumaArray(cropIm), lumaArray(refIm), w, h, mask);
+    const better =
+      ncc > best.ncc + 1e-6 ||
+      (Math.abs(ncc - best.ncc) < 1e-6 && (mse < best.mse || ssim > best.ssim));
+    if (better) best = { mse, ssim, ncc, dx, dy };
   }
   return best;
 }
@@ -225,84 +284,74 @@ export async function prepareRefIndex(manifest) {
   let ok = 0, fail = 0;
 
   for (const e of manifest || []) {
-    const rawSrc = e.src || e.image || e.url;
-    if (!rawSrc) continue;
-
-    const src = rawSrc.includes('lh3.googleusercontent.com/d/')
-      ? `${rawSrc}=s64`
-      : rawSrc;
-
+    const raw = e.src || e.image || e.url;
+    if (!raw) continue;
     try {
-      const img = await loadImage(src);
+      const img = await loadImageRobust(raw);
       const cnv = toCanvas(img);
       const im = compositeToBG(cnv);
-      refs.push({
-        name: e.name || e.id || 'Unknown',
-        src,
-        im,
-        hist: histRGB(im),
-      });
+      refs.push({ name: e.name || e.id || 'Unknown', src: raw, im, hist: histRGB(im) });
       ok++;
     } catch (err) {
-      console.warn('Ref load failed:', e.name || e.id || '<unnamed>', rawSrc, err);
+      console.warn('Ref load failed:', e.name || e.id || '<unnamed>', raw, err);
       fail++;
     }
   }
-
   console.log(`[matchers] refs loaded: ${ok} ok, ${fail} failed, manifest: ${(manifest || []).length}`);
   return refs;
 }
 
-// ---------- Public: find best match (with debug logs) ----------
+// ---------- Public: find best match ----------
 export async function findBestMatch(cropDataURL, refIndex, opts = {}) {
   const {
     shortlistK = SHORTLIST_K,
-    ssimMin = 0.80,  // looser default so we can see real values
-    mseMax = 1200,   // looser default so we can see real values
+    ssimMin = 0.82,   // a bit looser
+    mseMax = 1000,    // a bit looser
+    nccMin = 0.90,    // NEW: accept by NCC
     debug
   } = opts;
 
-  const DBG = isDebugEnabled(debug);
+  const DBG = dbgOn(debug);
 
-  // Prepare crop image data + mask
-  const cropIm = await imageDataFromDataURL(cropDataURL, SIZE, SIZE);
+  // Prepare crop image data + mask; shrink to avoid gridlines
+  let cropIm = await imageDataFromDataURL(cropDataURL, SIZE, SIZE);
+  cropIm = shrinkImageData(cropIm, 1);
+  const { mask, fg, total } = makeMask(cropIm, 22);
+  if (DBG) dlog('crop: fg pixels', fg, '/', total, 'ratio', +(fg / total).toFixed(2));
+
+  // Stage-1 shortlist by histogram
   const cropHist = histRGB(cropIm);
-  const { mask, fg, total } = makeMask(cropIm);
-  const fgRatio = +(fg / total).toFixed(2);
-
-  if (DBG) dlog('crop: fg pixels', fg, '/', total, 'ratio', fgRatio);
-
-  // Stage-1 shortlist
   const ranked = refIndex
     .map(r => ({ r, d: chiSq(cropHist, r.hist) }))
     .sort((a, b) => a.d - b.d)
     .slice(0, Math.min(shortlistK, refIndex.length));
 
-  // Stage-2 precise scoring + collect top-3 for debug
+  // Stage-2: evaluate scores
   const candidates = [];
   for (const { r } of ranked) {
-    const { mse, ssim } = bestOffsetScores(r.im, cropIm, mask);
-    const combined = (mse / 255) + (1 - ssim) * 200;
-    candidates.push({ r, mse, ssim, combined });
+    const { mse, ssim, ncc } = bestOffsetScores(r.im, cropIm, mask);
+    const combined = (mse / 255) + (1 - ssim) * 200 - (ncc * 50); // reward high NCC
+    candidates.push({ r, mse, ssim, ncc, combined });
   }
   candidates.sort((a, b) => a.combined - b.combined);
-
   const best = candidates[0] || null;
 
   if (DBG) {
-    const top = candidates.slice(0, 3).map(c => ({
-      name: c.r.name, mse: +c.mse.toFixed(1), ssim: +c.ssim.toFixed(3), combined: +c.combined.toFixed(2)
-    }));
-    dlog('best candidates:', top);
+    dlog('best candidates:', candidates.slice(0, 3).map(c => ({
+      name: c.r.name, mse: +c.mse.toFixed(1), ssim: +c.ssim.toFixed(3), ncc: +c.ncc.toFixed(3), combined: +c.combined.toFixed(2)
+    })));
   }
 
   if (!best) return null;
-  if (best.mse > mseMax || best.ssim < ssimMin) {
-    if (DBG) dlog('rejected best', { name: best.r.name, mse: best.mse, ssim: best.ssim, mseMax, ssimMin });
+
+  const acceptByClassic = best.mse <= mseMax && best.ssim >= ssimMin;
+  const acceptByNCC = best.ncc >= nccMin;
+
+  if (!acceptByClassic && !acceptByNCC) {
+    if (DBG) dlog('rejected best', { name: best.r.name, mse: best.mse, ssim: best.ssim, ncc: best.ncc, mseMax, ssimMin, nccMin });
     return null;
-  }
+    }
 
-  if (DBG) dlog('ACCEPT', { name: best.r.name, mse: best.mse, ssim: best.ssim });
-
-  return { name: best.r.name, src: best.r.src, mse: best.mse, ssim: best.ssim, debug: { fgRatio } };
+  if (DBG) dlog('ACCEPT', { name: best.r.name, mse: best.mse, ssim: best.ssim, ncc: best.ncc });
+  return { name: best.r.name, src: best.r.src, mse: best.mse, ssim: best.ssim, ncc: best.ncc };
 }
