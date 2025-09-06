@@ -2,8 +2,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import BingoCard from './components/BingoCard.jsx';
 import {
   tryLoadDriveCacheJSON,
-  listDriveImagesFast,
-  getConfiguredDriveInfo,
+  getConfiguredDriveInfo, // just to show folder snippet in UI if you like
 } from './services/drive.js';
 import {
   loadImageFromURL,
@@ -48,13 +47,13 @@ export default function App() {
   // Internal sprite library (not rendered as a grid)
   const [library, setLibrary] = useState([]); // [{id,url,name}]
 
-  // Progress + status
-  const [getSpritesProg, setGetSpritesProg] = useState({ stage: 'idle', done: 0, total: 0 });
-  const [driveMsg, setDriveMsg] = useState('');
+  // Indexing progress + status (for hashing only)
+  const [indexProg, setIndexProg] = useState({ stage: 'idle', done: 0, total: 0 });
+  const [statusMsg, setStatusMsg] = useState('');
 
   // Library aHashes cache (url -> bitString). useRef to avoid rerenders
   const libHashesRef = useRef(new Map());
-  // Cache for parsed bit arrays to speed up matching (url -> Int8 array of 0/1)
+  // Cache for parsed bit arrays to speed up matching (url -> Int8Array of bits)
   const libBitsRef = useRef(new Map());
 
   // Cards
@@ -102,76 +101,66 @@ export default function App() {
     try { localStorage.setItem('cards:v1', JSON.stringify({ cards })); } catch {}
   }, [cards]);
 
-  /* ----------------------- initial library load ---------------------- */
+  /* ----------------------- load library from cache ------------------- */
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
       try {
         const cached = await tryLoadDriveCacheJSON();
-        if (!cancelled && cached) {
-          const arr = normalizeDriveList(cached);
-          const items = toLibraryItems(arr);
-          if (items.length) {
-            setLibrary(items);
-            return;
-          }
+        const arr = normalizeDriveList(cached);
+        const items = toLibraryItems(arr);
+        if (!cancelled) {
+          setLibrary(items);
+          setStatusMsg(
+            items.length
+              ? `Loaded ${items.length} sprites from manifest.`
+              : 'No sprites found in manifest (public/drive_cache.json).'
+          );
+          // Start indexing (hashing) in background
+          if (items.length) await indexSprites(items);
         }
-      } catch {}
-      try {
-        const arr = normalizeDriveList(await listDriveImagesFast());
-        if (!cancelled) setLibrary(toLibraryItems(arr));
-      } catch {
-        if (!cancelled) setDriveMsg('Drive not available yet. You can still use local screenshots.');
+      } catch (e) {
+        if (!cancelled) setStatusMsg('Could not load sprite manifest. Add public/drive_cache.json.');
       }
     })();
     return () => { cancelled = true; };
   }, []);
 
-  /* ------------------------- get sprites flow ------------------------ */
+  /* -------------------------- hashing/indexing ----------------------- */
 
-  async function getSprites() {
-    setDriveMsg('');
-    setGetSpritesProg({ stage: 'fetching', done: 0, total: 0 });
+  async function indexSprites(items) {
+    const hashes = libHashesRef.current;
+    const persisted = Object.fromEntries(hashes);
 
-    try {
-      const arr = normalizeDriveList(await listDriveImagesFast());
-      const items = toLibraryItems(arr);
-      setLibrary(items);
-      setDriveMsg(`Fetched ${items.length} sprites (shinies excluded).`);
+    // Count how many new
+    let newCount = 0;
+    for (const it of items) if (!hashes.has(it.url)) newCount++;
 
-      // Hash with progress
-      setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
-      const hashes = libHashesRef.current;
-      const persisted = Object.fromEntries(hashes);
-      let done = 0;
+    setIndexProg({ stage: 'hashing', done: 0, total: items.length });
+    let done = 0;
 
-      for (const it of items) {
-        if (!hashes.has(it.url)) {
-          try {
-            const img = await loadImageFromURL(it.url);
-            const bits = ahashFromImage(img, 8);
-            const bitStr = bitsToString(bits);
-            hashes.set(it.url, bitStr);
-            persisted[it.url] = bitStr;
-          } catch {}
+    for (const it of items) {
+      if (!hashes.has(it.url)) {
+        try {
+          const img = await loadImageFromURL(it.url);
+          const bits = ahashFromImage(img, 8);
+          const bitStr = bitsToString(bits);
+          hashes.set(it.url, bitStr);
+          persisted[it.url] = bitStr;
+        } catch {
+          // ignore individual failures
         }
-        done++;
-        setGetSpritesProg({ stage: 'hashing', done, total: items.length });
-        await new Promise((r) => setTimeout(r, 0));
       }
-      try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
-
-      // Build libBits cache (url -> Int8Array of bits) for faster matching
-      buildLibBitsCache();
-
-      setGetSpritesProg({ stage: 'done', done: items.length, total: items.length });
-      setTimeout(() => setGetSpritesProg({ stage: 'idle', done: 0, total: 0 }), 1000);
-    } catch (e) {
-      console.error('[GetSprites] failed:', e);
-      setDriveMsg('Get Sprites failed. Verify Drive API key/folder & public access.');
-      setGetSpritesProg({ stage: 'idle', done: 0, total: 0 });
+      done++;
+      setIndexProg({ stage: 'hashing', done, total: items.length });
+      await new Promise((r) => setTimeout(r, 0));
     }
+
+    try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
+    buildLibBitsCache();
+    setIndexProg({ stage: 'idle', done: 0, total: 0 });
+    if (newCount > 0) setStatusMsg(`Indexed ${items.length} sprites.`);
   }
 
   function buildLibBitsCache() {
@@ -187,32 +176,9 @@ export default function App() {
   }
 
   async function ensureLibraryHashes() {
-    const items = library;
-    const hashes = libHashesRef.current;
-    const persisted = Object.fromEntries(hashes);
-    let missing = 0;
-    for (const it of items) if (!hashes.has(it.url)) missing++;
-    if (missing === 0) { buildLibBitsCache(); return; }
-
-    setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
-    let done = 0;
-    for (const it of items) {
-      if (!hashes.has(it.url)) {
-        try {
-          const img = await loadImageFromURL(it.url);
-          const bits = ahashFromImage(img, 8);
-          const bitStr = bitsToString(bits);
-          hashes.set(it.url, bitStr);
-          persisted[it.url] = bitStr;
-        } catch {}
-      }
-      done++;
-      setGetSpritesProg({ stage: 'hashing', done, total: items.length });
-      await new Promise((r) => setTimeout(r, 0));
-    }
-    try { localStorage.setItem('lib:ahash', JSON.stringify(persisted)); } catch {}
-    buildLibBitsCache();
-    setGetSpritesProg({ stage: 'idle', done: 0, total: 0 });
+    if (libBitsRef.current.size > 0) return;
+    if (library.length === 0) return;
+    await indexSprites(library);
   }
 
   /* ------------------------------ cards ------------------------------ */
@@ -259,9 +225,9 @@ export default function App() {
   /* ----------------------- screenshot analysis ---------------------- */
   /**
    * Enhanced "Fill Card":
-   *  - Accepts a whole screenshot (not perfectly cropped)
+   *  - Takes a full screenshot (not perfectly cropped)
    *  - Tries multiple auto-crops (margin search)
-   *  - For the best crop, divides into rows/cols and matches each cell against library
+   *  - For the best crop, divides into rows/cols and matches each cell
    *  - Fills relevant cells with best-match sprites (skips if distance > threshold)
    */
 
@@ -275,7 +241,7 @@ export default function App() {
       if (!card) return;
       const { rows, cols } = card;
 
-      // Precompute library bit arrays for speed
+      // Precompute library bit arrays
       const libBits = libBitsRef.current;
       const libList = library
         .map((it) => {
@@ -348,7 +314,6 @@ export default function App() {
 
         for (let i = 0; i < libList.length; i++) {
           const cand = libList[i];
-          // Compare against cached bit arrays (fast)
           const d = hammingDistanceBits(cellBits, cand.bits);
           if (d < bestDist) {
             bestDist = d;
@@ -357,7 +322,6 @@ export default function App() {
         }
 
         // Threshold: if too far from any known sprite, leave empty.
-        // 64-bit aHash → distances < 12 are usually close; tweak if needed.
         if (bestUrl && bestDist <= 12) {
           filled[r * cols + c] = { url: bestUrl, checked: false };
           totalDist += bestDist;
@@ -374,7 +338,7 @@ export default function App() {
   /* ------------------------------- UI -------------------------------- */
 
   const progressPct = (() => {
-    const { stage, done, total } = getSpritesProg;
+    const { stage, done, total } = indexProg;
     if (stage === 'idle' || total === 0) return null;
     return Math.max(0, Math.min(100, Math.round((done / total) * 100)));
   })();
@@ -387,19 +351,20 @@ export default function App() {
       </header>
 
       <main style={styles.main}>
-        {/* Left: vertical tools (Get Sprites on top, New Card below) */}
+        {/* Left: ONLY New Card; shows hashing progress if running */}
         <section style={styles.toolsPane}>
-          <button style={styles.btnBlock} onClick={getSprites}>Get Sprites</button>
           <button style={styles.btnBlock} onClick={() => addCard({})}>New Card</button>
 
           {progressPct !== null && (
-            <div style={styles.progressWrap} aria-label="progress">
+            <div style={styles.progressWrap} aria-label="indexing progress">
               <div style={{ ...styles.progressBar, width: `${progressPct}%` }} />
             </div>
           )}
-          {!!driveMsg && <div style={styles.driveMsg}>{driveMsg}</div>}
+
+          {!!statusMsg && <div style={styles.statusMsg}>{statusMsg}</div>}
           <div style={styles.smallInfo}>
-            Folder: {getConfiguredDriveInfo().folderId?.slice(0, 8) || '(none)'}… • Sprites: {library.length}
+            Sprites: {library.length}
+            {library.length > 0 ? ' • Ready for screenshot analysis' : ''}
           </div>
         </section>
 
@@ -481,7 +446,7 @@ const styles = {
     overflow: 'hidden',
   },
   progressBar: { height: '100%', background: '#4e7cff' },
-  driveMsg: { color: '#9bb4ff', fontSize: 12 },
+  statusMsg: { color: '#9bb4ff', fontSize: 12 },
   smallInfo: { color: '#aaa', fontSize: 12 },
 
   cardsPane: { padding: '12px', minWidth: 0 },
