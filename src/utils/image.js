@@ -1,85 +1,79 @@
-/* src/utils/image.js
-   Nebula Bingo Tracker — grid & crop utilities (full drop-in, with fileToImage)
-
-   - fileToImage(File|Blob|string): Promise<HTMLImageElement>
-   - Green overlay grid detection (bright green → lines)
-   - Normalizes to exactly 6 vertical + 6 horizontal lines in NATURAL pixels
-   - Builds 25 square interior crops with configurable inset
-   - Safe, clamped cropping to PNG dataURLs
+/* src/utils/image.js — Nebula Bingo Tracker v2 (natural-pixel baseline)
+   Exports:
+     - fileToImage
+     - crop25            // legacy-friendly: returns 25 PNG dataURLs
+     - get25Rects        // rects (natural px) if you need them
+     - clientToNaturalLines
+     - normalizeGridLines
+     - computeSquareCrops
+     - cropToDataURL
+     - detectGridFromGreenOverlay
+     - extractCropsFromGreenOverlay
+     - drawDebugRects
+     - saveGridFractions, clearGridFractions
 */
 
-const LINE_MERGE_TOL = 3;           // px, at natural size
-const MIN_PEAK_SEP   = 14;          // px, distance between line peaks at natural size
-const NMS_RADIUS     = 6;           // px, non-max suppression window
-const DEFAULT_INSET_FRAC = 0.08;    // 8% padding of square side on each edge
+const LINE_MERGE_TOL = 3;        // px (natural)
+const MIN_PEAK_SEP   = 14;       // px between distinct grid lines
+const NMS_RADIUS     = 6;        // px window for non-max suppression
+const DEFAULT_INSET_FRAC = 0.08; // 8% padding on each side of the square
 
 // -----------------------------
-// Loading helpers
+// Image loading
 // -----------------------------
 export function fileToImage(src) {
-  // Accepts File, Blob, or string (URL/dataURL). Returns a loaded <img>.
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.decoding = "async";
     img.crossOrigin = "anonymous";
+    let blobUrl = null;
 
-    let objectUrl = null;
     if (typeof src === "string") {
-      img.src = src; // URL or dataURL
+      img.src = src;
     } else if (src instanceof Blob) {
-      objectUrl = URL.createObjectURL(src);
-      img.src = objectUrl;
+      blobUrl = URL.createObjectURL(src);
+      img.src = blobUrl;
     } else {
       return reject(new Error("fileToImage: expected File|Blob|string"));
     }
 
     img.onload = () => {
-      // Revoke later to avoid upsetting some browsers while decoding
-      if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+      if (blobUrl) setTimeout(() => URL.revokeObjectURL(blobUrl), 0);
       resolve(img);
     };
-    img.onerror = (e) => {
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    img.onerror = () => {
+      if (blobUrl) URL.revokeObjectURL(blobUrl);
       reject(new Error("fileToImage: failed to load image"));
     };
   });
 }
 
 // -----------------------------
-// LocalStorage helpers (fractions: 0..1)
+// Storage (fractions 0..1)
 // -----------------------------
 function readSavedFractions() {
   try {
     const raw = localStorage.getItem("nbt.gridFractions");
     if (!raw) return null;
     const obj = JSON.parse(raw);
-    if (!obj) return null;
-    if (!Array.isArray(obj.v) || !Array.isArray(obj.h)) return null;
+    if (!obj || !Array.isArray(obj.v) || !Array.isArray(obj.h)) return null;
     if (obj.v.length !== 6 || obj.h.length !== 6) return null;
     return obj;
   } catch { return null; }
 }
-
 export function saveGridFractions(vFractions, hFractions) {
-  try {
-    localStorage.setItem("nbt.gridFractions", JSON.stringify({ v: vFractions, h: hFractions }));
-  } catch {}
+  try { localStorage.setItem("nbt.gridFractions", JSON.stringify({ v: vFractions, h: hFractions })); } catch {}
 }
-
 export function clearGridFractions() {
   try { localStorage.removeItem("nbt.gridFractions"); } catch {}
 }
 
 // -----------------------------
-// Canvas helpers
+// Canvas + sizing
 // -----------------------------
 function naturalSize(img) {
-  return {
-    W: img.naturalWidth  || img.width,
-    H: img.naturalHeight || img.height,
-  };
+  return { W: img.naturalWidth || img.width, H: img.naturalHeight || img.height };
 }
-
 function imageToCanvas(img) {
   const { W, H } = naturalSize(img);
   const c = document.createElement("canvas");
@@ -88,51 +82,46 @@ function imageToCanvas(img) {
   g.drawImage(img, 0, 0, W, H);
   return { canvas: c, ctx: g };
 }
-
 function getImageData(img) {
   const { canvas, ctx } = imageToCanvas(img);
   return ctx.getImageData(0, 0, canvas.width, canvas.height);
 }
 
-// If detector lines are in client/CSS space, convert to natural pixel space.
-export function clientToNaturalLines(img, clientVertical, clientHorizontal) {
+// Translate CSS/client coordinates → natural pixels
+export function clientToNaturalLines(img, vClient = [], hClient = []) {
   const sx = (img.naturalWidth  || img.width)  / img.clientWidth;
   const sy = (img.naturalHeight || img.height) / img.clientHeight;
   return {
-    vertical: (clientVertical  || []).map(x => Math.round(x * sx)),
-    horizontal: (clientHorizontal || []).map(y => Math.round(y * sy)),
+    vertical: vClient.map(x => Math.round(x * sx)),
+    horizontal: hClient.map(y => Math.round(y * sy)),
   };
 }
 
 // -----------------------------
-// Peak utilities (1D)
+// Peak + line utilities
 // -----------------------------
-function nonMaxSuppression1D(array, radius = NMS_RADIUS) {
+function nonMaxSuppression1D(arr, radius = NMS_RADIUS) {
   const peaks = [];
-  for (let i = 0; i < array.length; i++) {
-    const v = array[i];
+  for (let i = 0; i < arr.length; i++) {
+    const v = arr[i];
     let isMax = true;
-    for (let j = Math.max(0, i - radius); j <= Math.min(array.length - 1, i + radius); j++) {
-      if (array[j] > v) { isMax = false; break; }
+    for (let j = Math.max(0, i - radius); j <= Math.min(arr.length - 1, i + radius); j++) {
+      if (arr[j] > v) { isMax = false; break; }
     }
     if (isMax && v > 0) peaks.push(i);
   }
   return peaks;
 }
-
-function mergeClosePositions(positions, tol = LINE_MERGE_TOL) {
-  const sorted = [...positions].sort((a, b) => a - b);
-  const merged = [];
-  for (const p of sorted) {
-    if (!merged.length || Math.abs(p - merged[merged.length - 1]) > tol) {
-      merged.push(p);
-    }
+function mergeClosePositions(pos, tol = LINE_MERGE_TOL) {
+  const s = [...pos].sort((a, b) => a - b);
+  const out = [];
+  for (const p of s) {
+    if (!out.length || Math.abs(p - out[out.length - 1]) > tol) out.push(p);
   }
-  return merged;
+  return out;
 }
-
-function enforceSixLines(positions, axisLen, savedFracs, useVertical) {
-  let arr = mergeClosePositions(positions);
+function enforceSixLines(pos, axisLen, saved, isVertical) {
+  let arr = mergeClosePositions(pos);
   if (arr.length > 6) {
     const kept = [arr[0]];
     for (let i = 1; i < arr.length; i++) {
@@ -141,46 +130,34 @@ function enforceSixLines(positions, axisLen, savedFracs, useVertical) {
     }
     arr = kept;
   }
-
-  if (arr.length !== 6 && savedFracs) {
-    const fracs = useVertical ? savedFracs.v : savedFracs.h;
-    if (fracs?.length === 6) {
-      arr = fracs.map(f => Math.round(f * axisLen));
-    }
+  if (arr.length !== 6 && saved) {
+    const fr = isVertical ? saved.v : saved.h;
+    if (fr?.length === 6) arr = fr.map(f => Math.round(f * axisLen));
   }
-
   if (arr.length !== 6) {
     arr = Array.from({ length: 6 }, (_, i) => Math.round((i / 5) * axisLen));
   }
-
   arr = arr
     .map((v, i) => (i && v <= arr[i - 1] ? arr[i - 1] + 1 : v))
     .map(v => Math.max(0, Math.min(axisLen, v)));
-
   if (arr.length > 6) arr = arr.slice(0, 6);
   while (arr.length < 6) arr.push(axisLen);
-
   return arr;
 }
 
 // -----------------------------
-// GREEN overlay detector (bright-green lines)
+// GREEN overlay detection (optional path)
 // -----------------------------
-function greenMaskScores(imgData, axis) {
-  const { width: W, height: H, data } = imgData;
+function greenMaskScores(id, axis) {
+  const { width: W, height: H, data } = id;
   const scores = new Array(axis === "x" ? W : H).fill(0);
-
-  const G_MIN = 140;
-  const RB_MAX = 110;
-  const DOM_FACTOR = 1.2;
-
+  const G_MIN = 140, RB_MAX = 110, DOM = 1.2;
   if (axis === "x") {
     for (let x = 0; x < W; x++) {
       let s = 0;
       for (let y = 0; y < H; y++) {
-        const idx = (y * W + x) * 4;
-        const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
-        if (a > 0 && g >= G_MIN && r <= RB_MAX && b <= RB_MAX && g >= Math.max(r, b) * DOM_FACTOR) s++;
+        const i = (y * W + x) * 4, r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+        if (a > 0 && g >= G_MIN && r <= RB_MAX && b <= RB_MAX && g >= Math.max(r, b) * DOM) s++;
       }
       scores[x] = s;
     }
@@ -188,40 +165,67 @@ function greenMaskScores(imgData, axis) {
     for (let y = 0; y < H; y++) {
       let s = 0;
       for (let x = 0; x < W; x++) {
-        const idx = (y * W + x) * 4;
-        const r = data[idx], g = data[idx + 1], b = data[idx + 2], a = data[idx + 3];
-        if (a > 0 && g >= G_MIN && r <= RB_MAX && b <= RB_MAX && g >= Math.max(r, b) * DOM_FACTOR) s++;
+        const i = (y * W + x) * 4, r = data[i], g = data[i + 1], b = data[i + 2], a = data[i + 3];
+        if (a > 0 && g >= G_MIN && r <= RB_MAX && b <= RB_MAX && g >= Math.max(r, b) * DOM) s++;
       }
       scores[y] = s;
     }
   }
   return scores;
 }
-
 function pickLinePositionsFromScores(scores) {
   const peaks = nonMaxSuppression1D(scores, NMS_RADIUS);
   return peaks.sort((a, b) => scores[b] - scores[a]);
 }
-
-/** Detect grid lines from a GREEN overlay image (preferred path). */
 export function detectGridFromGreenOverlay(img) {
   const id = getImageData(img);
-  const xScores = greenMaskScores(id, "x");
-  const yScores = greenMaskScores(id, "y");
-  const vRaw = pickLinePositionsFromScores(xScores);
-  const hRaw = pickLinePositionsFromScores(yScores);
+  const vRaw = pickLinePositionsFromScores(greenMaskScores(id, "x"));
+  const hRaw = pickLinePositionsFromScores(greenMaskScores(id, "y"));
   return { vertical: vRaw, horizontal: hRaw };
 }
 
 // -----------------------------
-// Normalize detected lines to exactly six each
+// Normalization → exactly 6×6 lines in NATURAL px
 // -----------------------------
 export function normalizeGridLines(img, detected) {
   const { W, H } = naturalSize(img);
   const saved = readSavedFractions();
 
-  let v = Array.isArray(detected?.vertical) ? detected.vertical.map(v => Math.round(v)) : [];
-  let h = Array.isArray(detected?.horizontal) ? detected.horizontal.map(v => Math.round(v)) : [];
+  let v = [], h = [];
+
+  if (detected) {
+    // Support three encodings:
+    // 1) Natural pixels (integers up to W/H)
+    // 2) Client/CSS pixels (<= clientWidth/Height)
+    // 3) Fractions 0..1
+    const tryV = detected.vertical || [];
+    const tryH = detected.horizontal || [];
+
+    const looksFraction = (arr, len) =>
+      arr.length && arr.every(n => n >= 0 && n <= 1);
+
+    const maxV = Math.max(...tryV, 0);
+    const maxH = Math.max(...tryH, 0);
+
+    if (looksFraction(tryV, W) && looksFraction(tryH, H)) {
+      v = tryV.map(f => Math.round(f * W));
+      h = tryH.map(f => Math.round(f * H));
+    } else {
+      // Heuristic: if max coordinate <= client size but not natural, convert
+      const needClientScale =
+        (typeof detected.space === "string" && detected.space === "client") ||
+        (img.clientWidth && img.clientHeight && (maxV <= img.clientWidth || maxH <= img.clientHeight) &&
+         (maxV > W || maxH > H || W !== img.clientWidth || H !== img.clientHeight));
+
+      if (needClientScale) {
+        const scaled = clientToNaturalLines(img, tryV, tryH);
+        v = scaled.vertical; h = scaled.horizontal;
+      } else {
+        v = tryV.map(x => Math.round(x));
+        h = tryH.map(y => Math.round(y));
+      }
+    }
+  }
 
   v = v.filter(n => Number.isFinite(n) && n >= 0 && n <= W);
   h = h.filter(n => Number.isFinite(n) && n >= 0 && n <= H);
@@ -229,51 +233,44 @@ export function normalizeGridLines(img, detected) {
   const v6 = enforceSixLines(v, W, saved, true);
   const h6 = enforceSixLines(h, H, saved, false);
 
+  // Persist fractions for stability across fills
   try {
-    const vFrac = v6.map(x => x / W);
-    const hFrac = h6.map(y => y / H);
-    saveGridFractions(vFrac, hFrac);
+    saveGridFractions(v6.map(x => x / W), h6.map(y => y / H));
   } catch {}
 
   return { vertical: v6, horizontal: h6 };
 }
 
 // -----------------------------
-// Build cells → square interiors
+// Build 5×5 cells → centered square with inset
 // -----------------------------
 function buildCellRects(vLines, hLines) {
-  const rects = [];
+  const out = [];
   for (let r = 0; r < 5; r++) {
     for (let c = 0; c < 5; c++) {
       const x0 = vLines[c], x1 = vLines[c + 1];
       const y0 = hLines[r], y1 = hLines[r + 1];
-      rects.push({ x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) });
+      out.push({ x: x0, y: y0, w: Math.max(0, x1 - x0), h: Math.max(0, y1 - y0) });
     }
   }
-  return rects;
+  return out;
 }
-
 function squareInterior(rect, insetFrac = DEFAULT_INSET_FRAC) {
   const side = Math.floor(Math.min(rect.w, rect.h));
   const inset = Math.floor(side * insetFrac);
   const inner = Math.max(1, side - inset * 2);
   const cx = rect.x + rect.w / 2;
   const cy = rect.y + rect.h / 2;
-  return {
-    x: Math.round(cx - inner / 2),
-    y: Math.round(cy - inner / 2),
-    w: inner,
-    h: inner,
-  };
+  return { x: Math.round(cx - inner / 2), y: Math.round(cy - inner / 2), w: inner, h: inner };
 }
-
-// Public: compute 25 square crops
 export function computeSquareCrops(img, normalizedLines, insetFrac = DEFAULT_INSET_FRAC) {
   const cells = buildCellRects(normalizedLines.vertical, normalizedLines.horizontal);
   return cells.map(r => squareInterior(r, insetFrac));
 }
 
-// Public: crop to PNG dataURL
+// -----------------------------
+// Cropping
+// -----------------------------
 export function cropToDataURL(img, rect) {
   const { W, H } = naturalSize(img);
   const x = Math.max(0, Math.min(W - 1, rect.x));
@@ -287,25 +284,45 @@ export function cropToDataURL(img, rect) {
   return c.toDataURL("image/png");
 }
 
-// Convenience: one-shot extractor using green overlay image
+// -----------------------------
+// High-level helpers (v2-friendly)
+// -----------------------------
+/**
+ * get25Rects(img, lines, insetFrac?)
+ * lines: {vertical:number[], horizontal:number[]} in natural px,
+ *        OR client/CSS px (set lines.space='client'), OR fractions 0..1
+ */
+export function get25Rects(img, lines, insetFrac = DEFAULT_INSET_FRAC) {
+  const normalized = normalizeGridLines(img, lines);
+  return computeSquareCrops(img, normalized, insetFrac);
+}
+
+/**
+ * crop25(img, lines, insetFrac?)
+ * Returns 25 PNG dataURLs (native-size squares).
+ * Keeps legacy signature expected by BingoCard.jsx.
+ */
+export function crop25(img, lines, insetFrac = DEFAULT_INSET_FRAC) {
+  const rects = get25Rects(img, lines, insetFrac);
+  return rects.map(r => cropToDataURL(img, r));
+}
+
+// Optional green-overlay one-shot
 export async function extractCropsFromGreenOverlay(baseImg, overlayImg, insetFrac = DEFAULT_INSET_FRAC) {
-  const detected = detectGridFromGreenOverlay(overlayImg);
+  const det = detectGridFromGreenOverlay(overlayImg);
   const { W: BW, H: BH } = naturalSize(baseImg);
   const { W: OW, H: OH } = naturalSize(overlayImg);
-
-  let v = detected.vertical, h = detected.horizontal;
+  let v = det.vertical, h = det.horizontal;
   if (BW !== OW || BH !== OH) {
     const sx = BW / OW, sy = BH / OH;
     v = v.map(x => Math.round(x * sx));
     h = h.map(y => Math.round(y * sy));
   }
-
-  const normalized = normalizeGridLines(baseImg, { vertical: v, horizontal: h });
-  const rects = computeSquareCrops(baseImg, normalized, insetFrac);
+  const rects = get25Rects(baseImg, { vertical: v, horizontal: h }, insetFrac);
   return rects.map(r => cropToDataURL(baseImg, r));
 }
 
-// Debug: draw rect outlines for your modal
+// Debug overlay for your “Last Fill — Crops” modal
 export function drawDebugRects(img, rects, { stroke = "rgba(255,255,255,0.9)", lineWidth = 2 } = {}) {
   const { W, H } = naturalSize(img);
   const c = document.createElement("canvas");
@@ -314,8 +331,6 @@ export function drawDebugRects(img, rects, { stroke = "rgba(255,255,255,0.9)", l
   g.drawImage(img, 0, 0, W, H);
   g.strokeStyle = stroke;
   g.lineWidth = lineWidth;
-  for (const r of rects) {
-    g.strokeRect(r.x + 0.5, r.y + 0.5, r.w, r.h);
-  }
+  for (const r of rects) g.strokeRect(r.x + 0.5, r.y + 0.5, r.w, r.h);
   return c.toDataURL("image/png");
 }
