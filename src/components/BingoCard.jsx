@@ -10,19 +10,19 @@ import {
   normalizeGridLines,
 } from "../utils/image";
 
-// Scoped styles for the Crops modal only (won’t affect base UI)
-import "../styles/debug-crops.css";
+// Re-wire only your base card styles (no debug modal css here)
+import "../styles/bingo.css";
 
 export default function BingoCard() {
-  // --- Title (kept as baseline: click-to-rename only) ---
+  // Title (click-to-rename)
   const [title, setTitle] = useState("Bingo Card");
   const [editingTitle, setEditingTitle] = useState(false);
 
-  // --- Inputs used by your fill flow (unchanged semantics) ---
+  // Inputs for fill flow
   const [baseFile, setBaseFile] = useState(null);
   const [overlayFile, setOverlayFile] = useState(null);
 
-  // --- Debug crops state (modal only) ---
+  // Debug crops (kept functional, but visual is plain)
   const [lastFillCrops, setLastFillCrops] = useState([]); // 25 dataURLs
   const [lastRects, setLastRects] = useState([]);         // 25 rects
   const [debugOpen, setDebugOpen] = useState(false);
@@ -30,7 +30,6 @@ export default function BingoCard() {
   const baseImgRef = useRef(null);
   const overlayImgRef = useRef(null);
 
-  // Close debug on Esc (modal only)
   useEffect(() => {
     const onKey = (e) => e.key === "Escape" && setDebugOpen(false);
     if (debugOpen) window.addEventListener("keydown", onKey);
@@ -39,7 +38,6 @@ export default function BingoCard() {
 
   const canFill = useMemo(() => !!baseFile, [baseFile]);
 
-  // --- Baseline handlers (unchanged semantics) ---
   const handleChooseBase = (e) => {
     const f = e.target.files?.[0];
     if (f) setBaseFile(f);
@@ -54,16 +52,14 @@ export default function BingoCard() {
     if (overlayFile && !overlayImgRef.current) overlayImgRef.current = await fileToImage(overlayFile);
   }
 
-  // This is your existing Fill action; preserved. It now also records rects
-  // for the debug modal, but does not alter your matching flow.
+  // Fill flow: unchanged semantics, now also records rects for debug
   async function handleFill() {
     try {
       await ensureImagesLoaded();
       const baseImg = baseImgRef.current;
       if (!baseImg) return;
 
-      let norm, rects, dataURLs;
-
+      let norm;
       if (overlayImgRef.current) {
         const detected = detectGridFromGreenOverlay(overlayImgRef.current);
         norm = normalizeGridLines(baseImg, detected);
@@ -71,21 +67,21 @@ export default function BingoCard() {
         norm = normalizeGridLines(baseImg, { vertical: [], horizontal: [] });
       }
 
-      rects = get25Rects(baseImg, norm);
-      dataURLs = crop25(baseImg, norm);
+      const rects = get25Rects(baseImg, norm);
+      const dataURLs = crop25(baseImg, norm);
 
       setLastRects(rects);
       setLastFillCrops(dataURLs);
-      setDebugOpen(true); // modal only; doesn’t affect card UI
+      setDebugOpen(true);
     } catch (err) {
       console.error("[BingoCard] fill failed:", err);
     }
   }
 
   return (
-    <div className="w-full">
-      {/* ---- Header (kept minimal; no size overrides) ---- */}
-      <div className="flex items-center justify-between gap-3 mb-3">
+    <div className="bingo-card w-full">
+      {/* Header / toolbar — classes left intact for bingo.css */}
+      <div className="bingo-toolbar flex items-center justify-between gap-3 mb-3">
         {editingTitle ? (
           <input
             autoFocus
@@ -108,19 +104,16 @@ export default function BingoCard() {
         )}
 
         <div className="flex items-center gap-2">
-          {/* Choose base screenshot (unchanged) */}
           <label className="inline-flex items-center px-3 py-1.5 rounded-md bg-neutral-800 border border-neutral-700 cursor-pointer hover:bg-neutral-750">
             <input type="file" accept="image/*" className="hidden" onChange={handleChooseBase} />
             <span>Select Screenshot</span>
           </label>
 
-          {/* Optional overlay grid PNG (unchanged) */}
           <label className="inline-flex items-center px-3 py-1.5 rounded-md bg-neutral-800 border border-neutral-700 cursor-pointer hover:bg-neutral-750">
             <input type="file" accept="image/*" className="hidden" onChange={handleChooseOverlay} />
             <span>Grid PNG (optional)</span>
           </label>
 
-          {/* Your existing Fill action (function unchanged) */}
           <button
             className="px-3 py-1.5 rounded-md bg-neutral-200 text-neutral-900 disabled:opacity-40"
             disabled={!canFill}
@@ -130,7 +123,6 @@ export default function BingoCard() {
             Fill Card
           </button>
 
-          {/* Open last crops (debug-only) */}
           <button
             className="px-3 py-1.5 rounded-md bg-neutral-800 border border-neutral-700"
             onClick={() => setDebugOpen(true)}
@@ -142,20 +134,13 @@ export default function BingoCard() {
         </div>
       </div>
 
-      {/*
-        IMPORTANT:
-        We intentionally do NOT render/replace your card grid or sizing.
-        Keep your existing base card UI wherever it already lives.
-        (Previously, a placeholder grid here altered card size—removed now.)
-      */}
+      {/* NOTE: Your actual bingo card grid/content is rendered elsewhere in v2.
+               We do NOT add or change any base card markup here. */}
 
-      {/* ---- Debug Crops Modal (square tiles; fully scoped styles) ---- */}
+      {/* Debug Crops Modal — reverted to plain layout (no extra CSS) */}
       {debugOpen && (
         <div className="fixed inset-0 z-[1000] flex items-center justify-center" role="dialog" aria-modal="true">
-          {/* Backdrop */}
           <div className="absolute inset-0 bg-black/60" onClick={() => setDebugOpen(false)} />
-
-          {/* Panel */}
           <div className="relative z-[1001] w-[360px] max-h-[85vh] overflow-auto rounded-2xl bg-neutral-900 text-neutral-200 shadow-2xl border border-neutral-800">
             <div className="sticky top-0 flex items-center justify-between px-4 py-3 border-b border-neutral-800 bg-neutral-900/90 backdrop-blur">
               <div className="font-semibold">Last Fill — Crops</div>
@@ -169,18 +154,22 @@ export default function BingoCard() {
             </div>
 
             <div className="px-3 py-4">
-              <div className="nbt-crops-grid">
+              {/* Simple, style-neutral list so it won't affect base visuals */}
+              <div className="flex flex-wrap gap-2">
                 {lastFillCrops.map((dataURL, idx) => (
-                  <div key={idx} className="nbt-crop-wrap">
-                    <div className="nbt-crop-tile">
-                      <img className="nbt-crop-img" src={dataURL} alt={`crop ${idx + 1}`} draggable={false} />
-                    </div>
-                    <div className="nbt-crop-label">#{idx + 1}</div>
+                  <div key={idx} className="p-1 rounded border border-neutral-800 bg-neutral-900">
+                    <img
+                      src={dataURL}
+                      alt={`crop ${idx + 1}`}
+                      draggable={false}
+                      style={{ display: "block", width: 56, height: 56 }}
+                    />
+                    <div className="mt-1 text-[11px] text-neutral-400 text-center">#{idx + 1}</div>
                   </div>
                 ))}
               </div>
 
-              {/* Optional: sanity line to verify squares; harmless if left in */}
+              {/* Optional: rect sanity (harmless; delete if noisy) */}
               {lastRects?.[0] && (
                 <pre className="mt-3 text-xs text-neutral-400 whitespace-pre-wrap break-all">
                   rect[1] (w × h): {lastRects[0].w} × {lastRects[0].h}
