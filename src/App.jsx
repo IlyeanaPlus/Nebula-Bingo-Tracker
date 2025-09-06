@@ -441,7 +441,7 @@ const styles = {
     flex: 1,
     background: '#1b1b1b',
     color: '#eee',
-    border: '1px solid '#2c2c2c',
+    border: '1px solid #2c2c2c',
     borderRadius: '10px',
     padding: '6px 10px',
   },
