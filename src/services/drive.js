@@ -1,22 +1,17 @@
-// Minimal: load a local manifest if present.
-// Tries a few common paths; returns parsed JSON or null.
-export async function tryLoadDriveCacheJSON() {
-  const candidates = [
-    '/drive_cache.json',
-    'drive_cache.json',
-    '/sprites.json',
-    'sprites.json',
-    '/cache/drive.json',
-  ];
-  for (const path of candidates) {
-    try {
-      const res = await fetch(path, { cache: 'no-store' });
-      if (!res.ok) continue;
-      const json = await res.json();
-      return json;
-    } catch {
-      // try next
-    }
-  }
-  return null;
+// src/services/drive.js
+export async function tryLoadDriveCacheJSON(){
+  try{
+    const r=await fetch("/drive_cache.json",{cache:"reload"}); if(!r.ok) throw 0;
+    const j=await r.json();
+    return j.map(x=>({
+      id:x.id??x.name,
+      name:x.name??x.title??String(x.id),
+      ahash:x.ahash??x.ah,
+      dhashX:x.dhashX??x.dx,
+      dhashY:x.dhashY??x.dy,
+      ahashR:x.ahashR??x.ahr, ahashG:x.ahashG??x.ahg, ahashB:x.ahashB??x.ahb,
+      dhashXR:x.dhashXR??x.dxr, dhashXG:x.dhashXG??x.dxg, dhashXB:x.dhashXB??x.dxb,
+      dhashYR:x.dhashYR??x.dyr, dhashYG:x.dhashYG??x.dyg, dhashYB:x.dhashYB??x.dyb
+    }));
+  }catch{ return [] }
 }
