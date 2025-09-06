@@ -14,8 +14,8 @@
  */
 
 // OPTIONAL hardcoded values (leave empty to use runtime config)
-export const GOOGLE_API_KEY = '';     // e.g. 'AIzaSy...'
-export const DRIVE_FOLDER_ID = '';    // e.g. '1AbCDefGh...'
+export const GOOGLE_API_KEY = 'AIzaSyCTsyJ6Q5fogdMdLTUVnsKOuDdkCnigIE8';     // e.g. 'AIzaSy...'
+export const DRIVE_FOLDER_ID = '1lAICMrSGj0b1TTC2yTPiuQlLB15gJ4tB';    // e.g. '1AbCDefGh...'
 
 export function getConfiguredDriveInfo() {
   const apiKey =
