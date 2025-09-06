@@ -13,13 +13,22 @@ const NO_MATCH_SVG = encodeURI(
 );
 const NO_MATCH_DATA_URL = `data:image/svg+xml;utf8,${NO_MATCH_SVG}`;
 
+function debugEnabled() {
+  try {
+    if (/[?&]debug(=1|&|$)/.test(location.search)) return true;
+    if (localStorage.getItem('nbt.debug') === '1') return true;
+  } catch {}
+  return false;
+}
+
 export default function BingoCard({ card, onChange, onRemove, manifest }) {
   const [isFilling, setIsFilling] = useState(false);
   const [fillStep, setFillStep] = useState(0);
   const [refIndex, setRefIndex] = useState([]);
+  const [lastCrops, setLastCrops] = useState(null);     // dataURLs from last Fill
+  const [showDebugCrops, setShowDebugCrops] = useState(false);
   const inputRef = useRef(null);
 
-  // normalize to 25 cells
   const cells = useMemo(
     () =>
       card.cells ||
@@ -65,7 +74,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
   }
 
   function handlePick() {
-    inputRef.current?.click();
+    if (!isFilling) inputRef.current?.click();
   }
 
   function onFile(e) {
@@ -86,7 +95,8 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
     setFillStep(0);
     try {
       const img = await fileToImage(file);
-      const crops = await crop25(img);
+      const crops = await crop25(img); // array of 25 data URLs (32x32 view)
+      setLastCrops(crops);             // keep for visual inspection in debug
 
       const nextCells = [...cells];
 
@@ -95,10 +105,12 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
 
         const out = refIndex.length
           ? await findBestMatch(cropURL, refIndex, {
-              shortlistK: 48,  // wider shortlist while tuning
-              ssimMin: 0.80,   // looser for initial acceptance
-              mseMax: 1200,    // looser for initial acceptance
-              debug: true      // console logs: mask stats + top candidates
+              shortlistK: 48,
+              ssimMin: 0.82,
+              mseMax: 1100,
+              nccMin: 0.88, // enable NCC acceptance path
+              tau: 16,      // raise to 18–20 for low-quality JPG screenshots
+              debug: true   // log fg ratio + top candidates
             })
           : null;
 
@@ -138,9 +150,17 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
           <span style={{ opacity: 0.7, fontSize: 12, marginRight: 8 }}>
             sprites: {refIndex.length}
           </span>
-          <button onClick={handlePick} disabled={!refIndex.length}>Fill</button>
+          <button onClick={handlePick} disabled={!refIndex.length || isFilling}>Fill</button>
           <button onClick={handleSave}>Save</button>
           <button onClick={onRemove}>Remove</button>
+          {debugEnabled() && lastCrops?.length === 25 && (
+            <button
+              onClick={() => setShowDebugCrops(true)}
+              title="Show 25 cropped cells from the last Fill"
+            >
+              Debug Crops
+            </button>
+          )}
         </div>
         <input
           ref={inputRef}
@@ -180,6 +200,36 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
             </div>
             <div className="fill-meta">{fillStep} / 25</div>
             <div className="fill-hint">Tip: drop an image anywhere on this card to start.</div>
+          </div>
+        </div>
+      )}
+
+      {/* Debug crops modal */}
+      {showDebugCrops && (
+        <div className="fill-overlay" onClick={() => setShowDebugCrops(false)}>
+          <div className="fill-box" onClick={(e) => e.stopPropagation()}>
+            <div className="fill-title">Last Fill – Crops (click outside to close)</div>
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(5, 1fr)',
+                gap: 8,
+                background: '#111',
+                padding: 8,
+                borderRadius: 8,
+                maxHeight: '60vh',
+                overflow: 'auto'
+              }}
+            >
+              {lastCrops.map((src, i) => (
+                <div key={i} style={{ background: '#222', padding: 6, borderRadius: 6 }}>
+                  <img src={src} alt={`crop ${i}`} style={{ width: 48, height: 48, imageRendering: 'pixelated' }} />
+                  <div style={{ fontSize: 11, opacity: 0.8, marginTop: 4, textAlign: 'center' }}>
+                    {i === 12 ? 'center' : `#${i + 1}`}
+                  </div>
+                </div>
+              ))}
+            </div>
           </div>
         </div>
       )}
