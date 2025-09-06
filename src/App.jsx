@@ -47,6 +47,51 @@ function normalizeDriveList(list) {
   return list.images ?? list.files ?? list.items ?? list.list ?? [];
 }
 
+// Discover Drive config from window/localStorage (no import.meta usage)
+function getDriveConfig() {
+  const apiKey =
+    (typeof window !== 'undefined' && window.NBT_DRIVE_API_KEY) ||
+    localStorage.getItem('drive:apiKey') ||
+    localStorage.getItem('google:apiKey') ||
+    undefined;
+  const folderId =
+    (typeof window !== 'undefined' && window.NBT_DRIVE_FOLDER_ID) ||
+    localStorage.getItem('drive:folderId') ||
+    localStorage.getItem('google:folderId') ||
+    undefined;
+  return { apiKey, folderId };
+}
+
+// Call the Drive list using the working pipeline; fall back to explicit config if needed
+async function driveListWithFallback() {
+  // 1) Preferred: services/drive-configured call (no args)
+  try {
+    const res1 = await listDriveImagesFast();
+    const arr1 = normalizeDriveList(res1);
+    if (arr1 && arr1.length) return arr1;
+  } catch {
+    /* continue to fallbacks */
+  }
+
+  // 2) Fallback: (apiKey, folderId) or { apiKey, folderId }
+  const { apiKey, folderId } = getDriveConfig();
+  if (apiKey && folderId) {
+    try {
+      const res2 = await listDriveImagesFast(apiKey, folderId);
+      const arr2 = normalizeDriveList(res2);
+      if (arr2 && arr2.length) return arr2;
+    } catch {}
+    try {
+      const res3 = await listDriveImagesFast({ apiKey, folderId });
+      const arr3 = normalizeDriveList(res3);
+      if (arr3 && arr3.length) return arr3;
+    } catch {}
+  }
+
+  // 3) Nothing worked
+  throw new Error('Drive listing returned no items. Check API key / folder config.');
+}
+
 /* ------------------------------ app ------------------------------- */
 
 export default function App() {
@@ -60,6 +105,9 @@ export default function App() {
     done: 0,
     total: 0,
   });
+
+  // Small status line for Drive ops
+  const [driveMsg, setDriveMsg] = useState('');
 
   // Name index (filename stem -> url)
   const [refIndex, setRefIndex] = useState({ count: 0, byName: new Map() });
@@ -122,13 +170,12 @@ export default function App() {
       }
 
       try {
-        const list = await listDriveImagesFast(); // uses configured key/id in services/drive.js
-        if (!cancelled && list) {
-          const arr = normalizeDriveList(list);
+        const arr = await driveListWithFallback();
+        if (!cancelled && arr) {
           setLibrary(toLibraryItems(arr));
         }
-      } catch {
-        /* if Drive fails entirely, uploads still work */
+      } catch (e) {
+        if (!cancelled) setDriveMsg('Drive not available yet. You can still upload images.');
       }
     })();
     return () => {
@@ -139,62 +186,65 @@ export default function App() {
   /* ------------------------- get sprites flow ------------------------ */
 
   async function getSprites() {
+    setDriveMsg('');
     setGetSpritesProg({ stage: 'fetching', done: 0, total: 0 });
 
-    // 1) fetch from Drive using central config
-    let arr = [];
     try {
-      const list = await listDriveImagesFast(); // no args; reuses existing config
-      arr = normalizeDriveList(list);
-    } catch (e) {
-      arr = [];
-    }
-    const items = toLibraryItems(arr);
-    setLibrary(items);
+      const arr = await driveListWithFallback();
+      const items = toLibraryItems(arr);
+      setLibrary(items);
+      setDriveMsg(`Fetched ${items.length} sprites from Drive.`);
 
-    // 2) build name index
-    const byName = new Map();
-    for (const it of items) {
-      const key = stem(it.name || it.url);
-      if (key) byName.set(key, it.url);
-    }
-    setRefIndex({ count: byName.size, byName });
-    try {
-      localStorage.setItem(
-        'refIndex:names',
-        JSON.stringify({ count: byName.size, byName: Array.from(byName.entries()) })
-      );
-    } catch {}
-
-    // 3) compute aHash for library (with progress)
-    setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
-    const hashes = libHashesRef.current;
-    const persisted = Object.fromEntries(hashes); // to serialize later
-    let done = 0;
-
-    for (const it of items) {
-      if (!hashes.has(it.url)) {
-        try {
-          const img = await loadImageFromURL(it.url);
-          const bits = ahashFromImage(img, 8); // 64-bit aHash
-          const bitStr = bitsToString(bits);
-          hashes.set(it.url, bitStr);
-          persisted[it.url] = bitStr;
-        } catch {
-          // ignore failed items
-        }
+      // build name index
+      const byName = new Map();
+      for (const it of items) {
+        const key = stem(it.name || it.url);
+        if (key) byName.set(key, it.url);
       }
-      done++;
-      setGetSpritesProg({ stage: 'hashing', done, total: items.length });
-      await new Promise((r) => setTimeout(r, 0)); // yield
+      setRefIndex({ count: byName.size, byName });
+      try {
+        localStorage.setItem(
+          'refIndex:names',
+          JSON.stringify({ count: byName.size, byName: Array.from(byName.entries()) })
+        );
+      } catch {}
+
+      // compute aHash for library (with progress)
+      setGetSpritesProg({ stage: 'hashing', done: 0, total: items.length });
+      const hashes = libHashesRef.current;
+      const persisted = Object.fromEntries(hashes); // to serialize later
+      let done = 0;
+
+      for (const it of items) {
+        if (!hashes.has(it.url)) {
+          try {
+            const img = await loadImageFromURL(it.url);
+            const bits = ahashFromImage(img, 8); // 64-bit aHash
+            const bitStr = bitsToString(bits);
+            hashes.set(it.url, bitStr);
+            persisted[it.url] = bitStr;
+          } catch {
+            // ignore failed items
+          }
+        }
+        done++;
+        setGetSpritesProg({ stage: 'hashing', done, total: items.length });
+        await new Promise((r) => setTimeout(r, 0)); // yield
+      }
+
+      try {
+        localStorage.setItem('lib:ahash', JSON.stringify(persisted));
+      } catch {}
+
+      setGetSpritesProg({ stage: 'done', done: items.length, total: items.length });
+      setTimeout(() => setGetSpritesProg({ stage: 'idle', done: 0, total: 0 }), 1200);
+    } catch (e) {
+      console.error('[GetSprites] failed:', e);
+      setDriveMsg(
+        'Get Sprites failed. Check Drive API key / folder ID in services/drive.js or set them via window/localStorage.'
+      );
+      setGetSpritesProg({ stage: 'idle', done: 0, total: 0 });
     }
-
-    try {
-      localStorage.setItem('lib:ahash', JSON.stringify(persisted));
-    } catch {}
-
-    setGetSpritesProg({ stage: 'done', done: items.length, total: items.length });
-    setTimeout(() => setGetSpritesProg({ stage: 'idle', done: 0, total: 0 }), 1200);
   }
 
   async function ensureLibraryHashes() {
@@ -313,21 +363,16 @@ export default function App() {
   /* ----------------------- screenshot analysis ---------------------- */
 
   async function analyzeScreenshotForCard(id, file) {
-    // mark analyzing
     setAnalyzing((s) => new Set([...s, id]));
     try {
-      // ensure library hashes exist
       await ensureLibraryHashes();
 
-      // load screenshot
       const img = await loadImageFromFile(file);
 
-      // get card spec
       const card = cards.find((c) => c.id === id);
       if (!card) return;
       const { rows, cols } = card;
 
-      // slice the screenshot evenly into rows x cols
       const width = img.naturalWidth || img.width;
       const height = img.naturalHeight || img.height;
       const cellW = width / cols;
@@ -342,10 +387,8 @@ export default function App() {
           const h = Math.floor(cellH);
           const cellCanvas = cropToCanvas(img, x, y, w, h);
 
-          // hash the cell
           const cellBits = ahashFromImage(cellCanvas, 8);
 
-          // find best match in library using hamming distance
           let bestUrl = null;
           let bestDist = Infinity;
           for (const it of library) {
@@ -359,15 +402,12 @@ export default function App() {
             }
           }
 
-          // Optional threshold: uncomment to require closeness (0..64)
-          // if (bestUrl && bestDist <= 22) {
           if (bestUrl) {
             nextTiles[r * cols + c] = bestUrl;
           }
         }
       }
 
-      // update the card
       setCards((prev) => prev.map((c) => (c.id === id ? { ...c, tiles: nextTiles } : c)));
     } finally {
       setAnalyzing((s) => {
@@ -448,6 +488,8 @@ export default function App() {
               </div>
             )}
           </div>
+
+          {!!driveMsg && <div style={styles.driveMsg}>{driveMsg}</div>}
 
           <div style={styles.libraryHeader}>
             <div style={styles.libraryTitle}>Image Library</div>
@@ -591,6 +633,11 @@ const styles = {
   progressBar: {
     height: '100%',
     background: '#4e7cff',
+  },
+  driveMsg: {
+    color: '#9bb4ff',
+    fontSize: 12,
+    marginBottom: 8,
   },
   libraryHeader: {
     display: 'grid',
