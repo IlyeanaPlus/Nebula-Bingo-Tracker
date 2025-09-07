@@ -54,6 +54,7 @@
   width: 328px; background:#1e1f22; color:#eee;
   border:1px solid #333; border-radius:10px; padding:12px;
   font: 12px/1.4 system-ui, sans-serif; box-shadow:0 8px 24px rgba(0,0,0,.5);
+  pointer-events: auto;
 }
 #nbt-gridbox-panel h3 { margin:0 0 8px; font-size:13px; }
 #nbt-gridbox-panel .row { display:flex; gap:8px; margin-top:8px; }
@@ -69,11 +70,11 @@
   inset: 0;
   background: rgba(0,0,0,0.25);   /* lighter dim so app chrome is visible */
   z-index: ${Z_OVERLAY - 2};
-  pointer-events: none;           /* <-- IMPORTANT: do NOT block clicks */
+  pointer-events: none;           /* visual only; do NOT block clicks */
 }
 
 #nbt-gridbox-overlay {
-  position:absolute; left:0; top:0; z-index:${Z_OVERLAY}; pointer-events:none;
+  position:absolute; left:0; top:0; z-index:${Z_OVERLAY}; pointer-events:none; /* canvas never blocks */
 }
 
 #nbt-gridbox-rect {
@@ -152,20 +153,20 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     img.style.borderRadius = "10px";
     img.style.background = "#111";
   }
-function ensureBackdrop() {
-  if (backdrop && document.body.contains(backdrop)) return backdrop;
-  const d = document.createElement("div");
-  d.id = "nbt-gridbox-backdrop";
-  // Panel/overlay sit above it; backdrop is purely visual and non-interactive
-  d.style.position = "fixed";
-  d.style.inset = "0";
-  d.style.background = "rgba(0,0,0,0.25)";
-  d.style.zIndex = String(Z_OVERLAY - 2);
-  d.style.pointerEvents = "none"; // <-- critical
-  document.body.appendChild(d);
-  backdrop = d;
-  return d;
-}
+  function ensureBackdrop() {
+    if (backdrop && document.body.contains(backdrop)) return backdrop;
+    const d = document.createElement("div");
+    d.id = "nbt-gridbox-backdrop";
+    // Panel/overlay sit above it; backdrop is purely visual and non-interactive
+    d.style.position = "fixed";
+    d.style.inset = "0";
+    d.style.background = "rgba(0,0,0,0.25)";
+    d.style.zIndex = String(Z_OVERLAY - 2);
+    d.style.pointerEvents = "none"; // visual-only
+    document.body.appendChild(d);
+    backdrop = d;
+    return d;
+  }
   function createHiddenFileInput(accept="image/*") {
     const input = document.createElement("input");
     input.type = "file";
@@ -218,6 +219,12 @@ function ensureBackdrop() {
   function togglePickFromPage() {
     pagePickActive = !pagePickActive;
     document.body.style.cursor = pagePickActive ? "crosshair" : "";
+    // Attach the click capture ONLY while picking, remove it otherwise
+    if (pagePickActive) {
+      document.addEventListener("click", onDocClick, { capture: true });
+    } else {
+      document.removeEventListener("click", onDocClick, { capture: true });
+    }
   }
   function onDocClick(ev) {
     if (!pagePickActive) return;
@@ -226,6 +233,8 @@ function ensureBackdrop() {
       setTargetImage(ev.target);
       pagePickActive = false;
       document.body.style.cursor = "";
+      // Remove the capture listener immediately after a pick
+      document.removeEventListener("click", onDocClick, { capture: true });
       ev.preventDefault(); ev.stopPropagation();
     }
   }
@@ -236,7 +245,7 @@ function ensureBackdrop() {
     document.addEventListener("dragover", onDragOver, true);
     document.addEventListener("dragleave", onDragLeave, true);
     document.addEventListener("drop", onDrop, true);
-    document.addEventListener("click", onDocClick, { capture:true });
+    // NOTE: we do NOT attach onDocClick here anymore; it's attached only in Pick mode
     globalListeners = true;
   }
   function detachGlobalListeners() {
@@ -244,7 +253,7 @@ function ensureBackdrop() {
     document.removeEventListener("dragover", onDragOver, true);
     document.removeEventListener("dragleave", onDragLeave, true);
     document.removeEventListener("drop", onDrop, true);
-    document.removeEventListener("click", onDocClick, { capture:true });
+    document.removeEventListener("click", onDocClick, { capture: true }); // safe even if absent
     globalListeners = false;
   }
   function onDragOver(e){ e.preventDefault(); e.stopPropagation(); document.body.classList.add("nbt-drop-active"); }
