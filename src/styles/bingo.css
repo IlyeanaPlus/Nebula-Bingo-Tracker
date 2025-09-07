@@ -284,3 +284,24 @@ button:hover { background: #333; }
 
 /* ---------- Clean-ups ---------- */
 /* Removed all Debug Crops styles — that feature is gone now */
+
+/* src/styles/bingo.center-title.css */
+
+/* Center the title row within card header */
+.card .title-row {
+  justify-content: center;
+}
+
+/* Cards container */
+.cards {
+  display: flex;
+  flex-wrap: wrap;          /* allow wrapping */
+  gap: 20px;
+  align-items: flex-start;  /* align rows neatly at the top */
+}
+
+/* Individual card */
+.card {
+  width: 450px;             /* fixed width */
+  flex: 0 0 auto;           /* don’t stretch, don’t shrink */
+}

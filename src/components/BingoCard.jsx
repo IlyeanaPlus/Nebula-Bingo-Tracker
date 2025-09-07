@@ -1,11 +1,11 @@
 // src/components/BingoCard.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
-import { fileToImage, computeCrops25, loadFractions, saveFractions } from "../utils/image";
+import React, { useRef, useState } from "react";
+import { computeCrops25, loadFractions, saveFractions } from "../utils/image";
 import GridTunerModal from "./GridTunerModal";
 import { prepareRefIndex, findBestMatch } from "../utils/matchers";
 
 export default function BingoCard({ id, title, spritesIndex, onRemove, onRename }) {
-  const [name, setName] = useState(title || `Card ${id}`);
+  const [name, setName] = useState(title || "New Card");
   const [renaming, setRenaming] = useState(false);
   const [spritesReady, setSpritesReady] = useState(
     !!spritesIndex && Object.keys(spritesIndex || {}).length > 0
@@ -16,20 +16,16 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
   const [fractions, setFractions] = useState(loadFractions());
   const fileInputRef = useRef(null);
 
-  // Renaming logic
-  function handleRenameClick() {
-    setRenaming(true);
-  }
+  // Rename
+  function handleRenameClick() { setRenaming(true); }
   function handleRenameSubmit(e) {
     e.preventDefault();
     setRenaming(false);
     onRename?.(id, name);
   }
 
-  // File → tuner pipeline
-  function handlePickImage() {
-    fileInputRef.current?.click();
-  }
+  // Fill pipeline
+  function handlePickImage() { fileInputRef.current?.click(); }
   async function onPickFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -43,32 +39,48 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
     setFractions(newFractions);
     saveFractions(newFractions);
     if (!pendingImageSrc) return;
-
     const tmp = new Image();
     await new Promise((res, rej) => {
       tmp.onload = () => res();
       tmp.onerror = rej;
       tmp.src = pendingImageSrc;
     });
-
     const crops = computeCrops25(tmp, newFractions);
     const results = await matchAll(crops);
     setMatchResults(results);
   }
-
   function onTunerCancel() {
     setShowTuner(false);
     setPendingImageSrc(null);
   }
 
-  // Matching logic
+  // Save button
+  function handleSave() {
+    const payload = {
+      id,
+      name,
+      fractions,
+      matches: matchResults,
+      ts: new Date().toISOString(),
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${name.replace(/\s+/g, "_").toLowerCase() || "card"}_${id}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  // Matcher
   async function matchAll(crops) {
     if (!spritesIndex) return Array(25).fill(null);
     const prepared = prepareRefIndex(spritesIndex);
     const out = [];
     for (let i = 0; i < 25; i++) {
-      const crop = crops[i];
-      const best = await findBestMatch(crop, prepared);
+      const best = await findBestMatch(crops[i], prepared);
       out.push(best);
     }
     return out;
@@ -77,8 +89,8 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
   return (
     <div className="card">
       <div className="card-header">
-        {/* Title row */}
-        <div className="title-row">
+        {/* Title row (centered) */}
+        <div className="title-row" style={{ justifyContent: "center" }}>
           {renaming ? (
             <form onSubmit={handleRenameSubmit}>
               <input
@@ -96,18 +108,11 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
           )}
         </div>
 
-        {/* Actions row (buttons below title) */}
+        {/* Actions row */}
         <div className="actions-row">
-          <button
-            className="btn"
-            onClick={handlePickImage}
-            title="Fill: pick screenshot & fine-tune grid"
-          >
-            Fill
-          </button>
-          <button className="btn" onClick={() => onRemove?.(id)}>
-            Remove
-          </button>
+          <button className="btn" onClick={handlePickImage}>Fill</button>
+          <button className="btn" onClick={handleSave}>Save</button>
+          <button className="btn" onClick={() => onRemove?.(id)}>Remove</button>
           <input
             ref={fileInputRef}
             type="file"
@@ -118,7 +123,7 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
         </div>
       </div>
 
-      {/* Status row */}
+      {/* Status */}
       <div className="bingo-card__status">
         {spritesReady ? (
           <span className="ok">sprites loaded!</span>
