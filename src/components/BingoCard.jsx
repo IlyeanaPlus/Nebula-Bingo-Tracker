@@ -21,17 +21,20 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
   const [showDebugCrops, setShowDebugCrops] = useState(false);
   const inputRef = useRef(null);
 
-  // normalize to 25 cells
-  const cells = useMemo(
-    () =>
-      card.cells ||
-      Array.from({ length: 25 }, () => ({
-        name: '',
-        sprite: null,
-        complete: false,
-      })),
-    [card]
-  );
+// normalize to 25 cells safely
+const cells = useMemo(
+  () =>
+    (card && Array.isArray(card.cells) && card.cells.length === 25
+      ? card.cells
+      : Array.from({ length: 25 }, () => ({
+          name: '',
+          sprite: null,
+          complete: false,
+        }))
+    ),
+  [card]
+);
+
 
   // Build reference index whenever manifest changes
   useEffect(() => {
