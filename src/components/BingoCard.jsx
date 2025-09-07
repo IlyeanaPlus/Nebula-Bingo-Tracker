@@ -17,31 +17,34 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
   const [isFilling, setIsFilling] = useState(false);
   const [fillStep, setFillStep] = useState(0);
   const [refIndex, setRefIndex] = useState([]);
-  const [lastCrops, setLastCrops] = useState(null);     // dataURLs from last Fill
+  const [lastCrops, setLastCrops] = useState(null); // dataURLs from last Fill
   const [showDebugCrops, setShowDebugCrops] = useState(false);
   const inputRef = useRef(null);
 
-// normalize to 25 cells safely
-const cells = useMemo(
-  () =>
-    (card && Array.isArray(card.cells) && card.cells.length === 25
-      ? card.cells
-      : Array.from({ length: 25 }, () => ({
-          name: '',
-          sprite: null,
-          complete: false,
-        }))
-    ),
-  [card]
-);
+  // safe versions so undefined/null props never crash
+  const safeOnChange = typeof onChange === 'function' ? onChange : () => {};
+  const safeCard = useMemo(
+    () => (card && typeof card === 'object' ? card : {}),
+    [card]
+  );
 
+  // normalize to 25 cells safely
+  const cells = useMemo(() => {
+    const c = safeCard && Array.isArray(safeCard.cells) ? safeCard.cells : null;
+    if (c && c.length === 25) return c;
+    return Array.from({ length: 25 }, () => ({
+      name: '',
+      sprite: null,
+      complete: false,
+    }));
+  }, [safeCard]);
 
   // Build reference index whenever manifest changes
   useEffect(() => {
     let alive = true;
     (async () => {
       if (!manifest || !manifest.length) {
-        setRefIndex([]);
+        if (alive) setRefIndex([]);
         return;
       }
       try {
@@ -52,14 +55,16 @@ const cells = useMemo(
         if (alive) setRefIndex([]);
       }
     })();
-    return () => { alive = false; };
+    return () => {
+      alive = false;
+    };
   }, [manifest]);
 
   // Close Debug Crops with Esc
   useEffect(() => {
-    function onEsc(e) {
+    const onEsc = (e) => {
       if (e.key === 'Escape') setShowDebugCrops(false);
-    }
+    };
     window.addEventListener('keydown', onEsc);
     return () => window.removeEventListener('keydown', onEsc);
   }, []);
@@ -67,15 +72,15 @@ const cells = useMemo(
   function toggleComplete(idx) {
     const next = [...cells];
     next[idx] = { ...next[idx], complete: !next[idx].complete };
-    onChange({ ...card, cells: next });
+    safeOnChange({ ...safeCard, cells: next });
   }
 
   function handleTitleChange(e) {
-    onChange({ ...card, title: e.target.value });
+    safeOnChange({ ...safeCard, title: e.target.value });
   }
 
   function handleSave() {
-    onChange({ ...card, saved: true });
+    safeOnChange({ ...safeCard, saved: true });
   }
 
   function handlePick() {
@@ -93,15 +98,17 @@ const cells = useMemo(
     const f = e.dataTransfer?.files?.[0];
     if (f) runFillFromFile(f);
   }
-  function onDragOver(e) { e.preventDefault(); }
+  function onDragOver(e) {
+    e.preventDefault();
+  }
 
   async function runFillFromFile(file) {
     setIsFilling(true);
     setFillStep(0);
     try {
       const img = await fileToImage(file);
-      const crops = await crop25(img);   // native-size crops
-      setLastCrops(crops);               // show in Debug Crops modal
+      const crops = await crop25(img); // native-size crops
+      setLastCrops(crops); // show in Debug Crops modal
 
       const nextCells = [...cells];
 
@@ -114,8 +121,8 @@ const cells = useMemo(
               ssimMin: 0.82,
               mseMax: 1100,
               nccMin: 0.88, // NCC acceptance path
-              tau: 16,      // raise to 18–20 for low-quality JPGs
-              debug: true   // console logs while tuning
+              tau: 16, // raise to 18–20 for low-quality JPGs
+              debug: true, // console logs while tuning
             })
           : null;
 
@@ -126,14 +133,18 @@ const cells = useMemo(
             complete: nextCells[i]?.complete || false,
           };
         } else {
-          nextCells[i] = { name: '— no match —', sprite: NO_MATCH_DATA_URL, complete: false };
+          nextCells[i] = {
+            name: '— no match —',
+            sprite: NO_MATCH_DATA_URL,
+            complete: false,
+          };
         }
 
         setFillStep(i + 1);
         if ((i + 1) % 5 === 0) await new Promise((r) => setTimeout(r, 0));
       }
 
-      onChange({ ...card, cells: nextCells });
+      safeOnChange({ ...safeCard, cells: nextCells });
     } catch (e) {
       console.error('Fill error', e);
     } finally {
@@ -146,7 +157,7 @@ const cells = useMemo(
       <div className="card-header">
         <input
           className="title-inline"
-          value={card.title || ''}
+          value={safeCard.title ?? ''}                {/* guard title */}
           onChange={handleTitleChange}
           placeholder="Card title"
           aria-label="Card title"
@@ -155,7 +166,9 @@ const cells = useMemo(
           <span style={{ opacity: 0.7, fontSize: 12, marginRight: 8 }}>
             sprites: {refIndex.length}
           </span>
-          <button onClick={handlePick} disabled={!refIndex.length || isFilling}>Fill</button>
+          <button onClick={handlePick} disabled={!refIndex.length || isFilling}>
+            Fill
+          </button>
           <button onClick={handleSave}>Save</button>
           <button onClick={onRemove}>Remove</button>
           {lastCrops?.length === 25 && (
@@ -210,7 +223,7 @@ const cells = useMemo(
       )}
 
       {/* Debug crops modal */}
-      {showDebugCrops && (
+      {showDebugCrops && lastCrops?.length === 25 && (
         <div
           className="fill-overlay"
           style={{ zIndex: 9999 }}
@@ -235,10 +248,10 @@ const cells = useMemo(
                 gap: 8,
                 background: '#111',
                 padding: 8,
-                borderRadius: 8
+                borderRadius: 8,
               }}
             >
-              {lastCrops.map((src, i) => (
+              {(lastCrops || []).map((src, i) => (
                 <div key={i} style={{ background: '#222', padding: 6, borderRadius: 6 }}>
                   <img
                     src={src}
@@ -250,7 +263,7 @@ const cells = useMemo(
                       fontSize: 11,
                       opacity: 0.8,
                       marginTop: 4,
-                      textAlign: 'center'
+                      textAlign: 'center',
                     }}
                   >
                     {i === 12 ? 'center' : `#${i + 1}`}
