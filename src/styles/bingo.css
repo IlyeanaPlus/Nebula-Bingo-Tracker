@@ -131,40 +131,26 @@ body {
   border-radius: 999px;
 }
 
-/* --- Cards layout (unified) --- */
-.cards {
-  display: grid;
-  grid-template-columns: repeat(3, 450px);
-  gap: 20px;
-  justify-content: center;
-  align-items: start;
-  padding: 16px;
-}
-.card {
+/* --- Card layout --- */
+.bingo-card {
   width: 450px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 14px;
   box-shadow: 0 2px 0 #1a1a1a inset, 0 0 0 1px rgba(255,255,255,0.02);
-  flex: none;
 }
-.card .card-header {
+.bingo-card .card-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: -4px 0 12px;
+  margin-bottom: 12px;
 }
-.card .title-inline {
-  height: 28px;
-  padding: 4px 8px;
-  background: #171717;
-  border: 1px solid #2b2b2b;
-  border-radius: 8px;
-  color: #eaeaea;
+.bingo-card .card-title {
+  font-weight: 600;
 }
-.card .actions button {
+.bingo-card .card-actions button {
   height: 28px;
   padding: 0 10px;
   background: #1d1d1d;
@@ -173,11 +159,11 @@ body {
   color: #e8e8e8;
   cursor: pointer;
 }
-.card .actions button:hover {
+.bingo-card .card-actions button:hover {
   background: #232323;
 }
 
-/* --- Grid inside cards --- */
+/* --- Grid inside card --- */
 .grid-5x5 {
   display: grid;
   grid-template-columns: repeat(5, 1fr);
@@ -211,9 +197,11 @@ body {
   outline: 2px solid #3aa76d;
   outline-offset: -1px;
 }
-.cell .cell-text {
+.cell .caption {
   font-size: 12px;
   opacity: .75;
+  text-align: center;
+  margin-top: 2px;
 }
 
 /* --- Progress bar --- */
@@ -260,4 +248,3 @@ body {
 .fill-bar { height: 8px; background: #222; border-radius: 999px; overflow: hidden; }
 .fill-bar-inner { height: 100%; background: #3aa76d; width: 0%; transition: width .2s linear; }
 .fill-meta { margin-top: 8px; font-size: 12px; opacity: .85; }
-.fill-hint { margin-top: 8px; font-size: 12px; opacity: .7; }

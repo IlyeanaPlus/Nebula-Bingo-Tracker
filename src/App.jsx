@@ -15,134 +15,87 @@ const makeBlankCard = (title = "New Card") => ({
   title,
   saved: false,
   cells: Array.from({ length: 25 }, () => ({
-    name: "",
-    sprite: null,
-    complete: false,
+    label: "",
+    matchKey: "",
+    matchUrl: "",
   })),
+  // store the most recent screenshot used for this card
+  lastImage: null,
 });
 
 export default function App() {
   const [cards, setCards] = useState(() => {
     try {
       const raw = localStorage.getItem(LS_KEYS.CARDS);
-      return raw ? JSON.parse(raw) : [makeBlankCard()];
-    } catch {
-      return [makeBlankCard()];
-    }
+      if (raw) return JSON.parse(raw);
+    } catch {}
+    return [makeBlankCard("Card 1")];
   });
   const [currentIndex, setCurrentIndex] = useState(() => {
-    const n = Number(localStorage.getItem(LS_KEYS.CURRENT) ?? 0);
-    return Number.isFinite(n) ? Math.max(0, Math.min(n, 0)) : 0;
+    const raw = localStorage.getItem(LS_KEYS.CURRENT);
+    return raw ? Number(raw) : 0;
   });
 
-  const [manifest, setManifest] = useState([]);
-  const [spritesProgress, setSpritesProgress] = useState({ loaded: 0, total: 0, done: false });
+  const currentCard = cards[currentIndex] || makeBlankCard();
 
+  // Persist cards & current index
   useEffect(() => {
-    try { localStorage.setItem(LS_KEYS.CARDS, JSON.stringify(cards)); } catch {}
+    try {
+      localStorage.setItem(LS_KEYS.CARDS, JSON.stringify(cards));
+    } catch {}
   }, [cards]);
   useEffect(() => {
-    try { localStorage.setItem(LS_KEYS.CURRENT, String(currentIndex)); } catch {}
+    try {
+      localStorage.setItem(LS_KEYS.CURRENT, String(currentIndex));
+    } catch {}
   }, [currentIndex]);
 
-  const currentCard = useMemo(
-    () => (cards[currentIndex] ? cards[currentIndex] : undefined),
-    [cards, currentIndex]
-  );
+  // Manifest (sprites index) is stored at app level
+  const [manifest, setManifest] = useState(null);
 
-  async function handleGetSprites() {
-  const normalize = (raw) => {
-    // Accept either an array or {items:[...]}
-    const items = Array.isArray(raw) ? raw : Array.isArray(raw?.items) ? raw.items : [];
-    return items.map((it) => {
-      // try all common shapes; keep exactly {name, src}
-      const name =
-        it.name || it.title || it.filename || it.fileName || it.id || "";
-      const src =
-        it.src || it.url || it.downloadUrl || it.webContentLink ||
-        it.webViewLink || it.thumbnailLink || it.path || it.relativePath || "";
-      return name && src ? { name, src } : null;
-    }).filter(Boolean);
-  };
-
-  try {
-    const res = await fetch("./drive_cache.json", { cache: "no-store" });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const json = await res.json();
-
-    // normalize to the matcher’s expected shape
-    let mf = normalize(json);
-
-    // absolutize (keeps previous behavior when drive_cache entries are relative)
-    const base = new URL(location.href);
-    mf = mf.map(({ name, src }) => ({ name, src: new URL(src, base).href }));
-
-    // OPTIONAL: quick, non-blocking warm-up (doesn’t change app flow)
-    mf.slice(0, 50).forEach(({ src }) => { const i = new Image(); i.decoding = "async"; i.src = src; });
-
-    setManifest(mf);
-    window.NBT = window.NBT || {};
-    window.NBT.spritesManifest = mf;      // keep global for other code paths
-    console.info(`[GetSprites] Loaded ${mf.length} sprites.`);
-  } catch (e) {
-    console.error("[GetSprites] Failed:", e);
-    alert("Get Sprites failed. Check drive_cache.json and console.");
+  function handleGetSprites(indexObj) {
+    setManifest(indexObj);
   }
-}
 
-
-  // card handlers
   function handleNewCard() {
-    setCards((prev) => [...prev, makeBlankCard(`New Card`)]); // label matches your UI
+    setCards((prev) => [...prev, makeBlankCard(`Card ${prev.length + 1}`)]);
     setCurrentIndex(cards.length);
   }
-  function handleUpdateCard(next) {
-    setCards((prev) => {
-      const copy = prev.slice();
-      copy[currentIndex] = { ...(copy[currentIndex] || makeBlankCard()), ...next };
-      return copy;
-    });
+
+  function handleSelectCard(i) {
+    setCurrentIndex(i);
   }
+
+  function handleClearSaved() {
+    setCards((prev) => prev.map((c) => ({ ...c, saved: false })));
+  }
+
+  function handleUpdateCard(nextCard) {
+    setCards((prev) => prev.map((c, i) => (i === currentIndex ? nextCard : c)));
+  }
+
   function handleRemoveCard() {
     setCards((prev) => {
-      if (!prev.length) return prev;
-      const copy = prev.slice();
-      copy.splice(currentIndex, 1);
-      if (!copy.length) copy.push(makeBlankCard());
-      const nextIndex = Math.max(0, Math.min(currentIndex, copy.length - 1));
-      setCurrentIndex(nextIndex);
-      return copy;
+      if (prev.length <= 1) return [makeBlankCard("Card 1")];
+      const next = [...prev.slice(0, currentIndex), ...prev.slice(currentIndex + 1)];
+      const newIndex = Math.max(0, currentIndex - 1);
+      setCurrentIndex(newIndex);
+      return next;
     });
   }
-  function handleClearSaved() {
-    setCards([makeBlankCard()]);
-    setCurrentIndex(0);
-  }
-
-  useEffect(() => {
-    window.NBT = window.NBT || {};
-    window.NBT.consumeCrops = () => {};
-  }, []);
 
   return (
-    <div className="app">
-      <Header
-        title="Nebula Bingo Tracker"
-        spritesCount={manifest.length}
-        onGetSprites={handleGetSprites}
-      />
-
+    <div className="app-root">
+      <Header />
       <div className="app-body">
         <Sidebar
           cards={cards}
           currentIndex={currentIndex}
-          onSelect={setCurrentIndex}
+          onSelect={handleSelectCard}
           onNewCard={handleNewCard}
           onClearSaved={handleClearSaved}
-          // show progress like in your screenshot
-          spritesLoaded={spritesProgress.loaded}
-          spritesTotal={spritesProgress.total}
           onGetSprites={handleGetSprites}
+          spritesReady={!!manifest && Object.keys(manifest || {}).length > 0}
         />
 
         <main className="main-content">

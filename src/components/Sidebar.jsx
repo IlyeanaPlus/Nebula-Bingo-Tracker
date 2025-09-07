@@ -11,45 +11,30 @@ export default function Sidebar({
   onGetSprites,          // parent callback receives the loaded index
   spritesLoaded = 0,     // parent-provided live progress (optional)
   spritesTotal = 0,      // parent-provided live progress (optional)
+  spritesReady = false,  // NEW: whether manifest is loaded
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [localProgress, setLocalProgress] = useState({ loaded: 0, total: 0, done: false });
-  const savedCount = cards.filter((c) => c?.saved).length;
 
-  // Prefer parent progress if provided; otherwise use local preload progress
-  const haveParentProgress = spritesTotal > 0;
-  const loaded = haveParentProgress ? spritesLoaded : localProgress.loaded;
-  const total = haveParentProgress ? spritesTotal : localProgress.total;
-  const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
-  const showProgress = total > 0 || haveParentProgress;
+  async function handleGetSprites() {
+    setError("");
+    setLoading(true);
+    try {
+      const index = await getSprites();
+      if (!index || Object.keys(index).length === 0) {
+        setError("No sprites found in drive_cache.json");
+        return;
+      }
 
-async function handleGetSprites() {
-  setError("");
-  setLoading(true);
-  setLocalProgress({ loaded: 0, total: 0, done: false });
-
-  try {
-    // 1) Load /public/drive_cache.json
-    const index = await getSprites();
-    onGetSprites?.(index);
-
-    // 2) Warm the cache & drive progress bar (concurrent)
-    await preloadSprites(
-      index,
-      (l, t) => setLocalProgress({ loaded: l, total: t, done: l === t }),
-      { concurrency: 24, retry: 1 }
-    );
-  } catch (e) {
-    setError(
-      e?.message?.includes("404")
-        ? "drive_cache.json not found in /public (404)"
-        : e?.message || "Failed to load sprites"
-    );
-  } finally {
-    setLoading(false);
+      await preloadSprites(index, { concurrency: 8 });
+      onGetSprites?.(index);
+    } catch (e) {
+      console.error(e);
+      setError(e?.message || "Failed to load sprites");
+    } finally {
+      setLoading(false);
+    }
   }
-}
 
   return (
     <aside className="sidebar">
@@ -58,47 +43,50 @@ async function handleGetSprites() {
 
         <div className="row">
           <button className="btn" onClick={handleGetSprites} disabled={loading}>
-            {loading ? "Loading…" : "Get Sprites"}
+            {loading ? "Loading Sprites…" : "Get Sprites"}
           </button>
+        </div>
+
+        <div className="row small">
+          {error ? (
+            <div className="row error">{error}</div>
+          ) : spritesReady ? (
+            <div>Sprites loaded ✔</div>
+          ) : (
+            <div style={{ color: "#fbbf24" }}>Load sprites to enable matching</div>
+          )}
         </div>
 
         <div className="row">
           <button className="btn" onClick={onNewCard}>New Card</button>
+          <button className="btn danger" onClick={onClearSaved}>Clear Saved</button>
         </div>
 
-        {showProgress && (
-          <div className="progress-wrap" aria-label="Sprites preload progress">
-            <div className="progress-bar">
-              <div className="progress-fill" style={{ width: `${pct}%` }} />
-            </div>
-            <div className="progress-meta">
-              {loaded} / {total} ({pct}%)
-            </div>
+        {typeof spritesTotal === "number" && spritesTotal > 0 ? (
+          <div className="row small">
+            <div>Sprite Cache: {spritesLoaded} / {spritesTotal}</div>
           </div>
-        )}
+        ) : null}
 
-        {error && <div className="meta" style={{ color: "#ff6b6b" }}>{error}</div>}
-        <div className="meta">Saved cards: {savedCount}</div>
+        <div className="divider" />
 
-        <div className="row">
-          <button className="btn" onClick={onClearSaved}>Clear Saved</button>
-        </div>
-      </div>
-
-      <div className="panel">
         <div className="panel-title">Cards</div>
         <div className="list">
-          {cards.map((c, i) => (
-            <button
-              key={i}
-              className={`list-item ${i === currentIndex ? "active" : ""}`}
-              onClick={() => onSelect?.(i)}
-              title={c?.title || `Card ${i + 1}`}
-            >
-              <div className="name">{c?.title || `Card ${i + 1}`}</div>
-              {c?.saved ? <div className="tag">saved</div> : null}
-            </button>
-          ))}
+          {cards.length === 0 ? (
+            <div className="empty">No cards yet.</div>
+          ) : (
+            cards.map((c, i) => (
+              <button
+                key={i}
+                className={`list-item ${i === currentIndex ? "active" : ""}`}
+                onClick={() => onSelect?.(i)}
+                title={c?.title || `Card ${i + 1}`}
+              >
+                <div className="name">{c?.title || `Card ${i + 1}`}</div>
+                {c?.saved ? <div className="tag">saved</div> : null}
+              </button>
+            ))
+          )}
         </div>
       </div>
     </aside>
