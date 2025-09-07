@@ -305,17 +305,18 @@ export function openGridTuner() {
   document.body.appendChild(buildTuner());
 }
 
-// Keyboard toggle: Ctrl+Alt+G
+// Keyboard toggle: Alt+Shift+G
 (function attachHotkeyOnce() {
   if (window.__nbtHotkeyAttached) return;
   window.__nbtHotkeyAttached = true;
   window.addEventListener("keydown", (e) => {
-    if (e.ctrlKey && e.altKey && (e.key.toLowerCase() === "g")) {
+    if (e.altKey && e.shiftKey && (e.key.toLowerCase() === "g")) {
       e.preventDefault();
       openGridTuner();
     }
   });
 })();
+
 
 // Also expose under window for console usage:
 //   window.NBT.grid.insetFrac = 0.05;  // then re-run Fill
