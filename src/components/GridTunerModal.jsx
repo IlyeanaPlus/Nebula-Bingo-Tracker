@@ -5,8 +5,9 @@ import ReactDOM from "react-dom";
 /**
  * GridTunerModal
  * - Green-only 5×5 crop grid
- * - Fully movable crop square
+ * - Draggable **center handle** (not whole box)
  * - Resizable from all 4 corners, locked 1:1
+ * - Clamped to the image bounds
  * - Centered overlay above the entire app (portal to document.body)
  */
 export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, onCancel }) {
@@ -14,6 +15,7 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
   const imgRef = useRef(null);
   const overlayRef = useRef(null);
   const boxRef = useRef(null);
+  const centerHandleRef = useRef(null);
 
   function normalizeInit(fr) {
     const f = fr || { x: 0.1, y: 0.1, w: 0.8, h: 0.8 };
@@ -81,12 +83,23 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
         width: `${s}px`,
         height: `${s}px`,
         border: "2px solid rgba(34,197,94,0.95)",
-        cursor: "move",
+      });
+    }
+
+    // Center move handle position
+    if (centerHandleRef.current) {
+      const size = 18;
+      Object.assign(centerHandleRef.current.style, {
+        left: `${x + s/2 - size/2}px`,
+        top: `${y + s/2 - size/2}px`,
+        width: `${size}px`,
+        height: `${size}px`,
       });
     }
   }
 
-  function handleDragStart(e){
+  // --- Move via center handle only ---
+  function handleCenterDragStart(e){
     const rect = imgRef.current.getBoundingClientRect();
     const startX = e.clientX, startY = e.clientY;
     const f0 = { ...fractions };
@@ -94,6 +107,7 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
     function mm(ev){
       const dx = (ev.clientX - startX)/rect.width;
       const dy = (ev.clientY - startY)/rect.height;
+      // clamp inside: keep whole square in bounds
       let nx = clamp01(f0.x + dx);
       let ny = clamp01(f0.y + dy);
       nx = Math.min(nx, 1 - f0.w);
@@ -106,6 +120,7 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
     window.addEventListener("mouseup", mu);
   }
 
+  // --- Resize from corners (keeps 1:1 & clamps to image) ---
   function onResizeStart(corner){
     return function(e){
       const rect = imgRef.current.getBoundingClientRect();
@@ -115,21 +130,31 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
       function mm(ev){
         const dx = (ev.clientX - startX)/rect.width;
         const dy = (ev.clientY - startY)/rect.height;
+
+        // propose delta in square space
         let ds = 0, nx=f0.x, ny=f0.y;
         if (corner==='se') ds = Math.max(dx, dy);
         if (corner==='nw') ds = -Math.max(-dx, -dy);
         if (corner==='ne') ds = Math.max(dx, -dy);
         if (corner==='sw') ds = Math.max(-dx, dy);
+
+        // base new size
         let s = f0.w + ds;
-        const minS = 32/rect.width;
+        const minS = 32/rect.width;          // absolute min in pixels (32)
         s = Math.max(minS, s);
         s = Math.min(s, 1);
+
+        // reposition for corners opposite to SE
         if (corner==='nw'){ nx = Math.max(0, f0.x + (f0.w - s)); ny = Math.max(0, f0.y + (f0.h - s)); }
         if (corner==='ne'){ ny = Math.max(0, f0.y + (f0.h - s)); nx = f0.x; }
         if (corner==='sw'){ nx = Math.max(0, f0.x + (f0.w - s)); ny = f0.y; }
         if (corner==='se'){ nx = f0.x; ny = f0.y; }
-        nx = Math.min(nx, 1 - s);
-        ny = Math.min(ny, 1 - s);
+
+        // clamp so square stays fully inside image
+        nx = clamp01(nx); ny = clamp01(ny);
+        s  = Math.min(s, 1 - nx);           // right bound
+        s  = Math.min(s, 1 - ny);           // bottom bound
+
         setFractions({ x:nx, y:ny, w:s, h:s });
       }
       function mu(){ window.removeEventListener("mousemove", mm); window.removeEventListener("mouseup", mu); }
@@ -152,7 +177,7 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
         background: "rgba(0,0,0,0.5)",
         display: "grid",
         placeItems: "center",
-        zIndex: 2147483647, // ensure on top of everything
+        zIndex: 2147483647,
       }}
     >
       <div
@@ -179,19 +204,33 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
             style={{ maxWidth:"100%", maxHeight:"60vh", objectFit:"contain" }}
           />
           <canvas ref={overlayRef} style={{ position:"absolute", inset:0, pointerEvents:"none" }} />
-          <div
-            ref={boxRef}
-            onMouseDown={handleDragStart}
-            style={{ position:"absolute" }}
-          >
-            <div title="resize" onMouseDown={onResizeStart('nw')}
-              style={{ position:'absolute', width:12, height:12, left:-6, top:-6, background:'#22c55e', borderRadius:6, cursor:'nwse-resize' }} />
-            <div title="resize" onMouseDown={onResizeStart('ne')}
-              style={{ position:'absolute', width:12, height:12, right:-6, top:-6, background:'#22c55e', borderRadius:6, cursor:'nesw-resize' }} />
-            <div title="resize" onMouseDown={onResizeStart('sw')}
-              style={{ position:'absolute', width:12, height:12, left:-6, bottom:-6, background:'#22c55e', borderRadius:6, cursor:'nesw-resize' }} />
-            <div title="resize" onMouseDown={onResizeStart('se')}
-              style={{ position:'absolute', width:12, height:12, right:-6, bottom:-6, background:'#22c55e', borderRadius:6, cursor:'nwse-resize' }} />
+
+          {/* Interactive overlay (no drag on box; only center + corners) */}
+          <div ref={boxRef} style={{ position:"absolute", pointerEvents:"none" }}>
+            {/* Center move handle */}
+            <div
+              ref={centerHandleRef}
+              onMouseDown={handleCenterDragStart}
+              title="Drag to move"
+              style={{
+                position:'absolute',
+                background:'#22c55e',
+                borderRadius:999,
+                boxShadow:'0 0 0 2px #111, 0 0 0 4px rgba(34,197,94,0.75)',
+                cursor:'move',
+                pointerEvents:'auto', // allow interaction
+              }}
+            />
+
+            {/* Corner resize handles */}
+            <div title="Resize" onMouseDown={onResizeStart('nw')}
+              style={{ position:'absolute', width:12, height:12, left:-6, top:-6, background:'#22c55e', borderRadius:6, cursor:'nwse-resize', pointerEvents:'auto' }} />
+            <div title="Resize" onMouseDown={onResizeStart('ne')}
+              style={{ position:'absolute', width:12, height:12, right:-6, top:-6, background:'#22c55e', borderRadius:6, cursor:'nesw-resize', pointerEvents:'auto' }} />
+            <div title="Resize" onMouseDown={onResizeStart('sw')}
+              style={{ position:'absolute', width:12, height:12, left:-6, bottom:-6, background:'#22c55e', borderRadius:6, cursor:'nesw-resize', pointerEvents:'auto' }} />
+            <div title="Resize" onMouseDown={onResizeStart('se')}
+              style={{ position:'absolute', width:12, height:12, right:-6, bottom:-6, background:'#22c55e', borderRadius:6, cursor:'nwse-resize', pointerEvents:'auto' }} />
           </div>
         </div>
 
