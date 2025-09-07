@@ -1,7 +1,7 @@
-// src/App.jsx — Option A integration with Header + Sidebar preserved
+// src/App.jsx — robust Fill wiring with UI-safe guards
 import React, { useEffect, useState } from "react";
 
-// Core UI components
+// Core UI components (ensure these paths/files exist)
 import Header from "./components/Header.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import BingoCard from "./components/BingoCard.jsx";
@@ -11,42 +11,81 @@ import "./styles/bingo.css";
 
 // Grid tuner (Alt+Shift+B) and image utils
 import "./utils/gridBox.js";
-import { fileToImage, cropCells } from "./utils/image.js";
+import * as ImageUtils from "./utils/image.js"; // import as namespace to guard existence
+
+// Simple error boundary to avoid blank screen on render errors
+function ErrorBoundary({ children }) {
+  const [err, setErr] = useState(null);
+  return (
+    <React.Suspense fallback={null}>
+      <Inner onError={setErr}>{children}</Inner>
+      {err && (
+        <div style={{
+          position: "fixed", left: 0, right: 0, bottom: 0, padding: 12,
+          background: "#3a0000", color: "#fff", zIndex: 1000002
+        }}>
+          UI recovered from an error: {String(err)}
+        </div>
+      )}
+    </React.Suspense>
+  );
+}
+function Inner({ children, onError }) {
+  try { return children; } catch (e) { onError?.(e); return null; }
+}
 
 export default function App() {
   const [crops, setCrops] = useState(null);
 
   useEffect(() => {
-    // Ensure global namespace
+    // Guard the utils so a missing export doesn't crash the app
+    const fileToImage = ImageUtils?.fileToImage;
+    const cropCells   = ImageUtils?.cropCells;
+
+    if (typeof fileToImage !== "function" || typeof cropCells !== "function") {
+      console.error(
+        "[App] image utils missing. Expected named exports { fileToImage, cropCells } from ./utils/image.js"
+      );
+    }
+
+    // Ensure namespace
     window.NBT = window.NBT || {};
-    // Expose a setter so other modules (or the overlay) can drop crops in
     window.NBT.setCrops = setCrops;
 
     // === GridBox → Fill hook (Option A) ===
     window.NBT.onGridBoxFill = async (file, { xf, yf }) => {
       try {
+        if (typeof fileToImage !== "function" || typeof cropCells !== "function") {
+          alert("Image utils not available. Check exports in ./utils/image.js");
+          return;
+        }
+
         // 1) File → HTMLImageElement
         const img = await fileToImage(file);
         const w = img.naturalWidth || img.width;
         const h = img.naturalHeight || img.height;
 
         // 2) Fractions → absolute line coords
-        const xs = xf.map((f) => Math.round(f * w));
-        const ys = yf.map((f) => Math.round(f * h));
+        const xs = Array.isArray(xf) ? xf.map((f) => Math.round(f * w)) : [];
+        const ys = Array.isArray(yf) ? yf.map((f) => Math.round(f * h)) : [];
+
+        if (xs.length !== 6 || ys.length !== 6) {
+          console.warn("[App] Expected 6 grid lines each for xs/ys; got", { xs: xs.length, ys: ys.length });
+        }
 
         // 3) Crop into 25 dataURLs using existing util
         const tiles = cropCells(img, { xs, ys, w, h });
 
-        // 4) Store locally for debug/preview and broadcast
+        // 4) Store + broadcast
         setCrops(tiles);
         window.dispatchEvent(
           new CustomEvent("nbt:cropsReady", { detail: { crops: tiles, xs, ys, w, h } })
         );
 
-        // 5) Persist tuned fractions for reuse
+        // 5) Persist tuned fractions
         localStorage.setItem("nbt.gridFractions", JSON.stringify({ xf, yf }));
 
-        // 6) (Optional) If any component exposed a consumer, send it along
+        // 6) Optional downstream hook
         if (typeof window.NBT.consumeCrops === "function") {
           window.NBT.consumeCrops(tiles, { xs, ys, w, h, xf, yf });
         }
@@ -65,7 +104,6 @@ export default function App() {
     };
   }, []);
 
-  // Optional: allow other parts of the app to dispatch crops
   useEffect(() => {
     const onReady = (e) => setCrops(e.detail.crops);
     window.addEventListener("nbt:cropsReady", onReady);
@@ -73,50 +111,52 @@ export default function App() {
   }, []);
 
   return (
-    <div className="App">
-      <Header />
-      <Sidebar />
-      <main className="main-content">
-        <BingoCard />
-      </main>
+    <ErrorBoundary>
+      <div className="App">
+        <Header />
+        <Sidebar />
+        <main className="main-content">
+          <BingoCard />
+        </main>
 
-      {/* Debug badge for crops (safe to remove anytime) */}
-      {Array.isArray(crops) && crops.length === 25 && (
-        <div
-          style={{
-            position: "fixed",
-            left: 16,
-            bottom: 16,
-            zIndex: 1000000,
-            background: "#111a",
-            padding: 8,
-            borderRadius: 8,
-          }}
-        >
-          <div style={{ color: "#0f8", fontSize: 12, marginBottom: 4 }}>
-            {crops.length} crops ready
-          </div>
+        {/* Debug badge for crops (remove anytime) */}
+        {Array.isArray(crops) && crops.length === 25 && (
           <div
             style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(5, 24px)",
-              gap: 4,
-              maxWidth: 160,
+              position: "fixed",
+              left: 16,
+              bottom: 16,
+              zIndex: 1000000,
+              background: "#111a",
+              padding: 8,
+              borderRadius: 8,
             }}
           >
-            {crops.map((src, i) => (
-              <img
-                key={i}
-                src={src}
-                alt={`cell-${i}`}
-                width={24}
-                height={24}
-                style={{ objectFit: "cover" }}
-              />
-            ))}
+            <div style={{ color: "#0f8", fontSize: 12, marginBottom: 4 }}>
+              {crops.length} crops ready
+            </div>
+            <div
+              style={{
+                display: "grid",
+                gridTemplateColumns: "repeat(5, 24px)",
+                gap: 4,
+                maxWidth: 160,
+              }}
+            >
+              {crops.map((src, i) => (
+                <img
+                  key={i}
+                  src={src}
+                  alt={`cell-${i}`}
+                  width={24}
+                  height={24}
+                  style={{ objectFit: "cover" }}
+                />
+              ))}
+            </div>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+      </div>
+    </ErrorBoundary>
   );
 }
