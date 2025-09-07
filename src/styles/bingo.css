@@ -142,20 +142,13 @@ body {
 }
 .bingo-card .card-header {
   display: flex;
-  flex-direction: column; /* stack title above buttons */
   align-items: center;
-  gap: 8px;
+  justify-content: space-between;
+  gap: 10px;
   margin-bottom: 12px;
 }
 .bingo-card .card-title {
   font-weight: 600;
-  text-align: center; /* center title */
-}
-.bingo-card .card-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end; /* right-justify the buttons */
-  width: 100%;
 }
 .bingo-card .card-actions button {
   height: 28px;
