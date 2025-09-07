@@ -258,9 +258,10 @@ function buildTuner() {
   el.id = "nbt-grid-tuner";
 
   const h = document.createElement("h3");
-  h.textContent = "Grid Tuner (Ctrl+Alt+G)";
+  h.textContent = "Grid Tuner (Alt+Shift+G)";
   el.appendChild(h);
 
+  // Inputs
   const fields = [
     makeInput("nbt-inset", "insetFrac", cfg.insetFrac),
     makeInput("nbt-minsep", "minPeakSep", cfg.minPeakSep, "1"),
@@ -270,13 +271,30 @@ function buildTuner() {
   ];
   for (const { label } of fields) el.appendChild(label);
 
-  const row = document.createElement("div"); row.className = "row";
+  // Buttons row 1
+  const row1 = document.createElement("div"); row1.className = "row";
   const applyBtn = document.createElement("button"); applyBtn.textContent = "Apply";
   const saveBtn = document.createElement("button"); saveBtn.textContent = "Save";
   const closeBtn = document.createElement("button"); closeBtn.textContent = "Close";
-  row.append(applyBtn, saveBtn, closeBtn);
-  el.appendChild(row);
+  row1.append(applyBtn, saveBtn, closeBtn);
+  el.appendChild(row1);
 
+  // Buttons row 2 (overlay tools)
+  const row2 = document.createElement("div"); row2.className = "row";
+  const pickBtn = document.createElement("button"); pickBtn.textContent = "Pick Image";
+  const detectBtn = document.createElement("button"); detectBtn.textContent = "Detect";
+  const equalizeBtn = document.createElement("button"); equalizeBtn.textContent = "Equalize 5×5";
+  row2.append(pickBtn, detectBtn, equalizeBtn);
+  el.appendChild(row2);
+
+  // Buttons row 3 (overlay visibility + export)
+  const row3 = document.createElement("div"); row3.className = "row";
+  const toggleOverlayBtn = document.createElement("button"); toggleOverlayBtn.textContent = "Show Overlay";
+  const exportBtn = document.createElement("button"); exportBtn.textContent = "Export Fractions";
+  row3.append(toggleOverlayBtn, exportBtn);
+  el.appendChild(row3);
+
+  // Behaviors
   applyBtn.onclick = () => {
     const next = {
       insetFrac: parseFloat(document.getElementById("nbt-inset").value),
@@ -287,6 +305,10 @@ function buildTuner() {
     };
     window.NBT.grid = { ...window.NBT.grid, ...next };
     console.info("[NBT] Applied grid config:", window.NBT.grid);
+    // If overlay active and target set, re-detect & redraw
+    if (__overlayTargetImg && isOverlayVisible()) {
+      detectAndDrawForTarget();
+    }
   };
 
   saveBtn.onclick = () => {
@@ -296,8 +318,56 @@ function buildTuner() {
 
   closeBtn.onclick = () => el.remove();
 
+  let picking = false;
+  pickBtn.onclick = () => {
+    picking = !picking;
+    pickBtn.textContent = picking ? "Click any image…" : "Pick Image";
+    document.body.style.cursor = picking ? "crosshair" : "";
+  };
+
+  // global click handler for picking
+  const clickOnce = (ev) => {
+    if (!picking) return;
+    if (ev.target && ev.target.tagName === "IMG") {
+      setOverlayTarget(ev.target);
+      console.info("[NBT] Overlay target image set.", ev.target);
+      picking = false;
+      pickBtn.textContent = "Pick Image";
+      document.body.style.cursor = "";
+      ev.preventDefault();
+      ev.stopPropagation();
+      // auto-detect after picking
+      detectAndDrawForTarget();
+    }
+  };
+  // attach once per panel instance
+  el.addEventListener("mousedown", (e) => e.stopPropagation());
+  document.addEventListener("click", clickOnce, { capture: true });
+
+  detectBtn.onclick = () => detectAndDrawForTarget();
+  equalizeBtn.onclick = () => {
+    if (!__overlayGrid) return;
+    const eq = equalizeGridTo5x5(__overlayGrid);
+    __overlayGrid = eq;
+    drawOverlayGrid(eq);
+  };
+
+  toggleOverlayBtn.onclick = () => {
+    if (!__overlay) createOverlayCanvas();
+    const visible = isOverlayVisible();
+    if (visible) { hideOverlay(); toggleOverlayBtn.textContent = "Show Overlay"; }
+    else { showOverlay(); toggleOverlayBtn.textContent = "Hide Overlay"; }
+  };
+
+  exportBtn.onclick = () => {
+    if (!__overlayGrid) return;
+    saveGridFractions(__overlayGrid);
+    console.info("[NBT] Exported grid fractions to localStorage (nbt.gridFractions).");
+  };
+
   return el;
 }
+
 
 export function openGridTuner() {
   const existing = document.getElementById("nbt-grid-tuner");
@@ -370,4 +440,124 @@ export async function crop25(imgOrFile) {
 
   // Produce 25 crops
   return cropCells(img, eq);
+}
+
+async function detectAndDrawForTarget() {
+  if (!__overlayTargetImg) return;
+  // Use the displayed image element directly for detection
+  const grid = detectGrid(__overlayTargetImg);
+  drawOverlayGrid(grid);
+}
+
+
+// =============================
+// Overlay (green lines) helpers
+// =============================
+let __overlay = null;
+let __overlayTargetImg = null;
+let __overlayGrid = null;
+
+function createOverlayCanvas() {
+  if (__overlay) return __overlay;
+  const c = document.createElement("canvas");
+  c.id = "nbt-grid-overlay";
+  c.style.position = "absolute";
+  c.style.pointerEvents = "none";
+  c.style.zIndex = "999998";
+  c.style.left = "0";
+  c.style.top = "0";
+  document.body.appendChild(c);
+
+  // Reposition when window changes
+  window.addEventListener("resize", () => positionOverlay());
+  window.addEventListener("scroll", () => positionOverlay(), true);
+
+  __overlay = c;
+  return c;
+}
+
+function positionOverlay() {
+  if (!__overlay || !__overlayTargetImg) return;
+  const r = __overlayTargetImg.getBoundingClientRect();
+  __overlay.width = Math.max(1, Math.floor(r.width));
+  __overlay.height = Math.max(1, Math.floor(r.height));
+  __overlay.style.left = `${Math.floor(r.left + window.scrollX)}px`;
+  __overlay.style.top = `${Math.floor(r.top + window.scrollY)}px`;
+}
+
+function drawOverlayGrid(grid) {
+  if (!__overlay || !__overlayTargetImg || !grid) return;
+  __overlayGrid = grid;
+
+  positionOverlay();
+  const ctx = __overlay.getContext("2d");
+  ctx.clearRect(0, 0, __overlay.width, __overlay.height);
+
+  // Map detected coords (image space) into displayed image space
+  const r = __overlayTargetImg.getBoundingClientRect();
+  const imgW = __overlayTargetImg.naturalWidth || __overlayTargetImg.width;
+  const imgH = __overlayTargetImg.naturalHeight || __overlayTargetImg.height;
+
+  const scaleX = r.width / grid.w;
+  const scaleY = r.height / grid.h;
+
+  ctx.lineWidth = 2;
+  ctx.strokeStyle = "rgba(0,255,140,0.95)"; // bright green
+  ctx.setLineDash([6, 3]);
+
+  // verticals
+  ctx.beginPath();
+  for (const x of grid.xs) {
+    const dx = Math.round(x * scaleX) + 0.5;
+    ctx.moveTo(dx, 0);
+    ctx.lineTo(dx, r.height);
+  }
+  // horizontals
+  for (const y of grid.ys) {
+    const dy = Math.round(y * scaleY) + 0.5;
+    ctx.moveTo(0, dy);
+    ctx.lineTo(r.width, dy);
+  }
+  ctx.stroke();
+
+  // Optional cell markers
+  ctx.setLineDash([]);
+  ctx.fillStyle = "rgba(0,0,0,0.4)";
+  ctx.strokeStyle = "rgba(0,0,0,0.35)";
+  const inset = 6;
+  for (let row = 0; row < grid.ys.length - 1; row++) {
+    for (let col = 0; col < grid.xs.length - 1; col++) {
+      const x0 = Math.round(grid.xs[col] * scaleX);
+      const x1 = Math.round(grid.xs[col + 1] * scaleX);
+      const y0 = Math.round(grid.ys[row] * scaleY);
+      const y1 = Math.round(grid.ys[row + 1] * scaleY);
+      const cx = Math.round((x0 + x1) / 2);
+      const cy = Math.round((y0 + y1) / 2);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+    }
+  }
+}
+
+function showOverlay() {
+  createOverlayCanvas();
+  if (__overlay) __overlay.style.display = "block";
+  positionOverlay();
+  if (__overlayGrid) drawOverlayGrid(__overlayGrid);
+}
+
+function hideOverlay() {
+  if (__overlay) __overlay.style.display = "none";
+}
+
+function setOverlayTarget(imgEl) {
+  __overlayTargetImg = imgEl;
+  if (!imgEl) { hideOverlay(); return; }
+  showOverlay();
+}
+
+export function isOverlayVisible() {
+  return !!(__overlay && __overlay.style.display !== "none");
 }
