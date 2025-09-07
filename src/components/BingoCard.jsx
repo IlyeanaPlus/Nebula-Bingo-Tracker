@@ -242,7 +242,7 @@ export default function BingoCard({
         })}
       </div>
 
-      {/* Grid tuner modal */}
+      {/* Grid tuner modal (portaled) */}
       {showTuner && (
         <GridTunerModal
           imageSrc={pendingImageSrc}
