@@ -84,37 +84,6 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
 
   const spritesReady = !!manifest && Object.keys(manifest).length > 0;
 
-  // Convert a dataURL crop to fixed-size ImageData (unboard/normalize step for matcher)
-  function dataURLToFixedImageData(dataUrl, size = 64) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.crossOrigin = "anonymous";
-      img.onload = () => {
-        try {
-          const c = document.createElement("canvas");
-          c.width = size;
-          c.height = size;
-          const ctx = c.getContext("2d", { willReadFrequently: true });
-          ctx.imageSmoothingEnabled = false;
-
-          // cover-fit into square to normalize aspect and implicit 'unboard'
-          const scale = Math.max(size / img.width, size / img.height);
-          const w = img.width * scale;
-          const h = img.height * scale;
-          const x = (size - w) / 2;
-          const y = (size - h) / 2;
-          ctx.clearRect(0, 0, size, size);
-          ctx.drawImage(img, 0, 0, img.width, img.height, x, y, w, h);
-
-          const id = ctx.getImageData(0, 0, size, size);
-          resolve(id);
-        } catch (e) { reject(e); }
-      };
-      img.onerror = reject;
-      img.src = dataUrl;
-    });
-  }
-
   // --- Title rename flow ---
   function startRename() { setRenaming(true); }
 
@@ -193,15 +162,33 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       if (spritesReady) {
         const refIndex = await prepareRefIndex(normalizeManifest(manifest));
         const refList = Array.isArray(refIndex) ? refIndex : (refIndex?.list || []);
+
         if (!Array.isArray(refList) || refList.length === 0) {
           console.warn("[useBingoCard] No reference sprites available for matching.");
           setProgress(100);
         } else {
           for (let i = 0; i < 25; i++) {
             try {
-              // ✅ Adapter: convert crop (dataURL) → ImageData your matcher expects
-              const cropId = await dataURLToFixedImageData(crops[i], 64);
-              const best = await findBestMatch(cropId, refList); // pass the array, not the index object
+              const cropUrl = crops[i]; // << dataURL string from computeCrops25
+
+              // Guard: ensure crop is a string (URL). If not, try to adapt.
+              let input = cropUrl;
+              if (typeof input !== "string") {
+                console.warn("[useBingoCard] crop is not a URL, adapting @ cell", i, input);
+                // Fallback adapter for ImageData/Canvas if it somehow happens:
+                if (input && input.data && input.width && input.height) {
+                  const c = document.createElement("canvas");
+                  c.width = input.width; c.height = input.height;
+                  const ctx = c.getContext("2d"); ctx.putImageData(input, 0, 0);
+                  input = c.toDataURL("image/png");
+                } else if (input && input.toDataURL) {
+                  input = input.toDataURL("image/png");
+                } else {
+                  throw new Error("Unsupported crop type");
+                }
+              }
+
+              const best = await findBestMatch(input, refList); // << pass array of refs
               next[i] = best
                 ? { label: best.name, matchKey: best.key, matchUrl: best.src }
                 : null;
@@ -215,6 +202,7 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       } else {
         setProgress(100);
       }
+
 
       setResults(next);
       onChange?.({ ...(card || {}), title, cells: next, fractions: sqNorm });
