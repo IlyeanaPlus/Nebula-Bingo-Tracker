@@ -32,6 +32,7 @@
   let dragging = false, resizing = false;
   let dragOffsetX = 0, dragOffsetY = 0;
   let resizeDir = "";
+
   // Square lock
   const LOCK_SQUARE = true;
   let resizeAnchorX = 0, resizeAnchorY = 0;
@@ -75,6 +76,7 @@
 #nbt-gridbox-rect {
   position:absolute; border:2px solid #0f8; box-shadow:0 0 0 1px rgba(0,0,0,.4);
   pointer-events:auto; cursor:move; border-radius:6px; background:transparent;
+  z-index: ${Z_PANEL}; /* ensure drag box is above everything */
 }
 .nbt-handle {
   position:absolute; width:12px; height:12px; background:#0f8; border:1px solid #063;
@@ -117,9 +119,9 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
       btn("Save Fractions", onSaveFractions)
     );
     const r3 = row(
-      btn("Fill", onFill),                // NEW: fill the card
+      btn("Fill", onFill),
       btn("Remove Image", removePickedImage),
-      btn("Close", closeEverything)       // NEW: removes ALL (overlay+tuner+image)
+      btn("Close", closeEverything) // removes ALL (panel, overlay, image, listeners)
     );
 
     const hint = document.createElement("div");
@@ -266,6 +268,7 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
 
     box = document.createElement("div");
     box.id = "nbt-gridbox-rect";
+    box.style.zIndex = String(Z_PANEL); // belt & suspenders
     box.addEventListener("mousedown", onBoxMouseDown);
     document.body.appendChild(box);
 
@@ -571,7 +574,7 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     if (panel && document.body.contains(panel)) panel.remove();
     panel = buildPanel();
     document.body.appendChild(panel);
-    attachGlobalListeners();
+    attachGlobalListeners(); // ensure page listeners attached
   }
 
   function ensureHotkey() {

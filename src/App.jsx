@@ -1,63 +1,105 @@
-// src/App.jsx — Option A drop-in
-import React, { useEffect } from "react";
-import BingoCard from "./components/BingoCard.jsx";   // keep your existing app render
+// src/App.jsx — Option A integration with Header + Sidebar preserved
+import React, { useEffect, useState } from "react";
+
+// Core UI components
+import Header from "./components/Header.jsx";
+import Sidebar from "./components/Sidebar.jsx";
+import BingoCard from "./components/BingoCard.jsx";
+
+// Styles
 import "./styles/bingo.css";
 
-// Side-effect import: opens the centered reference-image grid box (Alt+Shift+B)
+// Side-effect overlay (Alt+Shift+B to open the tuner)
 import "./utils/gridBox.js";
 
-// Use your image utils to avoid re-implementing cropping
+// Use your existing image utilities
 import { fileToImage, cropCells } from "./utils/image.js";
 
-function App() {
+export default function App() {
+  const [crops, setCrops] = useState(null);
+
   useEffect(() => {
-    // Define the Option A hook the grid box will call
+    // Expose a setter so other modules (or the overlay) can drop crops in
     window.NBT = window.NBT || {};
+    window.NBT.setCrops = setCrops;
+
+    // Main hook called by GridBox → we generate 25 crops and broadcast them
     window.NBT.onGridBoxFill = async (file, { xf, yf }) => {
-      try {
-        // 1) File -> HTMLImageElement
-        const img = await fileToImage(file);
-        const w = img.naturalWidth || img.width;
-        const h = img.naturalHeight || img.height;
+      const img = await fileToImage(file);
+      const w = img.naturalWidth || img.width;
+      const h = img.naturalHeight || img.height;
 
-        // 2) Fractions -> absolute line coords
-        const xs = xf.map(f => Math.round(f * w));
-        const ys = yf.map(f => Math.round(f * h));
+      const xs = xf.map(f => Math.round(f * w));
+      const ys = yf.map(f => Math.round(f * h));
 
-        // 3) Crop into 25 tiles using your existing utility
-        const crops = cropCells(img, { xs, ys, w, h }); // returns 25 dataURLs
+      const tiles = cropCells(img, { xs, ys, w, h });
 
-        // 4) Broadcast for any component to consume
-        window.dispatchEvent(
-          new CustomEvent("nbt:cropsReady", { detail: { crops, xs, ys, w, h } })
-        );
+      setCrops(tiles);
+      window.dispatchEvent(
+        new CustomEvent("nbt:cropsReady", { detail: { crops: tiles, xs, ys, w, h } })
+      );
 
-        // 5) Optional: if you expose a global setter somewhere (e.g., in BingoCard)
-        if (typeof window.NBT.setCrops === "function") {
-          window.NBT.setCrops(crops);
-        }
-
-        // Persist fractions for consistency
-        localStorage.setItem("nbt.gridFractions", JSON.stringify({ xf, yf }));
-
-        console.info("[App] GridBox Fill complete — 25 crops generated.");
-      } catch (err) {
-        console.error("[App] onGridBoxFill failed:", err);
-        alert("Failed to fill from grid box. See console for details.");
-      }
+      localStorage.setItem("nbt.gridFractions", JSON.stringify({ xf, yf }));
+      console.info("[App] GridBox Fill complete — 25 crops ready.");
     };
 
-    // Cleanup on unmount (hot reload safety)
     return () => {
-      if (window.NBT) delete window.NBT.onGridBoxFill;
+      if (window.NBT?.onGridBoxFill) delete window.NBT.onGridBoxFill;
+      if (window.NBT?.setCrops === setCrops) delete window.NBT.setCrops;
     };
+  }, []);
+
+  useEffect(() => {
+    const onReady = (e) => setCrops(e.detail.crops);
+    window.addEventListener("nbt:cropsReady", onReady);
+    return () => window.removeEventListener("nbt:cropsReady", onReady);
   }, []);
 
   return (
     <div className="App">
-      <BingoCard />
+      <Header />
+      <Sidebar />
+      <main className="main-content">
+        <BingoCard />
+      </main>
+
+      {/* Debug badge for crops */}
+      {Array.isArray(crops) && crops.length === 25 && (
+        <div
+          style={{
+            position: "fixed",
+            left: 16,
+            bottom: 16,
+            zIndex: 1000000,
+            background: "#111a",
+            padding: 8,
+            borderRadius: 8,
+          }}
+        >
+          <div style={{ color: "#0f8", fontSize: 12, marginBottom: 4 }}>
+            {crops.length} crops ready
+          </div>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(5, 24px)",
+              gap: 4,
+              maxWidth: 160,
+            }}
+          >
+            {crops.map((src, i) => (
+              <img
+                key={i}
+                src={src}
+                alt={`cell-${i}`}
+                width={24}
+                height={24}
+                style={{ objectFit: "cover" }}
+              />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
-
-export default App;
