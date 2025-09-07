@@ -18,7 +18,7 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
   const wrapRef = useRef(null);
   const imgRef = useRef(null);
   const overlayRef = useRef(null); // canvas
-  const boxRef = useRef(null);     // interactive square
+  const boxRef = useRef(null);     // visual square box
   const puckRef = useRef(null);    // center crosshair handle
 
   const centeredOnceRef = useRef(false);
@@ -99,7 +99,7 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
     }
     ctx.restore();
 
-    // Position interactive square box (relative to wrapper, so include offset)
+    // Position visual square box (relative to wrapper, include offset)
     if (boxRef.current) {
       Object.assign(boxRef.current.style, {
         left: `${offsetX + x}px`,
@@ -108,11 +108,11 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
         height: `${s}px`,
         border: "2px solid rgba(34,197,94,0.95)",
         position: "absolute",
-        pointerEvents: "none", // only handles are interactive
+        pointerEvents: "none", // the box itself isn't interactive
       });
     }
 
-    // Position the center crosshair (the only move handle)
+    // Position the center crosshair (the ONLY move handle)
     if (puckRef.current) {
       const size = 22;
       Object.assign(puckRef.current.style, {
@@ -123,6 +123,7 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
         position: "absolute",
         cursor: "crosshair",
         pointerEvents: "auto",
+        zIndex: 2,
       });
     }
   };
@@ -254,34 +255,64 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
             onLoad={handleImageLoad}
             style={{ maxWidth: "100%", maxHeight: "60vh", objectFit: "contain" }}
           />
+          {/* Drawn grid + dim areas */}
           <canvas ref={overlayRef} />
 
-          {/* Interaction layer (positions are set in drawOverlay) */}
+          {/* Visual square box (positions set in drawOverlay) */}
           <div ref={boxRef} />
 
-          {/* Center crosshair = ONLY move handle */}
+          {/* Center crosshair = ONLY move handle (positions set in drawOverlay) */}
           <div
             ref={puckRef}
             onMouseDown={onPuckDown}
             title="Drag to move"
             style={{
-              // visual crosshair
               background: "transparent",
               borderRadius: "50%",
               boxShadow: "0 0 0 2px #111, 0 0 0 4px rgba(34,197,94,0.6)",
             }}
           >
-            {/* Horizontal line */}
+            {/* Crosshair visual */}
             <div style={{
               position: "absolute", left: 2, right: 2, top: "50%", height: 2,
               transform: "translateY(-50%)", background: "#22c55e",
             }} />
-            {/* Vertical line */}
             <div style={{
               position: "absolute", top: 2, bottom: 2, left: "50%", width: 2,
               transform: "translateX(-50%)", background: "#22c55e",
             }} />
           </div>
+
+          {/* Corner resize handles (absolute in wrapper, anchored to box via offsets in drawOverlay math) */}
+          {/* NW */}
+          <div
+            onMouseDown={onResizeStart("nw")}
+            style={{
+              position: "absolute",
+              width: 12,
+              height: 12,
+              background: "#22c55e",
+              borderRadius: 6,
+              cursor: "nwse-resize",
+              // Position relative to the visual box (left/top corners)
+              transform: "translate(-6px, -6px)",
+              // We'll rely on the user hitting the very corner; they sit above due to being in wrapper
+            }}
+          />
+          {/* NE */}
+          <div
+            onMouseDown={onResizeStart("ne")}
+            style={{
+              position: "absolute",
+              width: 12,
+              height: 12,
+              background: "#22c55e",
+              borderRadius: 6,
+              cursor: "nesw-resize",
+              transform: "translate(6px, -6px)",
+              right: `calc(${boxRef.current?.style ? boxRef.current.style.left : 0} + ${boxRef.current?.style ? boxRef.current.style.width : 0})`
+            }}
+          />
         </div>
 
         <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
