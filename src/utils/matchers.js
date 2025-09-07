@@ -7,6 +7,10 @@
 //
 // Enable debug logs with ?debug or localStorage('nbt.debug'='1').
 
+// --- Debug helper ---
+let NBT_DEBUG = true;
+function dlog(...args) { if (NBT_DEBUG) console.log('[matcher]', ...args); }
+
 const SIZE = 32;
 const BINS = 8;
 const OFF = [-2, -1, 0, 1, 2];
@@ -346,6 +350,7 @@ export async function prepareRefIndex(manifest) {
 
 // ---------- Public: find best match ----------
 export async function findBestMatch(cropDataURL, refIndex, opts = {}) {
+  dlog('findBestMatch called', {cropType: typeof crop, refCount: Array.isArray(refIndex)? refIndex.length: (refIndex? Object.keys(refIndex).length:0)});
   const {
     shortlistK = SHORTLIST_K,
     // Acceptance: either classic SSIM/MSE or high NCC
