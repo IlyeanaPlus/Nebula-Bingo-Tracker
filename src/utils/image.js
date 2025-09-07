@@ -322,3 +322,51 @@ export function openGridTuner() {
 window.NBT = window.NBT || {};
 window.NBT.openGridTuner = openGridTuner;
 window.NBT.resetGridConfig = () => { writeConfig(getDefaultConfig()); window.NBT.grid = readConfig(); };
+
+// -----------------------------
+// v2 Baseline Compatibility — crop25()
+// -----------------------------
+// Equalize detected grid to exactly 5x5 by spacing evenly between the first
+// and last detected lines on each axis. This matches the v2 baseline behavior.
+function equalizeAxisTo5(lines, span) {
+  if (!lines || lines.length < 2) {
+    // fallback: full span
+    return [0, span * 0.2, span * 0.4, span * 0.6, span * 0.8, span];
+  }
+  const first = lines[0];
+  const last = lines[lines.length - 1];
+  const total = Math.max(1, last - first);
+  // 6 delimiters for 5 cells
+  const out = [];
+  for (let i = 0; i <= 5; i++) {
+    out.push(Math.round(first + (total * i) / 5));
+  }
+  // clamp to [0, span]
+  return out.map(v => Math.min(span, Math.max(0, v)));
+}
+
+export function equalizeGridTo5x5(grid) {
+  const { xs, ys, w, h } = grid;
+  const ex = equalizeAxisTo5(xs, w);
+  const ey = equalizeAxisTo5(ys, h);
+  return { xs: ex, ys: ey, w, h };
+}
+
+/**
+ * crop25(imgOrFile) -> Promise<string[]>
+ * - Accepts an HTMLImageElement or a File
+ * - Detects the grid, equalizes to 5x5, saves fractions, and returns 25 dataURLs
+ */
+export async function crop25(imgOrFile) {
+  const img = (imgOrFile instanceof File) ? await fileToImage(imgOrFile) : imgOrFile;
+
+  // Detect grid (adaptive) and equalize to 5x5 boundaries
+  const detected = detectGrid(img);
+  const eq = equalizeGridTo5x5(detected);
+
+  // Persist fractions (so repeated runs are consistent across same source)
+  saveGridFractions(eq);
+
+  // Produce 25 crops
+  return cropCells(img, eq);
+}
