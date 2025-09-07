@@ -20,7 +20,8 @@ export default function BingoCardView({
   onToggleCell,
   onPickImage,
   onRemove,
-  fileInput,
+  // CHANGED: accept props for a hidden file input (from useBingoCard)
+  fileInputProps,
 }) {
   const safeCells = Array.isArray(cells) && cells.length === 25 ? cells : Array(25).fill(null);
   const safeChecked = Array.isArray(checked) && checked.length === 25 ? checked : Array(25).fill(false);
@@ -40,7 +41,8 @@ export default function BingoCardView({
         <div className="card-actions">
           <button className="btn" onClick={onPickImage} disabled={analyzing}>Fill</button>
           <button className="btn danger" onClick={onRemove} disabled={analyzing}>Remove</button>
-          {fileInput}
+          {/* CHANGED: render the hidden file input here */}
+          <input {...fileInputProps} />
         </div>
       </div>
 
