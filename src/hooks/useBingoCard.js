@@ -23,7 +23,7 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
 
   function startRename(){ setRenaming(true); }
   function submitRename(e){ e?.preventDefault?.(); setRenaming(false); onChange?.({ ...(card||{}), title }); }
-  function onTitleChange(e){ setTitle(e.target.value); }
+  function onTitleChange(e){ setTitle(e.target.value); onChange?.({ ...(card||{}), title: e.target.value, cells: results, checked }); }
 
   function pickImage(){ fileRef.current?.click(); }
   function onPickFile(e){
@@ -60,10 +60,8 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
 
   function toggleCell(i){ setChecked(prev=>{ const copy=prev.slice(); copy[i]=!copy[i]; onChange?.({ ...(card||{}), title, cells: results, checked: copy }); return copy; }); }
 
-  function saveCard(){ const payload={title, fractions, matches:results, checked, ts:new Date().toISOString()}; const blob=new Blob([JSON.stringify(payload,null,2)],{type:"application/json"}); const url=URL.createObjectURL(blob); const a=document.createElement("a"); a.href=url; a.download=`${(title||"card").replace(/\s+/g,'_').toLowerCase()}.json`; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url); }
-
   return { title, renaming, analyzing, progress, spritesReady, cells:results, checked,
-    startRename, submitRename, onTitleChange, pickImage, saveCard, onRemove, toggleCell,
+    startRename, submitRename, onTitleChange, pickImage, onRemove, toggleCell,
     fileInputProps:{ ref:fileRef, type:'file', accept:'image/*', style:{display:'none'}, onChange:onPickFile },
     showTuner, pendingImageSrc, fractions, confirmTuner, cancelTuner };
 }

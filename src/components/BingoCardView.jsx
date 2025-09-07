@@ -19,7 +19,6 @@ export default function BingoCardView({
   checked,
   onToggleCell,
   onPickImage,
-  onSave,
   onRemove,
   fileInput,
 }) {
@@ -40,7 +39,6 @@ export default function BingoCardView({
 
         <div className="card-actions">
           <button className="btn" onClick={onPickImage} disabled={analyzing}>Fill</button>
-          <button className="btn" onClick={onSave} disabled={analyzing}>Save</button>
           <button className="btn danger" onClick={onRemove} disabled={analyzing}>Remove</button>
           {fileInput}
         </div>

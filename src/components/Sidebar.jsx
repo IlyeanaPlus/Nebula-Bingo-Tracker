@@ -7,7 +7,6 @@ export default function Sidebar({
   currentIndex = 0,
   onSelect,
   onNewCard,
-  onClearSaved,
   onGetSprites,          // parent callback receives the loaded index
   spritesLoaded = 0,     // parent-provided live progress (optional)
   spritesTotal = 0,      // parent-provided live progress (optional)
@@ -59,7 +58,6 @@ export default function Sidebar({
 
         <div className="row">
           <button className="btn" onClick={onNewCard}>New Card</button>
-          <button className="btn danger" onClick={onClearSaved}>Clear Saved</button>
         </div>
 
         {typeof spritesTotal === "number" && spritesTotal > 0 ? (
@@ -83,7 +81,6 @@ export default function Sidebar({
                 title={c?.title || `Card ${i + 1}`}
               >
                 <div className="name">{c?.title || `Card ${i + 1}`}</div>
-                {c?.saved ? <div className="tag">saved</div> : null}
               </button>
             ))
           )}
