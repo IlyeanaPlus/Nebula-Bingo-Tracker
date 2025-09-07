@@ -118,7 +118,7 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     });
   }
 
-  // Provide both a ready element and props (supports either usage in the view)
+  // Provide props for a hidden file input (render it in the view)
   const fileInputProps = {
     ref: fileRef,
     type: "file",
@@ -126,7 +126,6 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     style: { display: "none" },
     onChange: onPickFile,
   };
-  const fileInput = (<input {...fileInputProps} />);
 
   return {
     // State for the view
@@ -146,9 +145,8 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     onRemove, // passed through for the header Remove button
     toggleCell,
 
-    // Hidden file input (use either one)
+    // Hidden file input props (render with: <input {...h.fileInputProps} />)
     fileInputProps,
-    fileInput,
 
     // Tuner modal plumbing
     showTuner,
