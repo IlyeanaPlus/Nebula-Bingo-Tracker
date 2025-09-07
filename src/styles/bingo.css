@@ -318,3 +318,18 @@ button:hover { background: #333; }
 .progress-bar { width: 100%; height: 6px; border-radius: 999px; background: #1a1a1a; border: 1px solid #262626; overflow: hidden; }
 .progress-fill { height: 100%; width: 0%; background: #3aa76d; transition: width .15s linear; }
 .progress-meta { margin-top: 6px; font-size: 12px; opacity: .85; }
+
+/* Force exactly 3 cards per row */
+.cards {
+  display: grid !important;
+  grid-template-columns: repeat(3, 450px); /* 3 fixed-width cards per row */
+  gap: 20px;                                /* space between cards */
+  justify-content: center;                  /* center the grid in its container */
+  align-items: start;
+}
+
+/* Ensure cards don’t shrink/stretch */
+.card {
+  width: 450px !important;
+  flex: none !important;
+}

@@ -17,11 +17,11 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
   const [progress, setProgress] = useState(0);
   const fileInputRef = useRef(null);
 
-  // Rename
+  // --- Rename ---
   function handleRenameClick() { setRenaming(true); }
   function handleRenameSubmit(e) { e.preventDefault(); setRenaming(false); onRename?.(id, name); }
 
-  // Fill pipeline
+  // --- Fill pipeline ---
   function handlePickImage() { fileInputRef.current?.click(); }
   async function onPickFile(e) {
     const file = e.target.files?.[0];
@@ -41,7 +41,6 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
     await new Promise((res, rej) => { img.onload = res; img.onerror = rej; img.src = pendingImageSrc; });
     const crops = computeCrops25(img, newFractions);
 
-    // Match with progress
     setAnalyzing(true);
     setProgress(0);
     try {
@@ -53,6 +52,7 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
   }
   function onTunerCancel() { setShowTuner(false); setPendingImageSrc(null); }
 
+  // --- Check/uncheck cells ---
   function toggleCell(i) {
     setChecked((prev) => {
       const next = prev.slice();
@@ -61,7 +61,7 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
     });
   }
 
-  // Save
+  // --- Save card ---
   function handleSave() {
     const payload = { id, name, fractions, matches: matchResults, checked, ts: new Date().toISOString() };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
@@ -72,13 +72,15 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   }
 
-  // Matcher with progress callback
+  // --- Matcher ---
   async function matchAll(crops, onStep) {
     if (!spritesIndex) return Array(25).fill(null);
     const prepared = prepareRefIndex(spritesIndex);
     const out = [];
     for (let i = 0; i < 25; i++) {
-      const best = await findBestMatch(crops[i], prepared);
+      const cropCanvas = crops[i];
+      const dataURL = cropCanvas.toDataURL("image/png");   // ✅ convert to dataURL
+      const best = await findBestMatch(dataURL, prepared);
       out.push(best || null);
       onStep?.(i);
     }
@@ -88,7 +90,6 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
   return (
     <div className="card">
       <div className="card-header">
-        {/* title centered */}
         <div className="title-row" style={{ justifyContent: "center" }}>
           {renaming ? (
             <form onSubmit={handleRenameSubmit}>
@@ -106,8 +107,6 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
             </h2>
           )}
         </div>
-
-        {/* actions */}
         <div className="actions-row">
           <button className="btn" onClick={handlePickImage}>Fill</button>
           <button className="btn" onClick={handleSave}>Save</button>
@@ -122,7 +121,6 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
         </div>
       </div>
 
-      {/* status + analyzing bar */}
       <div className="bingo-card__status">
         {spritesReady ? <span className="ok">sprites loaded!</span> : <span className="warn">load sprites to enable matching</span>}
         {analyzing && (
@@ -133,12 +131,11 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
         )}
       </div>
 
-      {/* grid */}
       <div className="grid-5x5">
         {Array.from({ length: 25 }, (_, i) => {
           const result = matchResults[i];
           const isChecked = checked[i];
-          const noMatch = !result && !analyzing && pendingImageSrc; // show "no match" after a run
+          const noMatch = !result && !analyzing && pendingImageSrc;
           return (
             <div
               key={i}
@@ -146,8 +143,8 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
               onClick={() => toggleCell(i)}
               title={isChecked ? "Checked" : "Click to mark as done"}
             >
-              {result?.url || result?.dataURL ? (
-                <img className="cell-sprite" src={result.url || result.dataURL} alt={`match-${i}`} />
+              {result?.src ? (
+                <img className="cell-sprite" src={result.src} alt={`match-${i}`} />
               ) : noMatch ? (
                 <div className="cell-text">no match</div>
               ) : (
