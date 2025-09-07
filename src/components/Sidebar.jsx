@@ -10,10 +10,12 @@ export default function Sidebar({
   onGetSprites,          // parent callback receives the loaded index
   spritesLoaded = 0,     // parent-provided live progress (optional)
   spritesTotal = 0,      // parent-provided live progress (optional)
-  spritesReady = false,  // NEW: whether manifest is loaded
+  spritesReady = false,  // whether manifest is loaded
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [loaded, setLoaded] = useState(0);
+  const [total, setTotal] = useState(0);
 
   async function handleGetSprites() {
     setError("");
@@ -25,7 +27,12 @@ export default function Sidebar({
         return;
       }
 
-      await preloadSprites(index, { concurrency: 8 });
+      // Preload all sprites with progress callback
+      await preloadSprites(index, (loadedCount, totalCount) => {
+        setLoaded(loadedCount);
+        setTotal(totalCount);
+      });
+
       onGetSprites?.(index);
     } catch (e) {
       console.error(e);
@@ -60,11 +67,11 @@ export default function Sidebar({
           <button className="btn" onClick={onNewCard}>New Card</button>
         </div>
 
-        {typeof spritesTotal === "number" && spritesTotal > 0 ? (
+        {(total > 0) && (
           <div className="row small">
-            <div>Sprite Cache: {spritesLoaded} / {spritesTotal}</div>
+            <div>Sprite Cache: {loaded} / {total}</div>
           </div>
-        ) : null}
+        )}
 
         <div className="divider" />
 

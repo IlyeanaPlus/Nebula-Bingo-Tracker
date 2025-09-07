@@ -13,7 +13,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
       onRenameStart={bc.startRename} onRenameSubmit={bc.submitRename} onTitleChange={bc.onTitleChange}
       analyzing={bc.analyzing} progress={bc.progress} spritesReady={bc.spritesReady}
       cells={bc.cells} checked={bc.checked} onToggleCell={bc.toggleCell}
-      onPickImage={bc.pickImage} onSave={bc.saveCard} onRemove={bc.onRemove}
+      onPickImage={bc.pickImage} onRemove={bc.onRemove}
       fileInput={<input {...bc.fileInputProps}/>}
     />
     {bc.showTuner && (<GridTunerModal imageSrc={bc.pendingImageSrc} initialFractions={bc.fractions} onConfirm={bc.confirmTuner} onCancel={bc.cancelTuner}/>)}

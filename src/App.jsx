@@ -29,7 +29,7 @@ export default function App() {
       const raw = localStorage.getItem(LS_KEYS.CARDS);
       if (raw) return JSON.parse(raw);
     } catch {}
-    return [makeBlankCard("Card 1")];
+    return [makeBlankCard("New Card")];
   });
   const [currentIndex, setCurrentIndex] = useState(() => {
     const raw = localStorage.getItem(LS_KEYS.CURRENT);
@@ -66,10 +66,6 @@ export default function App() {
     setCurrentIndex(i);
   }
 
-  function handleClearSaved() {
-    setCards((prev) => prev.map((c) => ({ ...c, saved: false })));
-  }
-
   function handleUpdateCard(nextCard) {
     setCards((prev) => prev.map((c, i) => (i === currentIndex ? nextCard : c)));
   }
@@ -93,7 +89,6 @@ export default function App() {
           currentIndex={currentIndex}
           onSelect={handleSelectCard}
           onNewCard={handleNewCard}
-          onClearSaved={handleClearSaved}
           onGetSprites={handleGetSprites}
           spritesReady={!!manifest && Object.keys(manifest || {}).length > 0}
         />

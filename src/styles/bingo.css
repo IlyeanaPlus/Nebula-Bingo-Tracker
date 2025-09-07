@@ -170,7 +170,7 @@ body {
   background: #1d1d1d;
   border: 1px solid #2a2a2a;
   border-radius: 8px;
-  color: #232323;
+  color: #e8e8e8;
   cursor: pointer;
 }
 .bingo-card .card-actions button:hover {
@@ -262,3 +262,19 @@ body {
 .fill-bar { height: 8px; background: #222; border-radius: 999px; overflow: hidden; }
 .fill-bar-inner { height: 100%; background: #3aa76d; width: 0%; transition: width .2s linear; }
 .fill-meta { margin-top: 8px; font-size: 12px; opacity: .85; }
+
+/* Rename input inside card header */
+.rename-form input {
+  background: #0b0b0b;   /* dark background */
+  color: #e8e8e8;        /* light text */
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 4px 8px;
+}
+
+/* Optional: tweak focus outline */
+.rename-form input:focus {
+  outline: none;
+  border-color: var(--accent); /* use your theme accent color */
+}
+
