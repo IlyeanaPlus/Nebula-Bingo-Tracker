@@ -1,6 +1,6 @@
 // src/components/Sidebar.jsx
 import React, { useState } from "react";
-import { getSprites } from "../utils/sprites";
+import { getSprites, preloadSprites } from "../utils/sprites";
 
 export default function Sidebar({
   cards = [],
@@ -8,32 +8,34 @@ export default function Sidebar({
   onSelect,
   onNewCard,
   onClearSaved,
-  onGetSprites,          // parent callback will receive the loaded index
-  spritesLoaded = 0,     // optional live preload progress from parent
-  spritesTotal = 0,      // optional live preload total from parent
+  onGetSprites,          // parent callback receives the loaded index
+  spritesLoaded = 0,     // parent-provided live progress (optional)
+  spritesTotal = 0,      // parent-provided live progress (optional)
 }) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [loadedMeta, setLoadedMeta] = useState(null); // { count, ts }
-
+  const [localProgress, setLocalProgress] = useState({ loaded: 0, total: 0, done: false });
   const savedCount = cards.filter((c) => c?.saved).length;
 
-  // Prefer parent progress if provided; fall back to the count we just fetched
+  // Prefer parent progress if provided; otherwise use local preload progress
   const haveParentProgress = spritesTotal > 0;
-  const pct = haveParentProgress
-    ? Math.round((spritesLoaded / spritesTotal) * 100)
-    : (loadedMeta ? 100 : 0);
+  const loaded = haveParentProgress ? spritesLoaded : localProgress.loaded;
+  const total = haveParentProgress ? spritesTotal : localProgress.total;
+  const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+  const showProgress = total > 0 || haveParentProgress;
 
   async function handleGetSprites() {
     setError("");
     setLoading(true);
+    setLocalProgress({ loaded: 0, total: 0, done: false });
+
     try {
-      // Load /drive_cache.json and filter to .png URLs
+      // 1) Load /public/drive_cache.json
       const index = await getSprites();
-      // Update local meta for display
-      setLoadedMeta({ count: Object.keys(index).length, ts: new Date().toLocaleTimeString() });
-      // Hand off to parent (app state owns spritesIndex)
       onGetSprites?.(index);
+
+      // 2) Optionally warm the cache & drive progress bar (remove if you don't want preloading)
+      await preloadSprites(index, (l, t) => setLocalProgress({ loaded: l, total: t, done: l === t }));
     } catch (e) {
       setError(e?.message ? String(e.message) : "Failed to load drive_cache.json");
     } finally {
@@ -56,35 +58,18 @@ export default function Sidebar({
           <button className="btn" onClick={onNewCard}>New Card</button>
         </div>
 
-        {/* Progress for sprite loading/preloading */}
-        {(haveParentProgress || loadedMeta) && (
+        {showProgress && (
           <div className="progress-wrap" aria-label="Sprites preload progress">
             <div className="progress-bar">
-              <div
-                className="progress-fill"
-                style={{ width: `${pct}%` }}
-              />
+              <div className="progress-fill" style={{ width: `${pct}%` }} />
             </div>
-            <div className="progress-meta" title="Sprite load status">
-              {haveParentProgress ? (
-                <>
-                  {spritesLoaded} / {spritesTotal} ({pct}%)
-                </>
-              ) : loadedMeta ? (
-                <>
-                  Loaded {loadedMeta.count} sprites @ {loadedMeta.ts}
-                </>
-              ) : null}
+            <div className="progress-meta">
+              {loaded} / {total} ({pct}%)
             </div>
           </div>
         )}
 
-        {error && (
-          <div className="meta" style={{ color: "#ff6b6b" }}>
-            {error}
-          </div>
-        )}
-
+        {error && <div className="meta" style={{ color: "#ff6b6b" }}>{error}</div>}
         <div className="meta">Saved cards: {savedCount}</div>
 
         <div className="row">

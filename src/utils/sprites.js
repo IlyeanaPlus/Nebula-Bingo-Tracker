@@ -1,41 +1,110 @@
-// src/utils/sprites.js
-/**
- * getSprites()
- * Loads the reference sprite index from the public drive cache and prepares URLs.
- * Expects: /drive_cache.json in public/ with entries containing .png URLs.
- * Returns a map/object suitable for prepareRefIndex() down the pipeline.
- */
-export async function getSprites() {
-  // Public root fetch
-  const res = await fetch("/drive_cache.json", { cache: "force-cache" });
-  if (!res.ok) {
-    throw new Error(`getSprites: failed to fetch /drive_cache.json (${res.status})`);
-  }
-  const data = await res.json();
+// src/components/Sidebar.jsx
+import React, { useState } from "react";
+import { getSprites, preloadSprites } from "../utils/sprites";
 
-  // Accept both array or object formats; normalize to { key: { url, ... } }
-  const index = {};
-  if (Array.isArray(data)) {
-    // Expect entries like {id, url, name?}
-    for (const entry of data) {
-      if (!entry) continue;
-      const key = entry.id || entry.name || entry.url;
-      if (!key || !entry.url) continue;
-      if (!entry.url.toLowerCase().endsWith(".png")) continue;
-      index[key] = { url: entry.url, name: entry.name || key };
-    }
-  } else if (data && typeof data === "object") {
-    // e.g., { "Bulbasaur": "https://...png", ... } or { key: {url: "..."} }
-    for (const [k, v] of Object.entries(data)) {
-      if (!v) continue;
-      if (typeof v === "string") {
-        if (!v.toLowerCase().endsWith(".png")) continue;
-        index[k] = { url: v, name: k };
-      } else if (v.url && typeof v.url === "string" && v.url.toLowerCase().endsWith(".png")) {
-        index[k] = { url: v.url, name: v.name || k };
-      }
+export default function Sidebar({
+  cards = [],
+  currentIndex = 0,
+  onSelect,
+  onNewCard,
+  onClearSaved,
+  onGetSprites,          // parent callback receives loaded sprite index
+  spritesLoaded = 0,     // optional live preload progress from parent
+  spritesTotal = 0,      // optional live preload total from parent
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [localProgress, setLocalProgress] = useState({ loaded: 0, total: 0 });
+  const [loadedMeta, setLoadedMeta] = useState(null); // { count, ts }
+
+  const savedCount = cards.filter((c) => c?.saved).length;
+
+  // Prefer parent progress if provided; otherwise use local preload progress
+  const haveParentProgress = spritesTotal > 0;
+  const loaded = haveParentProgress ? spritesLoaded : localProgress.loaded;
+  const total = haveParentProgress ? spritesTotal : localProgress.total;
+  const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
+  const showProgress = total > 0 || haveParentProgress;
+
+  async function handleGetSprites() {
+    setError("");
+    setLoading(true);
+    setLocalProgress({ loaded: 0, total: 0 });
+    try {
+      // 1) Load drive_cache.json (path-safe for GH Pages & local dev)
+      const index = await getSprites();
+      setLoadedMeta({ count: Object.keys(index).length, ts: new Date().toLocaleTimeString() });
+      // Hand off to parent so App can store spritesIndex
+      onGetSprites?.(index);
+
+      // 2) Optionally warm the browser cache with preload progress
+      await preloadSprites(index, (l, t) => setLocalProgress({ loaded: l, total: t }));
+    } catch (e) {
+      setError(
+        e?.message?.includes("404")
+          ? "drive_cache.json not found in /public (404)"
+          : e?.message || "Failed to load sprites"
+      );
+    } finally {
+      setLoading(false);
     }
   }
 
-  return index;
+  return (
+    <aside className="sidebar">
+      <div className="panel">
+        <div className="panel-title">Controls</div>
+
+        <div className="row">
+          <button className="btn" onClick={handleGetSprites} disabled={loading}>
+            {loading ? "Loading…" : "Get Sprites"}
+          </button>
+        </div>
+
+        <div className="row">
+          <button className="btn" onClick={onNewCard}>New Card</button>
+        </div>
+
+        {showProgress && (
+          <div className="progress-wrap" aria-label="Sprites preload progress">
+            <div className="progress-bar">
+              <div className="progress-fill" style={{ width: `${pct}%` }} />
+            </div>
+            <div className="progress-meta">
+              {loaded} / {total} ({pct}%)
+            </div>
+          </div>
+        )}
+
+        {loadedMeta && !haveParentProgress && (
+          <div className="meta">Loaded {loadedMeta.count} sprites @ {loadedMeta.ts}</div>
+        )}
+
+        {error && <div className="meta" style={{ color: "#ff6b6b" }}>{error}</div>}
+
+        <div className="meta">Saved cards: {savedCount}</div>
+
+        <div className="row">
+          <button className="btn" onClick={onClearSaved}>Clear Saved</button>
+        </div>
+      </div>
+
+      <div className="panel">
+        <div className="panel-title">Cards</div>
+        <div className="list">
+          {cards.map((c, i) => (
+            <button
+              key={i}
+              className={`list-item ${i === currentIndex ? "active" : ""}`}
+              onClick={() => onSelect?.(i)}
+              title={c?.title || `Card ${i + 1}`}
+            >
+              <div className="name">{c?.title || `Card ${i + 1}`}</div>
+              {c?.saved ? <div className="tag">saved</div> : null}
+            </button>
+          ))}
+        </div>
+      </div>
+    </aside>
+  );
 }
