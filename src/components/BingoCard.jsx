@@ -113,7 +113,6 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
 
   return (
     <div className="card">
-      {/* ... rest unchanged ... */}
       {showTuner && (
         <GridTunerModal
           imageSrc={pendingImageSrc}

@@ -1,6 +1,6 @@
 /* src/styles/bingo.css */
 
-/* ---------- Theme ---------- */
+/* --- Theme variables --- */
 :root {
   --bg: #121212;
   --fg: #e8e8e8;
@@ -11,8 +11,7 @@
   --muted: #b6b6b6;
 }
 
-* { box-sizing: border-box; }
-
+/* --- Base --- */
 body {
   margin: 0;
   background: var(--bg);
@@ -20,22 +19,23 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
 }
 
-/* ---------- App chrome ---------- */
+/* --- App header --- */
 .app-header {
   position: sticky;
   top: 0;
   z-index: 1000;
   display: flex;
+  justify-content: space-between;
   align-items: center;
-  gap: 12px;
   height: 44px;
   padding: 0 12px;
-  background: #000;
-  color: #fff;
+  background: #111;
   border-bottom: 1px solid #222;
+  color: var(--fg);
 }
-.app-header .title { font-weight: 600; }
-.app-header .spacer { flex: 1; }
+.app-header .title {
+  font-weight: 600;
+}
 .app-header .btn {
   padding: 6px 10px;
   background: #242424;
@@ -44,16 +44,14 @@ body {
   color: #eee;
   cursor: pointer;
 }
-.app-header .btn:hover { background: #2b2b2b; }
-.app-header .badge { margin-left: 8px; font-size: 12px; opacity: .8; }
-
-.app {
-  min-height: 100vh;
-  background: #0f0f0f;
-  color: #ddd;
+.app-header .btn:hover {
+  background: #2b2b2b;
 }
 
-/* ---------- Sidebar + main ---------- */
+/* --- Layout: sidebar + main --- */
+.app-body {
+  display: block; /* sidebar is fixed; main flows */
+}
 .sidebar {
   position: fixed;
   top: 44px;
@@ -70,9 +68,21 @@ body {
   padding: 16px;
   min-height: calc(100vh - 44px);
 }
-.sidebar .panel { margin-bottom: 16px; }
-.sidebar .panel-title { font-weight: 600; margin-bottom: 8px; opacity: .85; }
-.sidebar .row { display: flex; gap: 8px; margin-bottom: 8px; }
+
+/* --- Sidebar panels --- */
+.sidebar .panel {
+  margin-bottom: 16px;
+}
+.sidebar .panel-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  opacity: .85;
+}
+.sidebar .row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 8px;
+}
 .sidebar .btn {
   flex: 1;
   padding: 6px 10px;
@@ -82,11 +92,19 @@ body {
   color: #eee;
   cursor: pointer;
 }
-.sidebar .btn:hover { background: #262626; }
-.sidebar .meta { font-size: 12px; opacity: .7; margin: 6px 0 8px; }
-.sidebar .list { display: grid; gap: 6px; }
+.sidebar .btn:hover {
+  background: #262626;
+}
+.sidebar .meta {
+  font-size: 12px;
+  opacity: .7;
+  margin: 6px 0 8px;
+}
+.sidebar .list {
+  display: grid;
+  gap: 6px;
+}
 .sidebar .list-item {
-  text-align: left;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -98,86 +116,71 @@ body {
   color: #ddd;
   cursor: pointer;
 }
-.sidebar .list-item:hover { background: #1a1a1a; }
-.sidebar .list-item.active { border-color: #3aa76d; box-shadow: 0 0 0 1px #3aa76d inset; }
-.sidebar .list-item .tag { font-size: 11px; opacity: .8; background: #223225; padding: 2px 6px; border-radius: 999px; }
+.sidebar .list-item:hover {
+  background: #1a1a1a;
+}
+.sidebar .list-item.active {
+  border-color: #3aa76d;
+  box-shadow: 0 0 0 1px #3aa76d inset;
+}
+.sidebar .list-item .tag {
+  font-size: 11px;
+  opacity: .8;
+  background: #223225;
+  padding: 2px 6px;
+  border-radius: 999px;
+}
 
-.cards { display: flex; flex-wrap: wrap; gap: 20px; }
-
-/* ---------- Card ---------- */
+/* --- Cards layout (unified) --- */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, 450px);
+  gap: 20px;
+  justify-content: center;
+  align-items: start;
+  padding: 16px;
+}
 .card {
+  width: 450px;
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 14px;
-  width: 450px;
   box-shadow: 0 2px 0 #1a1a1a inset, 0 0 0 1px rgba(255,255,255,0.02);
+  flex: none;
 }
-
-/* Title row + Actions row (buttons below title) */
-.card-header {
-  display: grid;
-  grid-template-rows: auto auto;
-  gap: 8px;
-  margin-bottom: 10px;
-}
-
-/* Title row */
-.card-header .title-row {
+.card .card-header {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 10px;
+  margin: -4px 0 12px;
 }
-.card-header .title {
-  margin: 0;
-  font-size: 1.05rem;
-  font-weight: 600;
-  line-height: 1.2;
-  cursor: pointer; /* title is clickable -> rename */
-}
-.card-header .title-inline {
-  height: 30px;
+.card .title-inline {
+  height: 28px;
   padding: 4px 8px;
   background: #171717;
   border: 1px solid #2b2b2b;
   border-radius: 8px;
   color: #eaeaea;
-  font-size: 14px;
 }
-
-/* Actions row (buttons stretch neatly) */
-.card-header .actions-row {
-  display: grid;
-  grid-auto-flow: column;
-  grid-auto-columns: 1fr;
-  gap: 8px;
-}
-.card-header .actions-row .btn,
-.card-header .actions-row button {
-  height: 32px;
+.card .actions button {
+  height: 28px;
   padding: 0 10px;
-  background: #1f1f1f;
-  border: 1px solid #2c2c2c;
-  border-radius: 10px;
-  color: #eee;
+  background: #1d1d1d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  color: #e8e8e8;
   cursor: pointer;
-  font-weight: 600;
 }
-.card-header .actions-row .btn:hover,
-.card-header .actions-row button:hover { background: #262626; }
-
-/* Optional small status under header (e.g. “sprites loaded!”) */
-.bingo-card__status {
-  margin: -4px 0 8px;
-  font-size: 0.92rem;
+.card .actions button:hover {
+  background: #232323;
 }
-.bingo-card__status .ok { color: #7dffb0; }
-.bingo-card__status .warn { color: #ffbd6b; }
 
-/* ---------- Grid (5x5) ---------- */
+/* --- Grid inside cards --- */
 .grid-5x5 {
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(5, 1fr);
   gap: 10px;
   padding: 12px;
   border: 1px solid #1f1f1f;
@@ -185,32 +188,38 @@ body {
   background: #0f0f0f;
 }
 .cell {
-  aspect-ratio: 1 / 1; /* perfect square */
-  width: 100%;
-  height: auto !important;
-  min-height: 0;
+  aspect-ratio: 1 / 1;
   border-radius: 10px;
   background: #141414;
   border: 1px solid #252525;
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.02) inset,
-    0 -1px 0 rgba(0,0,0,0.4) inset;
   display: grid;
   place-items: center;
   cursor: pointer;
-  overflow: hidden;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.02) inset,
+    0 -1px 0 rgba(0,0,0,0.4) inset;
 }
-.cell.complete { outline: 2px solid #3aa76d; outline-offset: -1px; }
 .cell img {
   max-width: 95%;
   max-height: 95%;
   object-fit: contain;
   image-rendering: pixelated;
 }
-.cell-text { font-size: 12px; opacity: .75; }
+.cell.complete {
+  background: #2a4;
+  border-color: #3c6;
+  outline: 2px solid #3aa76d;
+  outline-offset: -1px;
+}
+.cell .cell-text {
+  font-size: 12px;
+  opacity: .75;
+}
 
-/* ---------- Progress (sidebar) ---------- */
-.progress-wrap { margin: 10px 2px 8px; }
+/* --- Progress bar --- */
+.progress-wrap {
+  margin: 10px 2px 8px;
+}
 .progress-bar {
   width: 100%;
   height: 6px;
@@ -225,111 +234,30 @@ body {
   background: #3aa76d;
   transition: width .2s linear;
 }
-.progress-meta { margin-top: 6px; font-size: 12px; opacity: .8; }
-
-/* ---------- Buttons (fallback/global) ---------- */
-button {
-  background: #222;
-  border: 1px solid var(--border);
-  color: var(--fg);
-  border-radius: 8px;
-  padding: 6px 10px;
-  cursor: pointer;
+.progress-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: .8;
 }
-button:hover { background: #333; }
 
-/* ---------- Grid Tuner Modal ---------- */
-.nbt-modal-backdrop {
+/* --- Modal (grid tuner/fill overlay) --- */
+.fill-overlay {
   position: fixed;
   inset: 0;
-  background: rgba(0,0,0,0.6);
+  background: rgba(0,0,0,.5);
   display: grid;
   place-items: center;
-  z-index: 999;
 }
-.nbt-modal {
-  width: min(92vw, 920px);
-  max-height: 90vh;
-  background: #0f0f12;
-  border: 1px solid rgba(255,255,255,0.1);
-  border-radius: 14px;
-  box-shadow: 0 10px 50px rgba(0,0,0,0.6);
-  display: flex;
-  flex-direction: column;
+.fill-box {
+  width: min(460px, 90vw);
+  background: #121212;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 16px;
+  color: #eee;
 }
-.nbt-modal-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 12px;
-  border-bottom: 1px solid rgba(255,255,255,0.08);
-}
-.nbt-modal-header .spacer { flex: 1; }
-.nbt-modal-body { padding: 12px; overflow: auto; }
-.nbt-modal-footer { padding: 8px 12px 12px; color: rgba(255,255,255,0.7); }
-.nbt-btn {
-  padding: 8px 10px;
-  border-radius: 10px;
-  border: 1px solid rgba(255,255,255,0.2);
-  background: rgba(255,255,255,0.06);
-  color: #fff;
-  font-weight: 600;
-  transition: transform .04s ease, background .15s ease, border-color .15s ease;
-}
-.nbt-btn:hover { background: rgba(255,255,255,0.12); }
-.nbt-btn:active { transform: translateY(1px); }
-.nbt-btn.ghost { background: transparent; }
-.nbt-btn.subtle { background: rgba(255,255,255,0.04); }
-.nbt-btn.wide { width: 100%; }
-
-/* ---------- Clean-ups ---------- */
-/* Removed all Debug Crops styles — that feature is gone now */
-
-/* src/styles/bingo.center-title.css */
-
-/* Center the title row within card header */
-.card .title-row {
-  justify-content: center;
-}
-
-/* Cards container */
-.cards {
-  display: flex;
-  flex-wrap: wrap;          /* allow wrapping */
-  gap: 20px;
-  align-items: flex-start;  /* align rows neatly at the top */
-}
-
-/* Individual card */
-.card {
-  width: 450px;             /* fixed width */
-  flex: 0 0 auto;           /* don’t stretch, don’t shrink */
-}
-
-/* Checked cells go green */
-.cell.complete {
-  background: #2a4 !important;
-  border-color: #3c6 !important;
-  outline: 2px solid #3aa76d;
-  outline-offset: -1px;
-}
-
-/* Progress bar is already defined in your CSS; these ensure visibility */
-.progress-bar { width: 100%; height: 6px; border-radius: 999px; background: #1a1a1a; border: 1px solid #262626; overflow: hidden; }
-.progress-fill { height: 100%; width: 0%; background: #3aa76d; transition: width .15s linear; }
-.progress-meta { margin-top: 6px; font-size: 12px; opacity: .85; }
-
-/* Force exactly 3 cards per row */
-.cards {
-  display: grid !important;
-  grid-template-columns: repeat(3, 450px); /* 3 fixed-width cards per row */
-  gap: 20px;                                /* space between cards */
-  justify-content: center;                  /* center the grid in its container */
-  align-items: start;
-}
-
-/* Ensure cards don’t shrink/stretch */
-.card {
-  width: 450px !important;
-  flex: none !important;
-}
+.fill-title { font-weight: 600; margin-bottom: 10px; }
+.fill-bar { height: 8px; background: #222; border-radius: 999px; overflow: hidden; }
+.fill-bar-inner { height: 100%; background: #3aa76d; width: 0%; transition: width .2s linear; }
+.fill-meta { margin-top: 8px; font-size: 12px; opacity: .85; }
+.fill-hint { margin-top: 8px; font-size: 12px; opacity: .7; }
