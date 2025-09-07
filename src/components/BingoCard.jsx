@@ -1,21 +1,40 @@
 // src/components/BingoCard.jsx
 import React from "react";
-import BingoCardView from "./BingoCardView.jsx";
-import GridTunerModal from "./GridTunerModal.jsx";
 import useBingoCard from "../hooks/useBingoCard";
+import BingoCardView from "./BingoCardView";
+import GridTunerModal from "./GridTunerModal";
 
-/** Container: wires logic (hook) to the presentational view. UI is protected in BingoCardView.jsx. */
-export default function BingoCard({ card, onChange, onRemove, manifest }) {
-  const bc = useBingoCard({ card, manifest, onChange, onRemove });
-  return (<>
-    <BingoCardView
-      title={bc.title} renaming={bc.renaming}
-      onRenameStart={bc.startRename} onRenameSubmit={bc.submitRename} onTitleChange={bc.onTitleChange}
-      analyzing={bc.analyzing} progress={bc.progress} spritesReady={bc.spritesReady}
-      cells={bc.cells} checked={bc.checked} onToggleCell={bc.toggleCell}
-      onPickImage={bc.pickImage} onRemove={bc.onRemove}
-      fileInput={<input {...bc.fileInputProps}/>}
-    />
-    {bc.showTuner && (<GridTunerModal imageSrc={bc.pendingImageSrc} initialFractions={bc.fractions} onConfirm={bc.confirmTuner} onCancel={bc.cancelTuner}/>)}
-  </>);
+export default function BingoCard({ card, manifest, onChange, onRemove }) {
+  const h = useBingoCard({ card, manifest, onChange, onRemove });
+
+  return (
+    <>
+      <BingoCardView
+        title={h.title}
+        renaming={h.renaming}
+        onRenameStart={h.startRename}
+        onRenameSubmit={h.submitRename}
+        onTitleChange={h.onTitleChange}
+        analyzing={h.analyzing}
+        progress={h.progress}
+        cells={h.cells}
+        checked={h.checked}
+        onToggleCell={h.toggleCell}
+        onPickImage={h.pickImage}
+        onRemove={h.onRemove}
+        // keep your view unchanged: it expects `fileInput`
+        fileInput={h.fileInput}
+      />
+
+      {/* Mount the tuner modal OUTSIDE the view so UI stays pure */}
+      {h.showTuner && (
+        <GridTunerModal
+          imageSrc={h.pendingImageSrc}
+          initialFractions={h.fractions}
+          onConfirm={h.confirmTuner}
+          onCancel={h.cancelTuner}
+        />
+      )}
+    </>
+  );
 }

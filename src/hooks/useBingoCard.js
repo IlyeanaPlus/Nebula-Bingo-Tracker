@@ -1,5 +1,5 @@
 // src/hooks/useBingoCard.js
-import { useRef, useState } from "react";
+import React, { useRef, useState } from "react";
 import { computeCrops25, loadFractions, saveFractions } from "../utils/image";
 import { prepareRefIndex, findBestMatch } from "../utils/matchers";
 
@@ -126,6 +126,8 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     style: { display: "none" },
     onChange: onPickFile,
   };
+  // Provide an element for legacy views expecting `fileInput` (no JSX in .js files)
+  const fileInput = React.createElement("input", fileInputProps);
 
   return {
     // State for the view
@@ -145,8 +147,9 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     onRemove, // passed through for the header Remove button
     toggleCell,
 
-    // Hidden file input props (render with: <input {...h.fileInputProps} />)
+    // Hidden file input (both forms for compatibility with existing views)
     fileInputProps,
+    fileInput,
 
     // Tuner modal plumbing
     showTuner,
