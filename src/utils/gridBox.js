@@ -20,7 +20,6 @@
   let box = null;                // draggable/resizable HTML box
   let handles = [];
   let targetImg = null;          // chosen <img>
-  let backdrop = null;
   let objectURL = null;
 
   let showLines = true;
@@ -42,7 +41,7 @@
   let pagePickActive = false;
 
   // -----------------------------
-  // Styles
+  // Styles (no backdrop)
   // -----------------------------
   function ensureStyles() {
     if (document.getElementById("nbt-gridbox-style")) return;
@@ -65,13 +64,7 @@
 #nbt-gridbox-panel button:hover { background:#333; }
 #nbt-gridbox-panel .hint { margin-top: 6px; opacity:.8; font-size:11px; }
 
-#nbt-gridbox-backdrop {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,0.25);   /* lighter dim so app chrome is visible */
-  z-index: ${Z_OVERLAY - 2};
-  pointer-events: none;           /* visual only; do NOT block clicks */
-}
+/* No backdrop — removed */
 
 #nbt-gridbox-overlay {
   position:absolute; left:0; top:0; z-index:${Z_OVERLAY}; pointer-events:none; /* canvas never blocks */
@@ -139,33 +132,21 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
   const btn = (label, onClick) => { const b = document.createElement("button"); b.textContent=label; b.onclick=onClick; return b; };
 
   // -----------------------------
-  // Image creation / selection
+  // Image creation / selection (no backdrop)
   // -----------------------------
   function stylePickedImage(img) {
+    // Visual-only image: no hit testing, very low z-index so your app chrome sits above it.
     img.style.position = "fixed";
     img.style.left = "50%";
     img.style.top = "50%";
     img.style.transform = "translate(-50%, -50%)";
     img.style.maxWidth = "min(90vw, 1200px)";
     img.style.maxHeight = "90vh";
-    img.style.zIndex = (Z_OVERLAY - 1);
-    img.style.boxShadow = "0 12px 32px rgba(0,0,0,.65)";
+    img.style.zIndex = "0";                 // put it behind app chrome
+    img.style.pointerEvents = "none";       // never intercept clicks
+    img.style.boxShadow = "0 12px 32px rgba(0,0,0,.35)";
     img.style.borderRadius = "10px";
-    img.style.background = "#111";
-  }
-  function ensureBackdrop() {
-    if (backdrop && document.body.contains(backdrop)) return backdrop;
-    const d = document.createElement("div");
-    d.id = "nbt-gridbox-backdrop";
-    // Panel/overlay sit above it; backdrop is purely visual and non-interactive
-    d.style.position = "fixed";
-    d.style.inset = "0";
-    d.style.background = "rgba(0,0,0,0.25)";
-    d.style.zIndex = String(Z_OVERLAY - 2);
-    d.style.pointerEvents = "none"; // visual-only
-    document.body.appendChild(d);
-    backdrop = d;
-    return d;
+    img.style.background = "transparent";
   }
   function createHiddenFileInput(accept="image/*") {
     const input = document.createElement("input");
@@ -193,7 +174,6 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
         const img = await fileToImg(f);
         stylePickedImage(img);
         img.id = "nbt-picked-image";
-        ensureBackdrop();
         document.body.appendChild(img);
         setTargetImage(img);
       }
@@ -208,18 +188,12 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     if (el2 && el2.parentNode) el2.parentNode.removeChild(el2);
     if (objectURL) { URL.revokeObjectURL(objectURL); objectURL = null; }
     setOverlayTarget(null);
-    removeBackdrop();
-  }
-  function removeBackdrop() {
-    if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-    backdrop = null;
   }
 
   // Pick existing <img> on page
   function togglePickFromPage() {
     pagePickActive = !pagePickActive;
     document.body.style.cursor = pagePickActive ? "crosshair" : "";
-    // Attach the click capture ONLY while picking, remove it otherwise
     if (pagePickActive) {
       document.addEventListener("click", onDocClick, { capture: true });
     } else {
@@ -229,11 +203,9 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
   function onDocClick(ev) {
     if (!pagePickActive) return;
     if (ev.target && ev.target.tagName === "IMG") {
-      ensureBackdrop();
       setTargetImage(ev.target);
       pagePickActive = false;
       document.body.style.cursor = "";
-      // Remove the capture listener immediately after a pick
       document.removeEventListener("click", onDocClick, { capture: true });
       ev.preventDefault(); ev.stopPropagation();
     }
@@ -245,7 +217,6 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     document.addEventListener("dragover", onDragOver, true);
     document.addEventListener("dragleave", onDragLeave, true);
     document.addEventListener("drop", onDrop, true);
-    // NOTE: we do NOT attach onDocClick here anymore; it's attached only in Pick mode
     globalListeners = true;
   }
   function detachGlobalListeners() {
@@ -253,7 +224,7 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     document.removeEventListener("dragover", onDragOver, true);
     document.removeEventListener("dragleave", onDragLeave, true);
     document.removeEventListener("drop", onDrop, true);
-    document.removeEventListener("click", onDocClick, { capture: true }); // safe even if absent
+    document.removeEventListener("click", onDocClick, { capture: true }); // safe if not present
     globalListeners = false;
   }
   function onDragOver(e){ e.preventDefault(); e.stopPropagation(); document.body.classList.add("nbt-drop-active"); }
@@ -266,7 +237,6 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
       const img = await fileToImg(f);
       stylePickedImage(img);
       img.id = "nbt-dropped-image";
-      ensureBackdrop();
       document.body.appendChild(img);
       setTargetImage(img);
     }
@@ -576,7 +546,7 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     if (panel) { panel.remove(); panel = null; }
     // overlay + box
     destroyOverlay();
-    // image + backdrop
+    // image
     removePickedImage();
     // listeners
     detachGlobalListeners();
