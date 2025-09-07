@@ -18,7 +18,7 @@ async function loadDriveCache() {
   if (_driveCachePromise) return _driveCachePromise;
   _driveCachePromise = (async () => {
     try {
-      const res = await fetch("/drive_cache.json", { cache: "force-cache" });
+      const res = await fetch("drive_cache.json", { cache: "force-cache" });
       if (!res.ok) throw new Error(`drive_cache.json http ${res.status}`);
       return await res.json();
     } catch (e) {
