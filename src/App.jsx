@@ -1,153 +1,63 @@
-// src/App.jsx
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import Header from './components/Header';
-import Sidebar from './components/Sidebar';
-import BingoCard from './components/BingoCard';
-import { prepareRefIndex as buildIndexFromMatchers } from './utils/matchers';
+// src/App.jsx — Option A drop-in
+import React, { useEffect } from "react";
+import BingoCard from "./components/BingoCard.jsx";   // keep your existing app render
+import "./styles/bingo.css";
+
+// Side-effect import: opens the centered reference-image grid box (Alt+Shift+B)
 import "./utils/gridBox.js";
 
-const MANIFEST_URL = `${import.meta.env.BASE_URL || '/'}drive_cache.json`;
-const STORAGE_KEY = 'nebula.bingo.cards.v2';
+// Use your image utils to avoid re-implementing cropping
+import { fileToImage, cropCells } from "./utils/image.js";
 
-export default function App() {
-  // ---- Card state (with persistence) ----
-  const [cards, setCards] = useState(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY);
-      const parsed = raw ? JSON.parse(raw) : null;
-      if (Array.isArray(parsed) && parsed.length) return parsed;
-    } catch {}
-    // default: one fresh card
-    return [
-      {
-        id: Date.now(),
-        title: 'New Card',
-        saved: false,
-        cells: Array.from({ length: 25 }, () => ({ name: '', sprite: null, complete: false }))
-      }
-    ];
-  });
-
-  // Only persist saved cards
+function App() {
   useEffect(() => {
-    try {
-      const toSave = cards.filter(c => c.saved);
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-    } catch (e) {
-      console.warn('localStorage save failed', e);
-    }
-  }, [cards]);
+    // Define the Option A hook the grid box will call
+    window.NBT = window.NBT || {};
+    window.NBT.onGridBoxFill = async (file, { xf, yf }) => {
+      try {
+        // 1) File -> HTMLImageElement
+        const img = await fileToImage(file);
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
 
-  const savedCount = useMemo(() => cards.filter(c => c.saved).length, [cards]);
+        // 2) Fractions -> absolute line coords
+        const xs = xf.map(f => Math.round(f * w));
+        const ys = yf.map(f => Math.round(f * h));
 
-  function addCard() {
-    setCards(prev => [
-      ...prev,
-      {
-        id: Date.now(),
-        title: 'New Card',
-        saved: false,
-        cells: Array.from({ length: 25 }, () => ({ name: '', sprite: null, complete: false }))
-      }
-    ]);
-  }
-  function updateCard(idx, next) {
-    setCards(prev => prev.map((c, i) => (i === idx ? next : c)));
-  }
-  function removeCard(idx) {
-    setCards(prev => prev.filter((_, i) => i !== idx));
-  }
-  function clearSaved() {
-    // Remove saved cards from storage + state, keep any unsaved in view
-    try { localStorage.removeItem(STORAGE_KEY); } catch {}
-    setCards(prev => prev.filter(c => !c.saved));
-  }
+        // 3) Crop into 25 tiles using your existing utility
+        const crops = cropCells(img, { xs, ys, w, h }); // returns 25 dataURLs
 
-  // ---- Sprite/manifest state (Get Sprites) ----
-  const [manifest, setManifest] = useState([]);
-  const [refIndex, setRefIndex] = useState([]);
+        // 4) Broadcast for any component to consume
+        window.dispatchEvent(
+          new CustomEvent("nbt:cropsReady", { detail: { crops, xs, ys, w, h } })
+        );
 
-  const [spritesLoading, setSpritesLoading] = useState(false);
-  const [loadedSprites, setLoadedSprites] = useState(0);
-  const [totalSprites, setTotalSprites] = useState(0);
-
-  const onGetSprites = useCallback(async () => {
-    try {
-      setSpritesLoading(true);
-      setLoadedSprites(0);
-      setTotalSprites(0);
-      setRefIndex([]);
-      setManifest([]);
-
-      const res = await fetch(MANIFEST_URL, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`manifest fetch ${res.status}`);
-      const mf = await res.json();
-      const list = Array.isArray(mf) ? mf : mf.files || [];
-      setManifest(list);
-      setTotalSprites(list.length);
-
-      // Build the matcher index with visible progress
-      const refs = [];
-      let ok = 0;
-      for (const e of list) {
-        const rawSrc = e.src || e.image || e.url;
-        if (!rawSrc) { setLoadedSprites(n => n + 1); continue; }
-        const src = rawSrc.includes('lh3.googleusercontent.com/d/')
-          ? `${rawSrc}=s64`
-          : rawSrc;
-
-        try {
-          const single = await buildIndexFromMatchers([{ name: e.name || e.id, src }]);
-          if (single.length) refs.push(single[0]);
-          ok++;
-        } catch {
-          // swallow; progress still moves
-        } finally {
-          setLoadedSprites(n => n + 1);
-          if ((ok % 10) === 0) await new Promise(r => setTimeout(r, 0));
+        // 5) Optional: if you expose a global setter somewhere (e.g., in BingoCard)
+        if (typeof window.NBT.setCrops === "function") {
+          window.NBT.setCrops(crops);
         }
+
+        // Persist fractions for consistency
+        localStorage.setItem("nbt.gridFractions", JSON.stringify({ xf, yf }));
+
+        console.info("[App] GridBox Fill complete — 25 crops generated.");
+      } catch (err) {
+        console.error("[App] onGridBoxFill failed:", err);
+        alert("Failed to fill from grid box. See console for details.");
       }
-      setRefIndex(refs);
-      console.log(`[app] sprites indexed: ${refs.length} / ${list.length}`);
-    } catch (err) {
-      console.error('Get Sprites failed', err);
-      alert(`Get Sprites failed: ${err.message}`);
-    } finally {
-      setSpritesLoading(false);
-    }
+    };
+
+    // Cleanup on unmount (hot reload safety)
+    return () => {
+      if (window.NBT) delete window.NBT.onGridBoxFill;
+    };
   }, []);
 
-  // ---- Render helpers ----
-  const cardsView = useMemo(
-    () =>
-      cards.map((c, i) => (
-        <BingoCard
-          key={c.id}
-          card={c}
-          onChange={(next) => updateCard(i, next)}
-          onRemove={() => removeCard(i)}
-          manifest={manifest}
-          // Give BingoCard access to ref count if you want to display it there too
-          refIndexCount={refIndex.length}
-        />
-      )),
-    [cards, manifest, refIndex.length]
-  );
-
-return (
-  <div className="layout">
-    <div className="main-column">
-      <Header
-        totalSprites={totalSprites}
-        loadedSprites={loadedSprites}
-        spritesLoading={spritesLoading}
-        onGetSprites={onGetSprites}
-      />
-      <div className="body">
-        <Sidebar onNewCard={addCard} savedCount={savedCount} onClearSaved={clearSaved} />
-        <main className="cards">{cardsView}</main>
-      </div>
+  return (
+    <div className="App">
+      <BingoCard />
     </div>
-  </div>
-);
+  );
 }
+
+export default App;

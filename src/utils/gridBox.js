@@ -1,33 +1,44 @@
 // src/utils/gridBox.js
-// Simple 5x5 grid via draggable/resizable "grid box" overlay.
-// Centered image with backdrop. Hotkey: Alt+Shift+B.
-// Emits: window event "nbt:gridFractionsUpdated" with {xf, yf}.
+// Centered reference image + square (1:1) draggable/resizable 5x5 grid overlay.
+// Buttons: Open File, Pick Image, Snap to Image, Show/Hide Lines, Report, Save Fractions, Fill, Remove Image, Close.
+// Events emitted:
+//   - "nbt:gridFractionsUpdated"  -> { xf, yf }
+//   - "nbt:gridBoxFill"           -> { file, xf, yf }
+// Optional callback your app can define:
+//   - window.NBT.onGridBoxFill(file, { xf, yf })
+// Hotkey: Alt+Shift+B
 
 (function () {
   // -----------------------------
-  // Constants & state
+  // Z-order & global state
   // -----------------------------
   const Z_PANEL = 999999;
   const Z_OVERLAY = 999998;
 
-  let overlayCanvas = null;      // <canvas> on top of target image
+  let panel = null;              // tuner panel
+  let overlayCanvas = null;      // grid drawing canvas
+  let box = null;                // draggable/resizable HTML box
+  let handles = [];
   let targetImg = null;          // chosen <img>
-  let panel = null;              // control panel
-  let box = null;                // draggable/resizable rect
-  let handles = [];              // 8 resize handles
-  let showLines = true;
-
-  // Box state in overlay/canvas pixel space (NOT natural image px)
-  const boxState = { x: 40, y: 40, w: 300, h: 300 };
-
-  // Drag/resize temp
-  let dragging = false, resizing = false;
-  let dragOffsetX = 0, dragOffsetY = 0;
-  let resizeDir = ""; // "n", "ne", "e", "se", "s", "sw", "w", "nw"
-
-  // Backdrop & object URL
   let backdrop = null;
   let objectURL = null;
+
+  let showLines = true;
+
+  // Box state in overlay px (NOT natural image px)
+  const boxState = { x: 40, y: 40, w: 300, h: 300 };
+
+  // Drag/resize
+  let dragging = false, resizing = false;
+  let dragOffsetX = 0, dragOffsetY = 0;
+  let resizeDir = "";
+  // Square lock
+  const LOCK_SQUARE = true;
+  let resizeAnchorX = 0, resizeAnchorY = 0;
+
+  // Listener flags
+  let globalListeners = false;
+  let pagePickActive = false;
 
   // -----------------------------
   // Styles
@@ -39,7 +50,7 @@
     s.textContent = `
 #nbt-gridbox-panel {
   position: fixed; right: 16px; top: 16px; z-index: ${Z_PANEL};
-  width: 312px; background:#1e1f22; color:#eee;
+  width: 328px; background:#1e1f22; color:#eee;
   border:1px solid #333; border-radius:10px; padding:12px;
   font: 12px/1.4 system-ui, sans-serif; box-shadow:0 8px 24px rgba(0,0,0,.5);
 }
@@ -84,7 +95,7 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
   }
 
   // -----------------------------
-  // Panel UI
+  // Panel
   // -----------------------------
   function buildPanel() {
     ensureStyles();
@@ -96,61 +107,73 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     p.appendChild(h);
 
     const r1 = row(
-      button("Open File", onOpenFile),
-      button("Pick Image", beginPickImage),
-      button("Snap to Image", onSnapToImage)
+      btn("Open File", onOpenFile),
+      btn("Pick Image", togglePickFromPage),
+      btn("Snap to Image", onSnapToImage)
     );
     const r2 = row(
-      button("Show Lines", toggleLines),
-      button("Report", onReport),
-      button("Save Fractions", onSaveFractions)
+      btn("Show Lines", toggleLines),
+      btn("Report", onReport),
+      btn("Save Fractions", onSaveFractions)
     );
     const r3 = row(
-      button("Remove Image", removePickedImage),
-      button("Close", () => { p.remove(); detachDropHandlers(); document.removeEventListener("click", onDocClick, { capture:true }); })
+      btn("Fill", onFill),                // NEW: fill the card
+      btn("Remove Image", removePickedImage),
+      btn("Close", closeEverything)       // NEW: removes ALL (overlay+tuner+image)
     );
 
     const hint = document.createElement("div");
     hint.className = "hint";
-    hint.textContent = "Tip: drag & drop an image anywhere while this panel is open.";
+    hint.textContent = "Drag & drop an image anywhere while this panel is open.";
 
     p.append(r1, r2, r3, hint);
     return p;
   }
+  const row = (...kids) => { const d = document.createElement("div"); d.className="row"; d.append(...kids); return d; };
+  const btn = (label, onClick) => { const b = document.createElement("button"); b.textContent=label; b.onclick=onClick; return b; };
 
-  function row(...children) {
+  // -----------------------------
+  // Image creation / selection
+  // -----------------------------
+  function stylePickedImage(img) {
+    img.style.position = "fixed";
+    img.style.left = "50%";
+    img.style.top = "50%";
+    img.style.transform = "translate(-50%, -50%)";
+    img.style.maxWidth = "min(90vw, 1200px)";
+    img.style.maxHeight = "90vh";
+    img.style.zIndex = (Z_OVERLAY - 1);
+    img.style.boxShadow = "0 12px 32px rgba(0,0,0,.65)";
+    img.style.borderRadius = "10px";
+    img.style.background = "#111";
+  }
+  function ensureBackdrop() {
+    if (backdrop && document.body.contains(backdrop)) return backdrop;
     const d = document.createElement("div");
-    d.className = "row";
-    d.append(...children);
+    d.id = "nbt-gridbox-backdrop";
+    d.onclick = () => {}; // image should not disappear
+    document.body.appendChild(d);
+    backdrop = d;
     return d;
   }
-  function button(label, onClick) {
-    const b = document.createElement("button");
-    b.textContent = label;
-    b.onclick = onClick;
-    return b;
-  }
-
-  // -----------------------------
-  // Image selection
-  // -----------------------------
-  let picking = false;
-  function beginPickImage() {
-    picking = !picking;
-    document.body.style.cursor = picking ? "crosshair" : "";
-  }
-
-  function createHiddenFileInput(accept = "image/*") {
+  function createHiddenFileInput(accept="image/*") {
     const input = document.createElement("input");
     input.type = "file";
     input.accept = accept;
-    input.style.position = "fixed";
-    input.style.left = "-10000px";
-    input.style.top = "-10000px";
+    input.style.position="fixed"; input.style.left="-10000px"; input.style.top="-10000px";
     document.body.appendChild(input);
     return input;
   }
-
+  function fileToImg(file) {
+    return new Promise((resolve,reject)=>{
+      const img = new Image();
+      img.onload=()=>resolve(img);
+      img.onerror=reject;
+      if (objectURL) URL.revokeObjectURL(objectURL);
+      objectURL = URL.createObjectURL(file);
+      img.src = objectURL;
+    });
+  }
   async function onOpenFile() {
     const input = createHiddenFileInput("image/*");
     input.onchange = async () => {
@@ -167,57 +190,56 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     };
     input.click();
   }
-
-  function fileToImg(file) {
-    return new Promise((resolve, reject) => {
-      const img = new Image();
-      img.onload = () => resolve(img);
-      img.onerror = reject;
-      if (objectURL) URL.revokeObjectURL(objectURL);
-      objectURL = URL.createObjectURL(file);
-      img.src = objectURL;
-    });
+  function removePickedImage() {
+    const el1 = document.getElementById("nbt-picked-image");
+    const el2 = document.getElementById("nbt-dropped-image");
+    if (el1 && el1.parentNode) el1.parentNode.removeChild(el1);
+    if (el2 && el2.parentNode) el2.parentNode.removeChild(el2);
+    if (objectURL) { URL.revokeObjectURL(objectURL); objectURL = null; }
+    setOverlayTarget(null);
+    removeBackdrop();
+  }
+  function removeBackdrop() {
+    if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
+    backdrop = null;
   }
 
-  function stylePickedImage(img) {
-    // Centered, fixed, modal-style
-    img.style.position = "fixed";
-    img.style.left = "50%";
-    img.style.top = "50%";
-    img.style.transform = "translate(-50%, -50%)";
-    img.style.maxWidth = "min(90vw, 1200px)";
-    img.style.maxHeight = "90vh";
-    img.style.zIndex = (Z_OVERLAY - 1);
-    img.style.boxShadow = "0 12px 32px rgba(0,0,0,.65)";
-    img.style.borderRadius = "10px";
-    img.style.background = "#111";
+  // Pick existing <img> on page
+  function togglePickFromPage() {
+    pagePickActive = !pagePickActive;
+    document.body.style.cursor = pagePickActive ? "crosshair" : "";
   }
-
   function onDocClick(ev) {
-    if (!picking) return;
+    if (!pagePickActive) return;
     if (ev.target && ev.target.tagName === "IMG") {
       ensureBackdrop();
       setTargetImage(ev.target);
-      picking = false;
+      pagePickActive = false;
       document.body.style.cursor = "";
       ev.preventDefault(); ev.stopPropagation();
     }
   }
 
-  // Drag & drop
-  function attachDropHandlers() {
+  // Drag & drop support
+  function attachGlobalListeners() {
+    if (globalListeners) return;
     document.addEventListener("dragover", onDragOver, true);
     document.addEventListener("dragleave", onDragLeave, true);
     document.addEventListener("drop", onDrop, true);
+    document.addEventListener("click", onDocClick, { capture:true });
+    globalListeners = true;
   }
-  function detachDropHandlers() {
+  function detachGlobalListeners() {
+    if (!globalListeners) return;
     document.removeEventListener("dragover", onDragOver, true);
     document.removeEventListener("dragleave", onDragLeave, true);
     document.removeEventListener("drop", onDrop, true);
+    document.removeEventListener("click", onDocClick, { capture:true });
+    globalListeners = false;
   }
-  function onDragOver(e) { e.preventDefault(); e.stopPropagation(); document.body.classList.add("nbt-drop-active"); }
-  function onDragLeave(e) { e.preventDefault(); e.stopPropagation(); document.body.classList.remove("nbt-drop-active"); }
-  async function onDrop(e) {
+  function onDragOver(e){ e.preventDefault(); e.stopPropagation(); document.body.classList.add("nbt-drop-active"); }
+  function onDragLeave(e){ e.preventDefault(); e.stopPropagation(); document.body.classList.remove("nbt-drop-active"); }
+  async function onDrop(e){
     e.preventDefault(); e.stopPropagation();
     document.body.classList.remove("nbt-drop-active");
     const f = e.dataTransfer?.files?.[0];
@@ -232,81 +254,63 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
   }
 
   // -----------------------------
-  // Backdrop & removal
+  // Overlay (canvas + box)
   // -----------------------------
-  function ensureBackdrop() {
-    if (backdrop && document.body.contains(backdrop)) return backdrop;
-    const d = document.createElement("div");
-    d.id = "nbt-gridbox-backdrop";
-    d.onclick = () => removePickedImage();
-    document.body.appendChild(d);
-    backdrop = d;
-    return d;
-  }
-  function removeBackdrop() {
-    if (backdrop && backdrop.parentNode) backdrop.parentNode.removeChild(backdrop);
-    backdrop = null;
-  }
-  function removePickedImage() {
-    const el1 = document.getElementById("nbt-picked-image");
-    const el2 = document.getElementById("nbt-dropped-image");
-    if (el1 && el1.parentNode) el1.parentNode.removeChild(el1);
-    if (el2 && el2.parentNode) el2.parentNode.removeChild(el2);
-    if (objectURL) { URL.revokeObjectURL(objectURL); objectURL = null; }
-    setOverlayTarget(null);
-    removeBackdrop();
-  }
+  function ensureOverlay() {
+    if (overlayCanvas) return;
 
-  // -----------------------------
-  // Target image + overlay
-  // -----------------------------
+    overlayCanvas = document.createElement("canvas");
+    overlayCanvas.id = "nbt-gridbox-overlay";
+    overlayCanvas.style.pointerEvents = "none";
+    document.body.appendChild(overlayCanvas);
+
+    box = document.createElement("div");
+    box.id = "nbt-gridbox-rect";
+    box.addEventListener("mousedown", onBoxMouseDown);
+    document.body.appendChild(box);
+
+    ["n","ne","e","se","s","sw","w","nw"].forEach(dir=>{
+      const h = document.createElement("div");
+      h.className = `nbt-handle ${dir}`;
+      h.dataset.dir = dir;
+      h.addEventListener("mousedown", onHandleMouseDown);
+      box.appendChild(h);
+      handles.push(h);
+    });
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    window.addEventListener("resize", positionOverlay);
+    window.addEventListener("scroll", positionOverlay, true);
+  }
+  function destroyOverlay() {
+    if (box) { box.remove(); box = null; handles = []; }
+    if (overlayCanvas) { overlayCanvas.remove(); overlayCanvas = null; }
+    window.removeEventListener("mousemove", onMouseMove);
+    window.removeEventListener("mouseup", onMouseUp);
+    window.removeEventListener("resize", positionOverlay);
+    window.removeEventListener("scroll", positionOverlay, true);
+  }
   function setTargetImage(imgEl) {
-    if (imgEl) ensureBackdrop(); else removeBackdrop();
     targetImg = imgEl;
     ensureOverlay();
     positionOverlay();
-
-    // Auto-fit box to image bounds
+    // Fit centered square initially
     if (overlayCanvas && imgEl) {
-      boxState.x = 0; boxState.y = 0;
-      boxState.w = overlayCanvas.width; boxState.h = overlayCanvas.height;
+      const W = overlayCanvas.width, H = overlayCanvas.height;
+      const size = Math.min(W, H);
+      boxState.w = size; boxState.h = size;
+      boxState.x = Math.round((W - size)/2);
+      boxState.y = Math.round((H - size)/2);
       placeBox();
     }
-
     drawLines();
   }
-
-  function ensureOverlay() {
-    if (!overlayCanvas) {
-      overlayCanvas = document.createElement("canvas");
-      overlayCanvas.id = "nbt-gridbox-overlay";
-      document.body.appendChild(overlayCanvas);
-
-      // Create the draggable box element on top of canvas
-      box = document.createElement("div");
-      box.id = "nbt-gridbox-rect";
-      document.body.appendChild(box);
-
-      // Make box interactive
-      box.addEventListener("mousedown", onBoxMouseDown);
-
-      // Create 8 handles
-      ["n","ne","e","se","s","sw","w","nw"].forEach(dir => {
-        const h = document.createElement("div");
-        h.className = `nbt-handle ${dir}`;
-        h.dataset.dir = dir;
-        h.addEventListener("mousedown", onHandleMouseDown);
-        box.appendChild(h);
-        handles.push(h);
-      });
-
-      window.addEventListener("mousemove", onMouseMove);
-      window.addEventListener("mouseup", onMouseUp);
-      window.addEventListener("resize", positionOverlay);
-      window.addEventListener("scroll", positionOverlay, true);
-    }
+  function setOverlayTarget(imgEl) {
+    targetImg = imgEl;
+    positionOverlay();
+    if (!imgEl) clearCanvas();
   }
-
   function positionOverlay() {
     if (!overlayCanvas || !targetImg) return;
     const r = targetImg.getBoundingClientRect();
@@ -314,14 +318,12 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     overlayCanvas.height = Math.max(1, Math.floor(r.height));
     overlayCanvas.style.left = `${Math.floor(r.left + window.scrollX)}px`;
     overlayCanvas.style.top = `${Math.floor(r.top + window.scrollY)}px`;
-
-    clampBox();
-    placeBox();
+    clampBox(); placeBox();
     if (showLines) drawLines(); else clearCanvas();
   }
 
   // -----------------------------
-  // Box drag/resize
+  // Drag/resize (square lock)
   // -----------------------------
   function onBoxMouseDown(e) {
     if (e.target.classList.contains("nbt-handle")) return;
@@ -331,13 +333,15 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     dragOffsetY = e.clientY - (ov.top + boxState.y);
     e.preventDefault();
   }
-
   function onHandleMouseDown(e) {
     resizing = true;
     resizeDir = e.target.dataset.dir || "";
+    const right = boxState.x + boxState.w;
+    const bottom = boxState.y + boxState.h;
+    resizeAnchorX = resizeDir.includes("w") ? right : boxState.x;
+    resizeAnchorY = resizeDir.includes("n") ? bottom : boxState.y;
     e.stopPropagation(); e.preventDefault();
   }
-
   function onMouseMove(e) {
     if (!overlayCanvas) return;
     const ov = overlayCanvas.getBoundingClientRect();
@@ -347,34 +351,47 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
       boxState.y = Math.round(e.clientY - ov.top - dragOffsetY);
       clampBox(); placeBox();
       if (showLines) drawLines(); else clearCanvas();
-    } else if (resizing) {
-      const minSize = 20;
-      const right = boxState.x + boxState.w;
-      const bottom = boxState.y + boxState.h;
-      const mx = e.clientX - ov.left;
-      const my = e.clientY - ov.top;
-
-      if (resizeDir.includes("w")) {
-        const nx = Math.min(mx, right - minSize);
-        boxState.w = right - nx; boxState.x = nx;
-      }
-      if (resizeDir.includes("e")) {
-        boxState.w = Math.max(minSize, mx - boxState.x);
-      }
-      if (resizeDir.includes("n")) {
-        const ny = Math.min(my, bottom - minSize);
-        boxState.h = bottom - ny; boxState.y = ny;
-      }
-      if (resizeDir.includes("s")) {
-        boxState.h = Math.max(minSize, my - boxState.y);
-      }
-      clampBox(); placeBox();
-      if (showLines) drawLines(); else clearCanvas();
+      return;
     }
+
+    if (!resizing) return;
+
+    const minSize = 20;
+    const mx = e.clientX - ov.left;
+    const my = e.clientY - ov.top;
+
+    let x = boxState.x, y = boxState.y, w = boxState.w, h = boxState.h;
+    const right = x + w, bottom = y + h;
+
+    if (resizeDir.includes("w")) { x = Math.min(mx, right - minSize); w = right - x; }
+    if (resizeDir.includes("e")) { w = Math.max(minSize, mx - x); }
+    if (resizeDir.includes("n")) { y = Math.min(my, bottom - minSize); h = bottom - y; }
+    if (resizeDir.includes("s")) { h = Math.max(minSize, my - y); }
+
+    if (LOCK_SQUARE) {
+      const size = Math.max(minSize, Math.min(w, h));
+      const anchorIsLeft = (resizeAnchorX === x);
+      const anchorIsTop  = (resizeAnchorY === y);
+      x = anchorIsLeft ? resizeAnchorX : (resizeAnchorX - size);
+      y = anchorIsTop  ? resizeAnchorY : (resizeAnchorY - size);
+      w = size; h = size;
+    }
+
+    const W = overlayCanvas.width, H = overlayCanvas.height;
+    if (x < 0) { const dx = -x; x = 0; if (LOCK_SQUARE){w-=dx;h-=dx;} else {w-=dx;} }
+    if (y < 0) { const dy = -y; y = 0; if (LOCK_SQUARE){w-=dy;h-=dy;} else {h-=dy;} }
+    if (x + w > W) { const dx = x + w - W; if (LOCK_SQUARE){ x -= dx; } else { w -= dx; } }
+    if (y + h > H) { const dy = y + h - H; if (LOCK_SQUARE){ y -= dy; } else { h -= dy; } }
+
+    boxState.x = Math.round(x);
+    boxState.y = Math.round(y);
+    boxState.w = Math.max(minSize, Math.round(w));
+    boxState.h = Math.max(minSize, Math.round(h));
+
+    placeBox();
+    if (showLines) drawLines(); else clearCanvas();
   }
-
-  function onMouseUp() { dragging = false; resizing = false; }
-
+  function onMouseUp(){ dragging = false; resizing = false; }
   function clampBox() {
     const W = overlayCanvas.width, H = overlayCanvas.height;
     if (boxState.x < 0) boxState.x = 0;
@@ -382,47 +399,32 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     if (boxState.x + boxState.w > W) boxState.w = W - boxState.x;
     if (boxState.y + boxState.h > H) boxState.h = H - boxState.y;
   }
-
   function placeBox() {
     const ov = overlayCanvas.getBoundingClientRect();
     box.style.left = `${ov.left + window.scrollX + boxState.x}px`;
-    box.style.top = `${ov.top + window.scrollY + boxState.y}px`;
-    box.style.width = `${boxState.w}px`;
+    box.style.top  = `${ov.top  + window.scrollY + boxState.y}px`;
+    box.style.width  = `${boxState.w}px`;
     box.style.height = `${boxState.h}px`;
   }
 
   // -----------------------------
-  // Drawing lines
+  // Draw grid
   // -----------------------------
   function clearCanvas() {
     const ctx = overlayCanvas.getContext("2d");
     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
   }
-
   function drawLines() {
     const ctx = overlayCanvas.getContext("2d");
     ctx.clearRect(0, 0, overlayCanvas.width, overlayCanvas.height);
     if (!showLines) return;
-
     ctx.lineWidth = 2;
     ctx.strokeStyle = "rgba(0,255,140,0.95)";
     ctx.setLineDash([6,3]);
-
     const { x, y, w, h } = boxState;
-
     ctx.beginPath();
-    // 6 verticals
-    for (let i = 0; i <= 5; i++) {
-      const vx = Math.round(x + (w * i) / 5) + 0.5;
-      ctx.moveTo(vx, y);
-      ctx.lineTo(vx, y + h);
-    }
-    // 6 horizontals
-    for (let j = 0; j <= 5; j++) {
-      const hy = Math.round(y + (h * j) / 5) + 0.5;
-      ctx.moveTo(x, hy);
-      ctx.lineTo(x + w, hy);
-    }
+    for (let i=0;i<=5;i++){ const vx=Math.round(x+(w*i)/5)+0.5; ctx.moveTo(vx,y);ctx.lineTo(vx,y+h); }
+    for (let j=0;j<=5;j++){ const hy=Math.round(y+(h*j)/5)+0.5; ctx.moveTo(x,hy);ctx.lineTo(x+w,hy); }
     ctx.stroke();
   }
 
@@ -431,43 +433,17 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
   // -----------------------------
   function onSnapToImage() {
     if (!targetImg || !overlayCanvas) return;
-    boxState.x = 0; boxState.y = 0;
-    boxState.w = overlayCanvas.width; boxState.h = overlayCanvas.height;
+    const W = overlayCanvas.width, H = overlayCanvas.height;
+    const size = Math.min(W, H);
+    boxState.w = size; boxState.h = size;
+    boxState.x = Math.round((W - size)/2);
+    boxState.y = Math.round((H - size)/2);
     placeBox(); drawLines();
   }
-
-  function toggleLines(e) {
+  function toggleLines(e){
     showLines = !showLines;
     e.currentTarget.textContent = showLines ? "Hide Lines" : "Show Lines";
     if (showLines) drawLines(); else clearCanvas();
-  }
-
-  function broadcastFractionsUpdated(xf, yf) {
-    try {
-      window.dispatchEvent(new CustomEvent("nbt:gridFractionsUpdated", { detail: { xf, yf } }));
-    } catch {}
-  }
-
-  function onSaveFractions() {
-    const report = computeReport();
-    if (!report) return;
-    const { xf, yf } = report.lines_fractions;
-    localStorage.setItem("nbt.gridFractions", JSON.stringify({ xf, yf }));
-    broadcastFractionsUpdated(xf, yf);
-    console.info("[GridBox] Saved fractions to localStorage (nbt.gridFractions).", { xf, yf });
-  }
-
-  function onReport() {
-    const report = computeReport();
-    if (!report) return;
-    const { xf, yf } = report.lines_fractions;
-    localStorage.setItem("nbt.gridFractions", JSON.stringify({ xf, yf }));
-    broadcastFractionsUpdated(xf, yf);
-
-    const json = JSON.stringify(report, null, 2);
-    copyToClipboard(json);
-    console.info("[GridBox] Report (and fractions) saved + copied:\n", json);
-    alert("Grid report copied to clipboard and fractions saved.");
   }
 
   function computeReport() {
@@ -478,36 +454,36 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     const scaleX = natW / r.width;
     const scaleY = natH / r.height;
 
-    // Box edges in display px -> natural image px
     const left = boxState.x * scaleX;
     const top = boxState.y * scaleY;
     const right = (boxState.x + boxState.w) * scaleX;
     const bottom = (boxState.y + boxState.h) * scaleY;
 
-    const xs = [], ys = [];
-    for (let i = 0; i <= 5; i++) xs.push(Math.round(left + (right - left) * i / 5));
-    for (let j = 0; j <= 5; j++) ys.push(Math.round(top + (bottom - top) * j / 5));
+    const xs=[], ys=[];
+    for (let i=0;i<=5;i++) xs.push(Math.round(left + (right-left)*i/5));
+    for (let j=0;j<=5;j++) ys.push(Math.round(top  + (bottom-top)*j/5));
 
-    const xf = xs.map(x => x / natW);
-    const yf = ys.map(y => y / natH);
+    const xf = xs.map(x=>x/natW);
+    const yf = ys.map(y=>y/natH);
 
-    const cellW = (right - left) / 5;
-    const cellH = (bottom - top) / 5;
+    const cellW = (right-left)/5, cellH = (bottom-top)/5;
 
     return {
-      image: { naturalWidth: natW, naturalHeight: natH },
+      image: { naturalWidth:natW, naturalHeight:natH },
       box_pixels: {
-        left: Math.round(left),
-        top: Math.round(top),
-        right: Math.round(right),
-        bottom: Math.round(bottom),
-        width: Math.round(right - left),
-        height: Math.round(bottom - top)
+        left: Math.round(left), top: Math.round(top),
+        right: Math.round(right), bottom: Math.round(bottom),
+        width: Math.round(right-left), height: Math.round(bottom-top)
       },
       lines_pixels: { xs, ys },
       lines_fractions: { xf, yf },
       cell_avg: { width_px: Math.round(cellW), height_px: Math.round(cellH) }
     };
+  }
+
+  function saveFractions(xf, yf) {
+    localStorage.setItem("nbt.gridFractions", JSON.stringify({ xf, yf }));
+    try { window.dispatchEvent(new CustomEvent("nbt:gridFractionsUpdated", { detail:{ xf, yf } })); } catch {}
   }
 
   function copyToClipboard(text) {
@@ -519,36 +495,113 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     }
   }
 
-  // -----------------------------
-  // Public entry points
-  // -----------------------------
-  function openGridBox() {
-    if (panel && document.body.contains(panel)) {
-      panel.remove();
-      detachDropHandlers();
-      document.removeEventListener("click", onDocClick, { capture:true });
+  function onReport() {
+    const report = computeReport(); if (!report) return;
+    const { xf, yf } = report.lines_fractions;
+    saveFractions(xf, yf);
+    const json = JSON.stringify(report, null, 2);
+    copyToClipboard(json);
+    console.info("[GridBox] Report (and fractions) saved + copied:\n", json);
+    alert("Grid report copied to clipboard and fractions saved.");
+  }
+
+  function onSaveFractions() {
+    const report = computeReport(); if (!report) return;
+    const { xf, yf } = report.lines_fractions;
+    saveFractions(xf, yf);
+    console.info("[GridBox] Saved fractions to localStorage (nbt.gridFractions).", { xf, yf });
+  }
+
+  // Convert an <img> to a File (PNG) for pipelines that expect a file upload
+  async function imageElToFile(imgEl, name="gridbox.png") {
+    const c = document.createElement("canvas");
+    const w = imgEl.naturalWidth || imgEl.width;
+    const h = imgEl.naturalHeight || imgEl.height;
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(imgEl, 0, 0, w, h);
+    return new Promise((resolve)=> c.toBlob(b=>resolve(new File([b], name, { type:"image/png" })), "image/png"));
+  }
+
+  async function onFill() {
+    if (!targetImg) { alert("Choose an image first."); return; }
+    const report = computeReport(); if (!report) return;
+    const { xf, yf } = report.lines_fractions;
+
+    // Persist fractions for the app
+    saveFractions(xf, yf);
+
+    // Create a File from the image for pipelines that expect an image file
+    const file = await imageElToFile(targetImg, "gridbox.png");
+
+    // Preferred: app-defined hook
+    if (window.NBT && typeof window.NBT.onGridBoxFill === "function") {
+      try {
+        await window.NBT.onGridBoxFill(file, { xf, yf });
+      } catch (e) { console.error("[GridBox] onGridBoxFill failed:", e); }
+    } else {
+      // Generic event fallback
+      try {
+        window.dispatchEvent(new CustomEvent("nbt:gridBoxFill", { detail: { file, xf, yf } }));
+      } catch {}
+      console.info("[GridBox] Emitted 'nbt:gridBoxFill' with file and fractions.");
     }
+  }
+
+  // -----------------------------
+  // Close (remove EVERYTHING)
+  // -----------------------------
+  function closeEverything() {
+    // panel
+    if (panel) { panel.remove(); panel = null; }
+    // overlay + box
+    destroyOverlay();
+    // image + backdrop
+    removePickedImage();
+    // listeners
+    detachGlobalListeners();
+    pagePickActive = false;
+    document.body.style.cursor = "";
+  }
+
+  // -----------------------------
+  // Public entry points / hotkey
+  // -----------------------------
+  function openPanel() {
+    if (panel && document.body.contains(panel)) panel.remove();
     panel = buildPanel();
     document.body.appendChild(panel);
-    document.addEventListener("click", onDocClick, { capture:true });
-    attachDropHandlers();
+    attachGlobalListeners();
   }
 
   function ensureHotkey() {
     if (window.__nbtGridBoxHotkey) return;
     window.__nbtGridBoxHotkey = true;
-    window.addEventListener("keydown", (e) => {
+    window.addEventListener("keydown", (e)=>{
       if (e.altKey && e.shiftKey && e.key.toLowerCase() === "b") {
         e.preventDefault();
-        openGridBox();
+        // Toggle: if panel exists -> close everything, else open
+        if (panel && document.body.contains(panel)) closeEverything();
+        else openPanel();
       }
     });
   }
 
-  // Expose API for app usage
-  window.NBT = window.NBT || {};
-  window.NBT.openGridBox = openGridBox;
+  // -----------------------------
+  // Utilities used above
+  // -----------------------------
+  function clearCanvas() {
+    if (!overlayCanvas) return;
+    const ctx = overlayCanvas.getContext("2d");
+    ctx.clearRect(0,0,overlayCanvas.width,overlayCanvas.height);
+  }
 
+  // Expose minimal API if you want to open/close programmatically
+  window.NBT = window.NBT || {};
+  window.NBT.openGridBox = openPanel;
+  window.NBT.closeGridBox = closeEverything;
+
+  window.addEventListener("load", ensureStyles);
   ensureStyles();
   ensureHotkey();
 })();
