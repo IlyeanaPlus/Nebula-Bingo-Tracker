@@ -4,73 +4,75 @@ import ReactDOM from "react-dom";
 
 /**
  * GridTunerModal
- * - Green-only 5×5 crop grid
- * - Always starts centered on the image (after image load)
- * - Move via CENTER CROSSHAIR ONLY
- * - Resize from all 4 corners, locked 1:1
- * - Clamp to image bounds
- * - Overlays whole app (portal to document.body)
+ * - Green-only 5×5 crop grid (drawn on canvas)
+ * - Centers on the image (after image load)
+ * - Crosshair in the center cell is the ONLY move handle
+ * - Resize from 4 corners, 1:1 aspect
+ * - Grid is clamped to the image bounds
+ * - Uses portal overlaying the whole app
  */
 export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, onCancel }) {
   const [open, setOpen] = useState(true);
   const [imgReady, setImgReady] = useState(false);
 
+  const wrapRef = useRef(null);
   const imgRef = useRef(null);
-  const overlayRef = useRef(null);
-  const boxRef = useRef(null);
-  const puckRef = useRef(null);
+  const overlayRef = useRef(null); // canvas
+  const boxRef = useRef(null);     // interactive square
+  const puckRef = useRef(null);    // center crosshair handle
 
-  // --- Fractions state: {x,y,w,h} in [0..1], w==h ---
-  function centerFractions(size = 0.6) {
+  const centeredOnceRef = useRef(false);
+
+  // Fractions {x,y,w,h} in [0..1]. w==h.
+  const centerFractions = (size = 0.6) => {
     const s = Math.max(0.05, Math.min(1, size));
     const c = (1 - s) / 2;
     return { x: c, y: c, w: s, h: s };
-  }
+  };
 
-  function normalizeInit(fr) {
+  const normalizeInit = (fr) => {
     if (!fr) return centerFractions();
     const s = Math.min(fr.w ?? fr.h ?? 0.6, fr.h ?? fr.w ?? 0.6);
     const x = Math.max(0, Math.min(fr.x ?? 0.2, 1 - s));
     const y = Math.max(0, Math.min(fr.y ?? 0.2, 1 - s));
     return { x, y, w: s, h: s };
-  }
+  };
 
   const [fractions, setFractions] = useState(normalizeInit(initialFractions));
 
-  // Center after image load (author intent: “always start in the center of the image”)
-  function handleImageLoad() {
-    setImgReady(true);
-    // Always center on actual image load; keep your preferred default size (0.6)
-    setFractions(centerFractions(0.6));
-  }
-
-  useEffect(() => {
-    function onKey(e) { if (e.key === "Escape") { setOpen(false); onCancel?.(); } }
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onCancel]);
-
-  useEffect(() => { if (imgReady) drawOverlay(); }, [fractions, imageSrc, imgReady]);
-
-  function getImgRect() {
+  const getRects = () => {
+    const wrap = wrapRef.current;
     const img = imgRef.current;
-    if (!img) return null;
-    return img.getBoundingClientRect();
-  }
+    if (!wrap || !img) return null;
+    const wrapRect = wrap.getBoundingClientRect();
+    const imgRect  = img.getBoundingClientRect();
+    return { wrapRect, imgRect, offsetX: imgRect.left - wrapRect.left, offsetY: imgRect.top - wrapRect.top };
+  };
 
-  function drawOverlay() {
-    const cv = overlayRef.current; if (!cv) return;
-    const rect = getImgRect(); if (!rect || rect.width === 0 || rect.height === 0) return;
+  const drawOverlay = () => {
+    const cv = overlayRef.current;
+    const rects = getRects();
+    if (!cv || !rects) return;
+    const { imgRect, offsetX, offsetY } = rects;
 
-    // Size the canvas to the displayed image box
-    cv.width = rect.width;
-    cv.height = rect.height;
+    // Place & size the canvas to exactly cover the displayed image area
+    Object.assign(cv.style, {
+      position: "absolute",
+      left: `${offsetX}px`,
+      top: `${offsetY}px`,
+      width: `${imgRect.width}px`,
+      height: `${imgRect.height}px`,
+      pointerEvents: "none",
+    });
+    cv.width = imgRect.width;
+    cv.height = imgRect.height;
+
     const ctx = cv.getContext("2d");
     ctx.clearRect(0, 0, cv.width, cv.height);
 
-    const x = fractions.x * rect.width;
-    const y = fractions.y * rect.height;
-    const s = fractions.w * rect.width;
+    const x = fractions.x * imgRect.width;
+    const y = fractions.y * imgRect.height;
+    const s = fractions.w * imgRect.width;
 
     // Dim outside crop
     ctx.save();
@@ -97,95 +99,124 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
     }
     ctx.restore();
 
-    // Sync overlay box (absolute inside the same relative wrapper)
+    // Position interactive square box (relative to wrapper, so include offset)
     if (boxRef.current) {
       Object.assign(boxRef.current.style, {
-        left: `${x}px`,
-        top: `${y}px`,
+        left: `${offsetX + x}px`,
+        top: `${offsetY + y}px`,
         width: `${s}px`,
         height: `${s}px`,
         border: "2px solid rgba(34,197,94,0.95)",
+        position: "absolute",
         pointerEvents: "none", // only handles are interactive
       });
     }
 
-    // Crosshair puck in the exact center (interactive)
+    // Position the center crosshair (the only move handle)
     if (puckRef.current) {
-      const size = 22; // touch-friendly
+      const size = 22;
       Object.assign(puckRef.current.style, {
-        left: `${x + s / 2 - size / 2}px`,
-        top: `${y + s / 2 - size / 2}px`,
+        left: `${offsetX + x + s / 2 - size / 2}px`,
+        top: `${offsetY + y + s / 2 - size / 2}px`,
         width: `${size}px`,
         height: `${size}px`,
+        position: "absolute",
+        cursor: "crosshair",
+        pointerEvents: "auto",
       });
     }
-  }
+  };
 
-  // --- Move via center crosshair only ---
-  function onPuckDown(e) {
+  // Center AFTER the image is laid out
+  const handleImageLoad = () => {
+    setImgReady(true);
+    if (!centeredOnceRef.current) {
+      centeredOnceRef.current = true;
+      setFractions(centerFractions(0.6));
+    }
+  };
+
+  // Redraw on fractions/image changes and when ready
+  useEffect(() => { if (imgReady) drawOverlay(); }, [fractions, imageSrc, imgReady]);
+
+  // Track image size changes (contain/resize) and redraw
+  useEffect(() => {
+    if (!imgRef.current) return;
+    const ro = new ResizeObserver(() => { if (imgReady) drawOverlay(); });
+    ro.observe(imgRef.current);
+    return () => ro.disconnect();
+  }, [imgReady]);
+
+  // --- Interaction helpers ---
+  const clamp01 = (v) => Math.max(0, Math.min(1, v));
+
+  // Move via center crosshair only
+  const onPuckDown = (e) => {
     e.preventDefault();
-    const rect = getImgRect(); if (!rect) return;
-
+    const rects = getRects(); if (!rects) return;
+    const { imgRect } = rects;
     const startX = e.clientX, startY = e.clientY;
     const f0 = { ...fractions };
 
-    function mm(ev) {
-      const dx = (ev.clientX - startX) / rect.width;
-      const dy = (ev.clientY - startY) / rect.height;
+    const mm = (ev) => {
+      const dx = (ev.clientX - startX) / imgRect.width;
+      const dy = (ev.clientY - startY) / imgRect.height;
       let nx = f0.x + dx;
       let ny = f0.y + dy;
-      // clamp to image bounds
       nx = Math.max(0, Math.min(nx, 1 - f0.w));
       ny = Math.max(0, Math.min(ny, 1 - f0.h));
       setFractions({ ...f0, x: nx, y: ny });
-    }
-    function mu() { window.removeEventListener("mousemove", mm); window.removeEventListener("mouseup", mu); }
-
+    };
+    const mu = () => {
+      window.removeEventListener("mousemove", mm);
+      window.removeEventListener("mouseup", mu);
+    };
     window.addEventListener("mousemove", mm);
     window.addEventListener("mouseup", mu);
-  }
+  };
 
-  // --- Resize from corners (1:1, clamped) ---
-  function onResizeStart(corner) {
-    return function (e) {
-      e.preventDefault();
-      const rect = getImgRect(); if (!rect) return;
-      const startX = e.clientX, startY = e.clientY;
-      const f0 = { ...fractions };
+  // Resize from corners (1:1, clamped)
+  const onResizeStart = (corner) => (e) => {
+    e.preventDefault();
+    const rects = getRects(); if (!rects) return;
+    const { imgRect } = rects;
+    const startX = e.clientX, startY = e.clientY;
+    const f0 = { ...fractions };
 
-      function mm(ev) {
-        const dx = (ev.clientX - startX) / rect.width;
-        const dy = (ev.clientY - startY) / rect.height;
+    const mm = (ev) => {
+      const dx = (ev.clientX - startX) / imgRect.width;
+      const dy = (ev.clientY - startY) / imgRect.height;
 
-        let ds = 0, nx = f0.x, ny = f0.y;
-        if (corner === "se") ds = Math.max(dx, dy);
-        if (corner === "nw") ds = -Math.max(-dx, -dy);
-        if (corner === "ne") ds = Math.max(dx, -dy);
-        if (corner === "sw") ds = Math.max(-dx, dy);
+      let ds = 0, nx = f0.x, ny = f0.y;
+      if (corner === "se") ds = Math.max(dx, dy);
+      if (corner === "nw") ds = -Math.max(-dx, -dy);
+      if (corner === "ne") ds = Math.max(dx, -dy);
+      if (corner === "sw") ds = Math.max(-dx, dy);
 
-        let s = f0.w + ds;
-        const minS = 32 / rect.width; // 32px min size
-        s = Math.max(minS, Math.min(1, s));
+      let s = f0.w + ds;
+      const minS = 32 / imgRect.width; // 32px minimum
+      s = Math.max(minS, Math.min(1, s));
 
-        if (corner === "nw") { nx = f0.x + (f0.w - s); ny = f0.y + (f0.h - s); }
-        if (corner === "ne") { nx = f0.x;                ny = f0.y + (f0.h - s); }
-        if (corner === "sw") { nx = f0.x + (f0.w - s); ny = f0.y; }
-        if (corner === "se") { nx = f0.x;                ny = f0.y; }
+      if (corner === "nw") { nx = f0.x + (f0.w - s); ny = f0.y + (f0.h - s); }
+      if (corner === "ne") { nx = f0.x;                ny = f0.y + (f0.h - s); }
+      if (corner === "sw") { nx = f0.x + (f0.w - s); ny = f0.y; }
+      if (corner === "se") { nx = f0.x;                ny = f0.y; }
 
-        // clamp square fully inside image
-        nx = Math.max(0, Math.min(nx, 1 - s));
-        ny = Math.max(0, Math.min(ny, 1 - s));
+      nx = Math.max(0, Math.min(nx, 1 - s));
+      ny = Math.max(0, Math.min(ny, 1 - s));
 
-        setFractions({ x: nx, y: ny, w: s, h: s });
-      }
-      function mu() { window.removeEventListener("mousemove", mm); window.removeEventListener("mouseup", mu); }
-      window.addEventListener("mousemove", mm);
-      window.addEventListener("mouseup", mu);
+      setFractions({ x: nx, y: ny, w: s, h: s });
     };
-  }
+    const mu = () => {
+      window.removeEventListener("mousemove", mm);
+      window.removeEventListener("mouseup", mu);
+    };
+    window.addEventListener("mousemove", mm);
+    window.addEventListener("mouseup", mu);
+  };
 
-  function handleConfirm() { onConfirm?.(fractions); }
-  function handleReset()   { setFractions(centerFractions(0.6)); }
+  const handleConfirm = () => onConfirm?.(fractions);
+  const handleReset = () => setFractions(centerFractions(0.6));
 
   if (!open) return null;
 
@@ -215,7 +246,7 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
       >
         <div style={{ fontSize: 18, marginBottom: 8 }}>Grid Tuner</div>
 
-        <div style={{ position: "relative", display: "grid", placeItems: "center" }}>
+        <div ref={wrapRef} style={{ position: "relative", display: "grid", placeItems: "center" }}>
           <img
             ref={imgRef}
             src={imageSrc}
@@ -223,51 +254,33 @@ export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, 
             onLoad={handleImageLoad}
             style={{ maxWidth: "100%", maxHeight: "60vh", objectFit: "contain" }}
           />
-          {/* Drawn grid + dim areas */}
-          <canvas ref={overlayRef} style={{ position: "absolute", inset: 0, pointerEvents: "none" }} />
+          <canvas ref={overlayRef} />
 
-          {/* Absolute interaction layer, aligned to the image via drawOverlay() */}
-          <div ref={boxRef} style={{ position: "absolute" }}>
-            {/* Center crosshair = ONLY move handle */}
-            <div
-              ref={puckRef}
-              onMouseDown={onPuckDown}
-              title="Drag to move"
-              style={{
-                position: "absolute",
-                cursor: "crosshair",
-                pointerEvents: "auto",
-                // visual crosshair (two green bars)
-                background: "transparent",
-                borderRadius: "50%",
-                boxShadow: "0 0 0 2px #111, 0 0 0 4px rgba(34,197,94,0.6)",
-              }}
-            >
-              {/* Horizontal line */}
-              <div style={{
-                position: "absolute", left: 2, right: 2, top: "50%", height: 2,
-                transform: "translateY(-50%)", background: "#22c55e",
-              }} />
-              {/* Vertical line */}
-              <div style={{
-                position: "absolute", top: 2, bottom: 2, left: "50%", width: 2,
-                transform: "translateX(-50%)", background: "#22c55e",
-              }} />
-            </div>
+          {/* Interaction layer (positions are set in drawOverlay) */}
+          <div ref={boxRef} />
 
-            {/* Corner resize handles */}
-            <div onMouseDown={onResizeStart("nw")}
-              style={{ position: "absolute", width: 12, height: 12, left: -6, top: -6,
-                       background: "#22c55e", borderRadius: 6, cursor: "nwse-resize" }} />
-            <div onMouseDown={onResizeStart("ne")}
-              style={{ position: "absolute", width: 12, height: 12, right: -6, top: -6,
-                       background: "#22c55e", borderRadius: 6, cursor: "nesw-resize" }} />
-            <div onMouseDown={onResizeStart("sw")}
-              style={{ position: "absolute", width: 12, height: 12, left: -6, bottom: -6,
-                       background: "#22c55e", borderRadius: 6, cursor: "nesw-resize" }} />
-            <div onMouseDown={onResizeStart("se")}
-              style={{ position: "absolute", width: 12, height: 12, right: -6, bottom: -6,
-                       background: "#22c55e", borderRadius: 6, cursor: "nwse-resize" }} />
+          {/* Center crosshair = ONLY move handle */}
+          <div
+            ref={puckRef}
+            onMouseDown={onPuckDown}
+            title="Drag to move"
+            style={{
+              // visual crosshair
+              background: "transparent",
+              borderRadius: "50%",
+              boxShadow: "0 0 0 2px #111, 0 0 0 4px rgba(34,197,94,0.6)",
+            }}
+          >
+            {/* Horizontal line */}
+            <div style={{
+              position: "absolute", left: 2, right: 2, top: "50%", height: 2,
+              transform: "translateY(-50%)", background: "#22c55e",
+            }} />
+            {/* Vertical line */}
+            <div style={{
+              position: "absolute", top: 2, bottom: 2, left: "50%", width: 2,
+              transform: "translateX(-50%)", background: "#22c55e",
+            }} />
           </div>
         </div>
 
