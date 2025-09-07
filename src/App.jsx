@@ -99,12 +99,25 @@ export default function App() {
         />
 
         <main className="main-content">
-          <BingoCard
-            card={currentCard}
-            onChange={handleUpdateCard}
-            onRemove={handleRemoveCard}
-            manifest={manifest}
-          />
+          <div className="cards-grid">
+            {cards.map((card, i) => (
+              <BingoCard
+                key={card.id || i}
+                card={card}
+                onChange={(next) => {
+                  setCards((prev) => prev.map((c, j) => (j === i ? next : c)));
+                }}
+                onRemove={() => {
+                  setCards((prev) => {
+                    if (prev.length <= 1) return [makeBlankCard("Card 1")];
+                    const next = [...prev.slice(0, i), ...prev.slice(i + 1)];
+                    return next;
+                  });
+                }}
+                manifest={manifest}
+              />
+            ))}
+          </div>
         </main>
       </div>
     </div>

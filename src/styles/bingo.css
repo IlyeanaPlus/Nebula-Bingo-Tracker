@@ -132,8 +132,15 @@ body {
 }
 
 /* --- Card layout --- */
+.cards-grid {
+  display: grid;
+  gap: 16px;
+  grid-template-columns: repeat(auto-fill, 450px);
+  justify-content: start; /* align cards left, wrap to new row */
+}
+
 .bingo-card {
-  width: 450px;
+  width: 450px; /* fixed width */
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -142,13 +149,20 @@ body {
 }
 .bingo-card .card-header {
   display: flex;
+  flex-direction: row; /* title inline with buttons */
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   margin-bottom: 12px;
 }
 .bingo-card .card-title {
   font-weight: 600;
+  text-align: left; /* inline with buttons */
+}
+.bingo-card .card-actions {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end; /* buttons on the right */
 }
 .bingo-card .card-actions button {
   height: 28px;
