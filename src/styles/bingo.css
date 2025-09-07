@@ -1,4 +1,548 @@
-/* src/styles/bingo.css (additions) */
+/* src/styles/bingo.css */
+
+/* Dark mode base */
+:root {
+  --bg: #121212;
+  --fg: #e8e8e8;
+  --panel: #1a1a1a;
+  --panel-2: #181818;
+  --border: #2a2a2a;
+  --accent: #8ab4f8;
+  --muted: #b6b6b6;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+}
+
+/* Header */
+.app-header {
+  background: #000;
+  color: var(--fg);
+  padding: 10px 16px;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.app-header .title {
+  font-weight: bold;
+}
+
+/* Layout: sidebar always full column */
+.layout {
+  display: grid;
+  grid-template-columns: 300px 1fr; /* sidebar + content */
+  gap: 16px;
+  padding: 16px;
+}
+
+/* Sidebar */
+.sidebar {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+}
+.sidebar h2 {
+  margin: 0 0 8px 0;
+  font-size: 1rem;
+}
+.sidebar .stack { display: grid; gap: 8px; }
+.sidebar .progress-line { color: var(--muted); font-size: 12px; }
+.fill-bar {
+  height: 8px;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+  overflow: hidden;
+}
+.fill-bar-inner {
+  height: 100%;
+  background: var(--accent);
+}
+
+/* Cards container */
+.cards {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+}
+
+/* Individual bingo card: 50% bigger */
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px;
+  width: 450px;
+  box-shadow: 0 2px 6px rgba(0,0,0,.4);
+  position: relative;
+}
+
+/* Card header */
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+.card-header input.title-inline {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--fg);
+  font-size: 14px;
+  padding: 2px 6px;
+}
+.card-header .actions button {
+  margin-left: 4px;
+}
+
+/* Grid of 25 cells */
+.grid-5x5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 8px;
+}
+.cell {
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  aspect-ratio: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: var(--fg);
+  cursor: pointer;
+  overflow: hidden;
+}
+.cell img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.cell.complete {
+  background: #2a4;
+  border-color: #3c6;
+}
+.cell-text {
+  padding: 2px;
+  text-align: center;
+  word-break: break-word;
+}
+
+/* Fill overlay */
+.fill-overlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.85);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.fill-box {
+  background: #1e1e1e;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px;
+  text-align: center;
+  width: 280px;
+}
+.fill-title { margin-bottom: 6px; }
+.fill-bar { margin: 6px 0; }
+.fill-meta { font-size: 12px; margin-bottom: 4px; }
+.fill-hint { font-size: 11px; color: var(--muted); }
+
+/* Buttons */
+button {
+  background: #222;
+  border: 1px solid var(--border);
+  color: var(--fg);
+  border-radius: 6px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+button:hover {
+  background: #333;
+}
+
+/* styles/bingo.css */
+.layout {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+}
+
+.main-column {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+}
+
+.app-header {
+  flex: 0 0 auto;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  background: #000;
+  padding: 8px 16px;
+  color: #fff;
+}
+
+.body {
+  display: grid;
+  grid-template-columns: 250px 1fr;
+  flex: 1;
+  overflow: hidden;
+}
+
+.sidebar {
+  background: #111;
+  padding: 12px;
+  border-right: 1px solid #333;
+  overflow-y: auto;
+}
+
+.cards {
+  padding: 12px;
+  overflow-y: auto;
+}
+
+
+/* === Debug Crops (modal) – keep tiles perfectly square without affecting rest of UI === */
+/* Target only the images we render for crops: <img alt="crop X"> inside the Fill modal */
+.fill-overlay .fill-box img[alt^="crop "] {
+  display: block;
+  width: 100% !important;     /* fill the tile wrapper */
+  height: auto !important;    /* prevent vertical stretching */
+  max-width: 64px;            /* visual cap (matches prior intent) */
+  aspect-ratio: 1 / 1;        /* preserve square shape */
+  object-fit: contain;        /* no distortion; letterbox if needed */
+  image-rendering: pixelated; /* keep crisp pixels */
+}
+
+/* Ensure each tile wrapper doesn’t force extra height */
+.fill-overlay .fill-box .debug-crop-tile,
+.fill-overlay .fill-box .debug-crop-wrap {
+  aspect-ratio: 1 / 1;
+}
+
+/* Don’t let grid stretch rows unevenly */
+.fill-overlay .fill-box .debug-crops-grid {
+  align-items: start;
+}
+
+/* --- Layout shell --- */
+.app {
+  min-height: 100vh;
+  background: #0f0f0f;
+  color: #ddd;
+}
+
+/* Header across the top */
+.app-header,
+header.app-header {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  height: 44px;
+  padding: 0 12px;
+  background: #111;
+  border-bottom: 1px solid #222;
+}
+.app-header .title {
+  font-weight: 600;
+}
+.app-header .spacer {
+  flex: 1;
+}
+.app-header .btn {
+  padding: 6px 10px;
+  background: #242424;
+  border: 1px solid #333;
+  border-radius: 8px;
+  color: #eee;
+  cursor: pointer;
+}
+.app-header .btn:hover { background: #2b2b2b; }
+.app-header .badge {
+  margin-left: 8px;
+  font-size: 12px;
+  opacity: .8;
+}
+
+/* Body splits into sidebar (fixed) + main content */
+.app-body {
+  display: block; /* sidebar is fixed; main flows */
+}
+
+/* Fixed left sidebar */
+.sidebar {
+  position: fixed;
+  top: 44px;         /* header height */
+  bottom: 0;
+  left: 0;
+  width: 260px;
+  padding: 12px;
+  background: #111;
+  border-right: 1px solid #222;
+  overflow: auto;
+}
+
+/* Main takes the rest of the width */
+.main-content {
+  margin-left: 260px; /* same as sidebar width */
+  padding: 16px;
+  min-height: calc(100vh - 44px);
+}
+
+/* Panels and controls in the sidebar */
+.sidebar .panel { margin-bottom: 16px; }
+.sidebar .panel-title {
+  font-weight: 600;
+  margin-bottom: 8px;
+  opacity: .85;
+}
+.sidebar .row { display: flex; gap: 8px; margin-bottom: 8px; }
+.sidebar .btn {
+  flex: 1;
+  padding: 6px 10px;
+  background: #1e1e1e;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+  color: #eee;
+  cursor: pointer;
+}
+.sidebar .btn:hover { background: #262626; }
+.sidebar .meta { font-size: 12px; opacity: .7; margin: 6px 0 8px; }
+.sidebar .list { display: grid; gap: 6px; }
+.sidebar .list-item {
+  text-align: left;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  background: #151515;
+  border: 1px solid #262626;
+  border-radius: 8px;
+  color: #ddd;
+  cursor: pointer;
+}
+.sidebar .list-item:hover { background: #1a1a1a; }
+.sidebar .list-item.active {
+  border-color: #3aa76d;
+  box-shadow: 0 0 0 1px #3aa76d inset;
+}
+.sidebar .list-item .tag {
+  font-size: 11px; opacity: .8; background: #223225; padding: 2px 6px; border-radius: 999px;
+}
+
+/* Grid + cells (keeps your existing look; tweak only if needed) */
+.grid-5x5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 12px;
+  background: #111;
+  border: 1px solid #222;
+  padding: 12px;
+  border-radius: 10px;
+  max-width: 720px;
+}
+.cell {
+  height: 108px;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  background: #151515;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.cell.complete { outline: 2px solid #3aa76d; }
+.cell img { max-width: 100%; max-height: 100%; image-rendering: pixelated; }
+.cell-text { opacity: .7; }
+
+/* BingoCard header row (inside the card area) */
+.card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin: 0 0 10px;
+}
+.card .title-inline {
+  min-width: 200px;
+  background: #1a1a1a;
+  color: #eee;
+  border: 1px solid #2b2b2b;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+.card .actions .btn,
+.actions button {
+  padding: 6px 10px;
+  background: #1f1f1f;
+  border: 1px solid #2c2c2c;
+  border-radius: 8px;
+  color: #eee;
+  cursor: pointer;
+  margin-right: 6px;
+}
+.actions button:hover { background: #262626; }
+
+/* Fill overlay */
+.fill-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,.5);
+  display: grid; place-items: center;
+}
+.fill-box {
+  width: min(460px, 90vw);
+  background: #121212;
+  border: 1px solid #2a2a2a;
+  border-radius: 12px;
+  padding: 16px;
+  color: #eee;
+}
+.fill-title { font-weight: 600; margin-bottom: 10px; }
+.fill-bar { height: 8px; background: #222; border-radius: 999px; overflow: hidden; }
+.fill-bar-inner { height: 100%; background: #3aa76d; width: 0%; transition: width .2s linear; }
+.fill-meta { margin-top: 8px; font-size: 12px; opacity: .85; }
+.fill-hint { margin-top: 8px; font-size: 12px; opacity: .7; }
+
+/* Panels / card containers */
+.card {
+  background: #121212;
+  border: 1px solid #232323;
+  border-radius: 14px;
+  padding: 16px;
+  box-shadow: 0 2px 0 #1a1a1a inset, 0 0 0 1px rgba(255,255,255,0.02);
+}
+
+/* Header row inside each card */
+.card .card-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: -4px 0 12px;
+}
+.card .title-inline {
+  height: 28px;
+  padding: 4px 8px;
+  background: #171717;
+  border: 1px solid #2b2b2b;
+  border-radius: 8px;
+  color: #eaeaea;
+}
+.card .actions button {
+  height: 28px;
+  padding: 0 10px;
+  background: #1d1d1d;
+  border: 1px solid #2a2a2a;
+  border-radius: 8px;
+  color: #e8e8e8;
+  cursor: pointer;
+}
+.card .actions button:hover { background: #232323; }
+
+/* Grid & cells (fix lower border unevenness, match the reference) */
+.grid-5x5 {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #1f1f1f;
+  border-radius: 10px;
+  background: #0f0f0f;
+}
+
+.cell {
+  height: 96px;
+  border-radius: 10px;
+  background: #141414;
+  border: 1px solid #252525;          /* consistent border on all sides */
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.02) inset,  /* subtle top highlight */
+    0 -1px 0 rgba(0,0,0,0.4) inset;        /* subtle bottom shading (fixes 'weird lower border') */
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.cell.complete { outline: 2px solid #3aa76d; outline-offset: -1px; }
+
+.cell img {
+  max-width: 100%;
+  max-height: 100%;
+  image-rendering: pixelated;
+}
+
+.cell .cell-text {
+  font-size: 12px;
+  opacity: .75;
+}
+
+/* Sidebar progress (like your screenshot) */
+.progress-wrap { margin: 10px 2px 8px; }
+.progress-bar {
+  width: 100%;
+  height: 6px;
+  border-radius: 999px;
+  background: #1a1a1a;
+  border: 1px solid #262626;
+  overflow: hidden;
+}
+.progress-fill {
+  height: 100%;
+  width: 0%;
+  background: #3aa76d;
+  transition: width .2s linear;
+}
+.progress-meta {
+  margin-top: 6px;
+  font-size: 12px;
+  opacity: .8;
+}
+
+/* --- Bingo card sizing & perfectly square cells --- */
+.card { max-width: 720px; }                 /* keeps the whole card a tidy width */
+.grid-5x5 {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #1f1f1f;
+  border-radius: 10px;
+  background: #0f0f0f;
+}
+
+/* Square cells that scale with the card width */
+.cell {
+  aspect-ratio: 1 / 1;                      /* <-- perfect squares */
+  width: 100%;
+  /* remove any fixed heights you had earlier */
+  height: auto !important;
+  min-height: 0;
+  border-radius: 10px;
+  background: #141414;
+  border: 1px solid #252525;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.02) inset,
+    0 -1px 0 rgba(0,0,0,0.4) inset;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.cell img {
+  max-width: 95%;
+  max-height: 95%;
+  image-rendering: pixelated;
+  object-fit: contain;
+}
 
 /* Header buttons evenly scaled across header */
 .bingo-card__header {
