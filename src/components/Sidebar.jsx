@@ -27,11 +27,10 @@ export default function Sidebar({
         return;
       }
 
-      // Preload all sprites with progress callback
-      await preloadSprites(index, (loadedCount, totalCount) => {
-        setLoaded(loadedCount);
-        setTotal(totalCount);
-      });
+    await preloadSprites(index, (loaded, total) => {
+      setLoaded(loaded);
+      setTotal(total);
+    }, { concurrency: 24, retry: 1 });
 
       onGetSprites?.(index);
     } catch (e) {
@@ -53,6 +52,12 @@ export default function Sidebar({
           </button>
         </div>
 
+        {(total > 0) && (
+          <div className="row small">
+            <div>Sprite Cache: {loaded} / {total}</div>
+          </div>
+        )}
+
         <div className="row small">
           {error ? (
             <div className="row error">{error}</div>
@@ -66,12 +71,6 @@ export default function Sidebar({
         <div className="row">
           <button className="btn" onClick={onNewCard}>New Card</button>
         </div>
-
-        {(total > 0) && (
-          <div className="row small">
-            <div>Sprite Cache: {loaded} / {total}</div>
-          </div>
-        )}
 
         <div className="divider" />
 

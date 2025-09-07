@@ -52,43 +52,44 @@ export async function getSprites() {
  * - onStep(loaded, total) is called after each image settles (load OR error).
  * - opts.concurrency: number of parallel requests (default 24; 12–32 is typical).
  * - opts.retry: number of retries per image (default 1).
+ * - opts.signal: optional AbortSignal to cancel preloading early.
  * - Returns { loaded, total } when all settle.
  */
 export async function preloadSprites(index, onStep, opts = {}) {
-  const items = Object.values(index || {});
+  // Filter to only well-formed { url } entries to avoid counting nulls
+  const items = Object.values(index || {}).filter(v => v && typeof v.url === "string");
   const total = items.length;
   let loaded = 0;
 
   const concurrency = Math.max(1, opts.concurrency ?? 24);
   const retry = Math.max(0, opts.retry ?? 1);
-  const controller = new AbortController(); // optional external abort in future
-  const { signal } = controller;
+  const signal = opts.signal || (typeof AbortController !== "undefined" ? new AbortController().signal : undefined);
+
+  // Report initial progress so the UI shows "0 / total"
+  onStep?.(loaded, total);
+  if (total === 0) return { loaded, total };
 
   const loadOne = (src) =>
     new Promise((resolve) => {
-      if (signal.aborted) return resolve();
+      if (signal?.aborted) return resolve();
       const tryOnce = (attempt) => {
-        if (signal.aborted) return resolve();
+        if (signal?.aborted) return resolve();
         const im = new Image();
-        // These help with cross-origin Drive images
+        // Helpful for cross-origin Drive images
         im.crossOrigin = "anonymous";
         im.referrerPolicy = "no-referrer";
         im.decoding = "async";
         im.onload = () => resolve();
         im.onerror = () => {
           if (attempt < retry) {
-            // minimal backoff
+            // minimal backoff without blocking the main thread
             setTimeout(() => tryOnce(attempt + 1), 0);
           } else {
-            resolve(); // settle even on error; we just won't have it warmed
+            resolve(); // settle even on error; still advances progress
           }
         };
         // Ensure absolute URL is used
-        try {
-          im.src = new URL(src, document.baseURI).href;
-        } catch {
-          im.src = src;
-        }
+        try { im.src = new URL(src, document.baseURI).href; } catch { im.src = src; }
       };
       tryOnce(0);
     });
@@ -102,7 +103,7 @@ export async function preloadSprites(index, onStep, opts = {}) {
       await loadOne(src);
       loaded += 1;
       onStep?.(loaded, total);
-      // Yield every so often to keep the UI responsive
+      // Yield periodically to keep UI responsive
       if (loaded % 50 === 0) await Promise.resolve();
     }
   }
