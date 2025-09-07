@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import Header from './components/Header';
 import Sidebar from './components/Sidebar';
 import BingoCard from './components/BingoCard';
+import "../utils/gridBox.js";
 import { prepareRefIndex as buildIndexFromMatchers } from './utils/matchers';
 
 const MANIFEST_URL = `${import.meta.env.BASE_URL || '/'}drive_cache.json`;
