@@ -72,20 +72,35 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
     document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
   }
 
-  // --- Matcher ---
-  async function matchAll(crops, onStep) {
-    if (!spritesIndex) return Array(25).fill(null);
-    const prepared = prepareRefIndex(spritesIndex);
-    const out = [];
-    for (let i = 0; i < 25; i++) {
-      const cropCanvas = crops[i];
-      const dataURL = cropCanvas.toDataURL("image/png");   // ✅ convert to dataURL
-      const best = await findBestMatch(dataURL, prepared);
-      out.push(best || null);
-      onStep?.(i);
+// --- Matcher ---
+async function matchAll(crops, onStep) {
+  if (!spritesIndex) return Array(25).fill(null);
+  const prepared = prepareRefIndex(spritesIndex);
+  const out = [];
+  for (let i = 0; i < 25; i++) {
+    const cropCanvas = crops[i];
+    const dataURL = cropCanvas.toDataURL("image/png");   // ✅ convert to dataURL
+    const best = await findBestMatch(dataURL, prepared);
+
+    // 🔎 Debug log for each crop
+    if (best) {
+      console.log(
+        `[Card ${id}] Cell ${i + 1}/25 → Matched "${best.name}"`,
+        `MSE=${best.mse?.toFixed(3) ?? "?"}`,
+        `SSIM=${best.ssim?.toFixed(3) ?? "?"}`,
+        `NCC=${best.ncc?.toFixed(3) ?? "?"}`,
+        `URL=${best.src}`
+      );
+    } else {
+      console.log(`[Card ${id}] Cell ${i + 1}/25 → No match`);
     }
-    return out;
+
+    out.push(best || null);
+    onStep?.(i);
   }
+  return out;
+}
+
 
   return (
     <div className="card">

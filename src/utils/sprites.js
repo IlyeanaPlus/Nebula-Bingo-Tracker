@@ -1,9 +1,17 @@
 // src/utils/sprites.js
 
+// Resolve a public asset under the correct base URL (works with Vite base + GH Pages)
 function resolvePublic(pathname) {
   return new URL(pathname, document.baseURI).href;
 }
 
+/**
+ * getSprites()
+ * Loads /public/drive_cache.json and normalizes it into:
+ *   { key: { url, name } }
+ * NOTE: Do NOT filter by file extension. Google Drive links (lh3.googleusercontent.com/d/ID)
+ *       often have no .png suffix but still serve PNG content.
+ */
 export async function getSprites() {
   const url = resolvePublic("drive_cache.json");
   const res = await fetch(url, { cache: "force-cache" });
@@ -11,22 +19,20 @@ export async function getSprites() {
   const data = await res.json();
 
   const index = {};
+  const add = (key, src, name) => {
+    if (!key || !src) return;
+    index[key] = { url: src, name: name || key };
+  };
+
   if (Array.isArray(data)) {
-    // Your drive_cache.json is an array of { name, src, ... }
-    for (const entry of data) {
-      if (!entry?.name || !entry?.src) continue;
-      if (!entry.src.toLowerCase().endsWith(".png")) continue;
-      index[entry.name] = { url: entry.src, name: entry.name };
-    }
+    // Your format: [{ name, src, ...hashes }]
+    for (const entry of data) add(entry?.name || entry?.src, entry?.src, entry?.name);
   } else if (data && typeof data === "object") {
-    // Fallback for object formats
+    // Fallback formats:
+    // { key: "https://...", ... } OR { key: { src: "https://...", name? } }
     for (const [k, v] of Object.entries(data)) {
-      if (typeof v === "string") {
-        if (!v.toLowerCase().endsWith(".png")) continue;
-        index[k] = { url: v, name: k };
-      } else if (v?.src && v.src.toLowerCase().endsWith(".png")) {
-        index[v.name || k] = { url: v.src, name: v.name || k };
-      }
+      if (typeof v === "string") add(k, v, k);
+      else if (v && typeof v === "object") add(v.name || k, v.src || v.url, v.name || k);
     }
   }
 
@@ -34,6 +40,11 @@ export async function getSprites() {
   return index;
 }
 
+/**
+ * preloadSprites(index, onStep?)
+ * Sequentially warms the browser cache by loading each sprite URL into an <img>.
+ * Calls onStep(loaded, total) as it progresses.
+ */
 export async function preloadSprites(index, onStep) {
   const items = Object.values(index || {});
   const total = items.length;
@@ -43,7 +54,12 @@ export async function preloadSprites(index, onStep) {
     new Promise((resolve) => {
       const im = new Image();
       im.onload = im.onerror = () => resolve();
-      im.src = src;
+      // Drive links may be relative/absolute; make them absolute against baseURI for safety
+      try {
+        im.src = new URL(src, document.baseURI).href;
+      } catch {
+        im.src = src;
+      }
     });
 
   for (const it of items) {
