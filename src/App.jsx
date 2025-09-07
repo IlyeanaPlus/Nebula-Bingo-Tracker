@@ -9,46 +9,63 @@ import BingoCard from "./components/BingoCard.jsx";
 // Styles
 import "./styles/bingo.css";
 
-// Side-effect overlay (Alt+Shift+B to open the tuner)
+// Grid tuner (Alt+Shift+B) and image utils
 import "./utils/gridBox.js";
-
-// Use your existing image utilities
 import { fileToImage, cropCells } from "./utils/image.js";
 
 export default function App() {
   const [crops, setCrops] = useState(null);
 
   useEffect(() => {
-    // Expose a setter so other modules (or the overlay) can drop crops in
+    // Ensure global namespace
     window.NBT = window.NBT || {};
+    // Expose a setter so other modules (or the overlay) can drop crops in
     window.NBT.setCrops = setCrops;
 
-    // Main hook called by GridBox → we generate 25 crops and broadcast them
+    // === GridBox → Fill hook (Option A) ===
     window.NBT.onGridBoxFill = async (file, { xf, yf }) => {
-      const img = await fileToImage(file);
-      const w = img.naturalWidth || img.width;
-      const h = img.naturalHeight || img.height;
+      try {
+        // 1) File → HTMLImageElement
+        const img = await fileToImage(file);
+        const w = img.naturalWidth || img.width;
+        const h = img.naturalHeight || img.height;
 
-      const xs = xf.map(f => Math.round(f * w));
-      const ys = yf.map(f => Math.round(f * h));
+        // 2) Fractions → absolute line coords
+        const xs = xf.map((f) => Math.round(f * w));
+        const ys = yf.map((f) => Math.round(f * h));
 
-      const tiles = cropCells(img, { xs, ys, w, h });
+        // 3) Crop into 25 dataURLs using existing util
+        const tiles = cropCells(img, { xs, ys, w, h });
 
-      setCrops(tiles);
-      window.dispatchEvent(
-        new CustomEvent("nbt:cropsReady", { detail: { crops: tiles, xs, ys, w, h } })
-      );
+        // 4) Store locally for debug/preview and broadcast
+        setCrops(tiles);
+        window.dispatchEvent(
+          new CustomEvent("nbt:cropsReady", { detail: { crops: tiles, xs, ys, w, h } })
+        );
 
-      localStorage.setItem("nbt.gridFractions", JSON.stringify({ xf, yf }));
-      console.info("[App] GridBox Fill complete — 25 crops ready.");
+        // 5) Persist tuned fractions for reuse
+        localStorage.setItem("nbt.gridFractions", JSON.stringify({ xf, yf }));
+
+        // 6) (Optional) If any component exposed a consumer, send it along
+        if (typeof window.NBT.consumeCrops === "function") {
+          window.NBT.consumeCrops(tiles, { xs, ys, w, h, xf, yf });
+        }
+
+        console.info("[App] GridBox Fill complete — 25 crops ready.");
+      } catch (err) {
+        console.error("[App] onGridBoxFill failed:", err);
+        alert("Failed to fill from grid tuner. See console for details.");
+      }
     };
 
+    // Cleanup on HMR/unmount
     return () => {
       if (window.NBT?.onGridBoxFill) delete window.NBT.onGridBoxFill;
       if (window.NBT?.setCrops === setCrops) delete window.NBT.setCrops;
     };
   }, []);
 
+  // Optional: allow other parts of the app to dispatch crops
   useEffect(() => {
     const onReady = (e) => setCrops(e.detail.crops);
     window.addEventListener("nbt:cropsReady", onReady);
@@ -63,7 +80,7 @@ export default function App() {
         <BingoCard />
       </main>
 
-      {/* Debug badge for crops */}
+      {/* Debug badge for crops (safe to remove anytime) */}
       {Array.isArray(crops) && crops.length === 25 && (
         <div
           style={{

@@ -65,8 +65,11 @@
 #nbt-gridbox-panel .hint { margin-top: 6px; opacity:.8; font-size:11px; }
 
 #nbt-gridbox-backdrop {
-  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.25);   /* lighter dim so app chrome is visible */
   z-index: ${Z_OVERLAY - 2};
+  pointer-events: none;           /* <-- IMPORTANT: do NOT block clicks */
 }
 
 #nbt-gridbox-overlay {
@@ -149,15 +152,20 @@ body.nbt-drop-active { outline:2px dashed #0f8; outline-offset:-2px; }
     img.style.borderRadius = "10px";
     img.style.background = "#111";
   }
-  function ensureBackdrop() {
-    if (backdrop && document.body.contains(backdrop)) return backdrop;
-    const d = document.createElement("div");
-    d.id = "nbt-gridbox-backdrop";
-    d.onclick = () => {}; // image should not disappear
-    document.body.appendChild(d);
-    backdrop = d;
-    return d;
-  }
+function ensureBackdrop() {
+  if (backdrop && document.body.contains(backdrop)) return backdrop;
+  const d = document.createElement("div");
+  d.id = "nbt-gridbox-backdrop";
+  // Panel/overlay sit above it; backdrop is purely visual and non-interactive
+  d.style.position = "fixed";
+  d.style.inset = "0";
+  d.style.background = "rgba(0,0,0,0.25)";
+  d.style.zIndex = String(Z_OVERLAY - 2);
+  d.style.pointerEvents = "none"; // <-- critical
+  document.body.appendChild(d);
+  backdrop = d;
+  return d;
+}
   function createHiddenFileInput(accept="image/*") {
     const input = document.createElement("input");
     input.type = "file";
