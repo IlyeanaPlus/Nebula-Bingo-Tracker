@@ -160,22 +160,36 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       // 2) Optional: match against sprites
       let next = Array(25).fill(null);
       if (spritesReady) {
-        const refs = await prepareRefIndex(normalizeManifest(manifest));
-        for (let i = 0; i < 25; i++) {
-          try {
-            const best = await findBestMatch(crops[i], refs);
-            next[i] = best
-              ? { label: best.name, matchKey: best.key, matchUrl: best.src }
-              : null;
-          } catch (e) {
-            console.warn(`[useBingoCard] match failed for cell ${i}`, e);
-            next[i] = null;
+        // prepare refs (normalize manifest shape)
+        const refIndex = await prepareRefIndex(normalizeManifest(manifest));
+
+        // Some matcher versions return an array; others return {list, byKey}.
+        // Always hand findBestMatch the array it expects.
+        const refList = Array.isArray(refIndex) ? refIndex : (refIndex?.list || []);
+
+        // Bail early if nothing usable
+        if (!Array.isArray(refList) || refList.length === 0) {
+          console.warn("[useBingoCard] No reference sprites available for matching.");
+          setProgress(100);
+        } else {
+          // progress from 30 → 100
+          for (let i = 0; i < 25; i++) {
+            try {
+              const best = await findBestMatch(crops[i], refList);
+              next[i] = best
+                ? { label: best.name, matchKey: best.key, matchUrl: best.src }
+                : null;
+            } catch (e) {
+              console.warn(`[useBingoCard] match failed for cell ${i}`, e);
+              next[i] = null;
+            }
+            setProgress(30 + Math.round(((i + 1) / 25) * 70));
           }
-          setProgress(30 + Math.round(((i + 1) / 25) * 70));
         }
       } else {
         setProgress(100);
       }
+
 
       setResults(next);
       onChange?.({ ...(card || {}), title, cells: next, fractions: sqNorm });
