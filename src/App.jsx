@@ -1,21 +1,14 @@
-// src/App.jsx — app shell with Header/Sidebar + card & sprites state
+// src/App.jsx
 import React, { useEffect, useMemo, useState } from "react";
-
-// UI
 import Header from "./components/Header.jsx";
 import Sidebar from "./components/Sidebar.jsx";
 import BingoCard from "./components/BingoCard.jsx";
-
-// Styles
 import "./styles/bingo.css";
-
-// Side-effect: grid tuner (Alt+Shift+B)
 import "./utils/gridBox.js";
 
 const LS_KEYS = {
   CARDS: "nbt.cards.v1",
   CURRENT: "nbt.currentIndex.v1",
-  FRACTIONS: "nbt.gridFractions",
 };
 
 const makeBlankCard = (title = "New Card") => ({
@@ -29,7 +22,6 @@ const makeBlankCard = (title = "New Card") => ({
 });
 
 export default function App() {
-  // ---- state ----
   const [cards, setCards] = useState(() => {
     try {
       const raw = localStorage.getItem(LS_KEYS.CARDS);
@@ -43,13 +35,8 @@ export default function App() {
     return Number.isFinite(n) ? Math.max(0, Math.min(n, 0)) : 0;
   });
 
-  // sprites manifest for matching
-  const [manifest, setManifest] = useState(() => {
-    // if you persist a manifest, hydrate here; otherwise start empty
-    return [];
-  });
+  const [manifest, setManifest] = useState([]);
 
-  // ---- persistence ----
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEYS.CARDS, JSON.stringify(cards));
@@ -62,54 +49,61 @@ export default function App() {
     } catch {}
   }, [currentIndex]);
 
-  // ---- derived ----
   const currentCard = useMemo(
     () => (cards[currentIndex] ? cards[currentIndex] : undefined),
     [cards, currentIndex]
   );
 
-  // ---- handlers: sprites ----
+  // ---- Get Sprites from public/drive_cache.json ----
   async function handleGetSprites() {
-    // Try globals first (if your repo exposes a loader), then fallback to common path.
+    const normalize = (raw) => {
+      if (!raw) return [];
+      if (Array.isArray(raw) && raw.length && raw[0]?.name && raw[0]?.src) return raw;
+
+      const items = Array.isArray(raw.items) ? raw.items : Array.isArray(raw) ? raw : [];
+      return items
+        .map((it) => {
+          const name =
+            it.name || it.title || it.filename || it.fileName || it.id || "";
+          const src =
+            it.src ||
+            it.url ||
+            it.downloadUrl ||
+            it.webContentLink ||
+            it.webViewLink ||
+            it.thumbnailLink ||
+            it.path ||
+            it.relativePath ||
+            "";
+          return name && src ? { name, src } : null;
+        })
+        .filter(Boolean);
+    };
+
     try {
-      if (window.NBT?.loadSprites) {
-        const out = await window.NBT.loadSprites(); // expected to return an array manifest
-        if (Array.isArray(out)) {
-          setManifest(out);
-          return;
-        }
-      }
-      if (window.NBT?.spritesManifest && Array.isArray(window.NBT.spritesManifest)) {
-        setManifest(window.NBT.spritesManifest);
+      // public/* is served from the site root at runtime
+      const res = await fetch("./drive_cache.json", { cache: "no-store" });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const json = await res.json();
+      const mf = normalize(json);
+      if (!mf.length) {
+        console.warn("[GetSprites] drive_cache.json shape:", json);
+        alert("drive_cache.json loaded, but no sprite entries were recognized.");
         return;
       }
+      setManifest(mf);
+      console.info(`[GetSprites] Loaded ${mf.length} sprites from drive_cache.json`);
     } catch (e) {
-      console.error("Global sprite loader failed:", e);
-    }
-
-    // Fallback: try a conventional manifest path if it exists in your repo
-    try {
-      const res = await fetch("./sprites/manifest.json", { cache: "no-store" });
-      if (res.ok) {
-        const json = await res.json();
-        if (Array.isArray(json)) {
-          setManifest(json);
-          return;
-        }
-      }
-      alert("Couldn’t find sprites manifest. Wire window.NBT.loadSprites() or provide sprites/manifest.json");
-    } catch (e) {
-      console.error("Fetch sprites/manifest.json failed:", e);
+      console.error("[GetSprites] Failed to load drive_cache.json:", e);
       alert("Get Sprites failed. See console for details.");
     }
   }
 
-  // ---- handlers: cards ----
+  // ---- card handlers ----
   function handleNewCard() {
     setCards((prev) => [...prev, makeBlankCard(`Card ${prev.length + 1}`)]);
     setCurrentIndex(cards.length);
   }
-
   function handleUpdateCard(next) {
     setCards((prev) => {
       const copy = prev.slice();
@@ -117,7 +111,6 @@ export default function App() {
       return copy;
     });
   }
-
   function handleRemoveCard() {
     setCards((prev) => {
       if (!prev.length) return prev;
@@ -129,45 +122,44 @@ export default function App() {
       return copy;
     });
   }
-
   function handleClearSaved() {
     setCards([makeBlankCard()]);
     setCurrentIndex(0);
   }
 
-  // Provide a small API for the tuner Fill to consume crops -> (already handled in BingoCard)
+  // optional global hook target for the tuner
   useEffect(() => {
     window.NBT = window.NBT || {};
-    // optional: expose a consumer if you want global reactions
-    window.NBT.consumeCrops = (crops /* Array<25 dataURLs> */) => {
-      // no-op here; BingoCard will use manifest+matching when you click Fill inside the card UI
-    };
+    window.NBT.consumeCrops = () => {};
   }, []);
 
   return (
-    <div className="App">
+    <div className="app">
       <Header
         title="Nebula Bingo Tracker"
         spritesCount={manifest.length}
         onGetSprites={handleGetSprites}
       />
 
-      <Sidebar
-        cards={cards}
-        currentIndex={currentIndex}
-        onSelect={setCurrentIndex}
-        onNewCard={handleNewCard}
-        onClearSaved={handleClearSaved}
-      />
-
-      <main className="main-content">
-        <BingoCard
-          card={currentCard}
-          onChange={handleUpdateCard}
-          onRemove={handleRemoveCard}
-          manifest={manifest}
+      {/* LEFT COLUMN LAYOUT */}
+      <div className="app-body">
+        <Sidebar
+          cards={cards}
+          currentIndex={currentIndex}
+          onSelect={setCurrentIndex}
+          onNewCard={handleNewCard}
+          onClearSaved={handleClearSaved}
         />
-      </main>
+
+        <main className="main-content">
+          <BingoCard
+            card={currentCard}
+            onChange={handleUpdateCard}
+            onRemove={handleRemoveCard}
+            manifest={manifest}
+          />
+        </main>
+      </div>
     </div>
   );
 }
