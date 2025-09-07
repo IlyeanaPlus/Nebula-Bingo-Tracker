@@ -1,278 +1,136 @@
 // src/components/BingoCard.jsx
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { fileToImage, crop25 } from '../utils/image';
-import { prepareRefIndex, findBestMatch } from '../utils/matchers';
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { fileToImage, computeCrops25, loadFractions, saveFractions } from "../utils/image";
+import GridTunerModal from "./GridTunerModal";
+import { prepareRefIndex, findBestMatch } from "../utils/matchers";
 
-const NO_MATCH_SVG = encodeURI(
-  `<svg xmlns="http://www.w3.org/2000/svg" width="300" height="300">
-     <rect width="100%" height="100%" fill="#121212"/>
-     <g fill="#777" font-family="system-ui,Segoe UI,Arial" font-size="16" text-anchor="middle">
-       <text x="150" y="154">No match</text>
-     </g>
-   </svg>`
-);
-const NO_MATCH_DATA_URL = `data:image/svg+xml;utf8,${NO_MATCH_SVG}`;
+export default function BingoCard({ id, title, spritesIndex, onRemove, onRename }) {
+  const [name, setName] = useState(title || `Card ${id}`);
+  const [renaming, setRenaming] = useState(false);
+  const [spritesReady, setSpritesReady] = useState(!!spritesIndex && Object.keys(spritesIndex || {}).length > 0);
+  const [matchResults, setMatchResults] = useState(Array(25).fill(null));
+  const [showTuner, setShowTuner] = useState(false);
+  const [pendingImageSrc, setPendingImageSrc] = useState(null);
+  const [fractions, setFractions] = useState(loadFractions());
+  const fileInputRef = useRef(null);
 
-export default function BingoCard({ card, onChange, onRemove, manifest }) {
-  const [isFilling, setIsFilling] = useState(false);
-  const [fillStep, setFillStep] = useState(0);
-  const [refIndex, setRefIndex] = useState([]);
-  const [lastCrops, setLastCrops] = useState(null); // dataURLs from last Fill
-  const [showDebugCrops, setShowDebugCrops] = useState(false);
-  const inputRef = useRef(null);
-
-  // safe versions so undefined/null props never crash
-  const safeOnChange = typeof onChange === 'function' ? onChange : () => {};
-  const safeCard = useMemo(
-    () => (card && typeof card === 'object' ? card : {}),
-    [card]
-  );
-
-  // normalize to 25 cells safely
-  const cells = useMemo(() => {
-    const c = safeCard && Array.isArray(safeCard.cells) ? safeCard.cells : null;
-    if (c && c.length === 25) return c;
-    return Array.from({ length: 25 }, () => ({
-      name: '',
-      sprite: null,
-      complete: false,
-    }));
-  }, [safeCard]);
-
-  // Build reference index whenever manifest changes
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      if (!manifest || !manifest.length) {
-        if (alive) setRefIndex([]);
-        return;
-      }
-      try {
-        const idx = await prepareRefIndex(manifest);
-        if (alive) setRefIndex(idx);
-      } catch (e) {
-        console.error('prepareRefIndex failed', e);
-        if (alive) setRefIndex([]);
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-  }, [manifest]);
-
-  // Close Debug Crops with Esc
-  useEffect(() => {
-    const onEsc = (e) => {
-      if (e.key === 'Escape') setShowDebugCrops(false);
-    };
-    window.addEventListener('keydown', onEsc);
-    return () => window.removeEventListener('keydown', onEsc);
-  }, []);
-
-  function toggleComplete(idx) {
-    const next = [...cells];
-    next[idx] = { ...next[idx], complete: !next[idx].complete };
-    safeOnChange({ ...safeCard, cells: next });
+  // Renaming UX
+  function handleRenameClick() {
+    setRenaming(true);
   }
-
-  function handleTitleChange(e) {
-    safeOnChange({ ...safeCard, title: e.target.value });
-  }
-
-  function handleSave() {
-    safeOnChange({ ...safeCard, saved: true });
-  }
-
-  function handlePick() {
-    if (!isFilling) inputRef.current?.click();
-  }
-
-  function onFile(e) {
-    const f = e.target.files?.[0];
-    if (f) runFillFromFile(f);
-    e.target.value = '';
-  }
-
-  function onDrop(e) {
+  function handleRenameSubmit(e) {
     e.preventDefault();
-    const f = e.dataTransfer?.files?.[0];
-    if (f) runFillFromFile(f);
-  }
-  function onDragOver(e) {
-    e.preventDefault();
+    setRenaming(false);
+    onRename?.(id, name);
   }
 
-  async function runFillFromFile(file) {
-    setIsFilling(true);
-    setFillStep(0);
-    try {
-      const img = await fileToImage(file);
-      const crops = await crop25(img); // native-size crops
-      setLastCrops(crops); // show in Debug Crops modal
+  // Header buttons (scaled neatly)
+  function handlePickImage() {
+    fileInputRef.current?.click();
+  }
+  async function onPickFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const url = URL.createObjectURL(file);
+    setPendingImageSrc(url);
+    setShowTuner(true);
+  }
 
-      const nextCells = [...cells];
+  async function onTunerConfirm(newFractions) {
+    setShowTuner(false);
+    setFractions(newFractions);
+    saveFractions(newFractions);
+    // Convert pending image into crops and match
+    if (!pendingImageSrc) return;
+    const tmp = new Image();
+    await new Promise((res, rej) => {
+      tmp.onload = () => res();
+      tmp.onerror = rej;
+      tmp.src = pendingImageSrc;
+    });
+    const crops = computeCrops25(tmp, newFractions);
+    // Send crops to matcher for this card
+    const results = await matchAll(crops);
+    setMatchResults(results);
+  }
 
-      for (let i = 0; i < crops.length; i++) {
-        const cropURL = crops[i];
+  function onTunerCancel() {
+    setShowTuner(false);
+    setPendingImageSrc(null);
+  }
 
-        const out = refIndex.length
-          ? await findBestMatch(cropURL, refIndex, {
-              shortlistK: 48,
-              ssimMin: 0.82,
-              mseMax: 1100,
-              nccMin: 0.88, // NCC acceptance path
-              tau: 16, // raise to 18–20 for low-quality JPGs
-              debug: true, // console logs while tuning
-            })
-          : null;
-
-        if (out) {
-          nextCells[i] = {
-            name: out.name,
-            sprite: out.src,
-            complete: nextCells[i]?.complete || false,
-          };
-        } else {
-          nextCells[i] = {
-            name: '— no match —',
-            sprite: NO_MATCH_DATA_URL,
-            complete: false,
-          };
-        }
-
-        setFillStep(i + 1);
-        if ((i + 1) % 5 === 0) await new Promise((r) => setTimeout(r, 0));
-      }
-
-      safeOnChange({ ...safeCard, cells: nextCells });
-    } catch (e) {
-      console.error('Fill error', e);
-    } finally {
-      setIsFilling(false);
+  // Matching logic: find best sprite for each crop using existing index
+  async function matchAll(crops) {
+    if (!spritesIndex) return Array(25).fill(null);
+    const prepared = prepareRefIndex(spritesIndex);
+    const out = [];
+    for (let i = 0; i < 25; i++) {
+      const crop = crops[i];
+      const best = await findBestMatch(crop, prepared);
+      out.push(best); // shape depends on matcher (e.g., {id, score, url})
     }
+    return out;
   }
 
   return (
-    <div className="card" onDrop={onDrop} onDragOver={onDragOver}>
-      <div className="card-header">
-        <input
-          className="title-inline"
-          value={safeCard.title ?? ''}                /* guard title */
-          onChange={handleTitleChange}
-          placeholder="Card title"
-          aria-label="Card title"
-        />
-        <div className="actions" title={refIndex.length ? '' : 'Sprites not loaded yet'}>
-          <span style={{ opacity: 0.7, fontSize: 12, marginRight: 8 }}>
-            sprites: {refIndex.length}
-          </span>
-          <button onClick={handlePick} disabled={!refIndex.length || isFilling}>
+    <div className="bingo-card">
+      <div className="bingo-card__header">
+        {renaming ? (
+          <form onSubmit={handleRenameSubmit} className="rename-inline">
+            <input
+              className="rename-input"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              autoFocus
+              onBlur={() => setRenaming(false)}
+            />
+          </form>
+        ) : (
+          <h2 className="card-title" title="Click to rename" onClick={handleRenameClick}>
+            {name}
+          </h2>
+        )}
+        <div className="header-spacer" />
+        <div className="header-actions">
+          <button className="nbt-btn wide" onClick={handlePickImage} title="Fill: pick screenshot & fine-tune grid">
             Fill
           </button>
-          <button onClick={handleSave}>Save</button>
-          <button onClick={onRemove}>Remove</button>
-          {lastCrops?.length === 25 && (
-            <button
-              onClick={() => setShowDebugCrops(true)}
-              title="Show 25 cropped cells from the last Fill"
-            >
-              Debug Crops
-            </button>
-          )}
+          <button className="nbt-btn ghost wide" onClick={() => onRemove?.(id)}>
+            Remove
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept="image/png,image/jpeg,image/webp"
+            style={{ display: "none" }}
+            onChange={onPickFile}
+          />
         </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept="image/*"
-          style={{ display: 'none' }}
-          onChange={onFile}
-        />
       </div>
 
-      <div className="grid-5x5" aria-label="Bingo grid">
-        {cells.map((cell, idx) => (
-          <div
-            key={idx}
-            className={`cell ${cell.complete ? 'complete' : ''}`}
-            onClick={() => toggleComplete(idx)}
-            title={cell.name || '—'}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => (e.key === 'Enter' || e.key === ' ') && toggleComplete(idx)}
-          >
-            {cell.sprite ? (
-              <img src={cell.sprite} alt={cell.name || 'cell'} />
+      <div className="bingo-card__status">
+        {spritesReady ? <span className="ok">sprites loaded!</span> : <span className="warn">load sprites to enable matching</span>}
+      </div>
+
+      <div className="bingo-grid">
+        {Array.from({ length: 25 }, (_, i) => (
+          <div key={i} className="cell">
+            {matchResults[i] ? (
+              <img className="cell-sprite" src={matchResults[i].url || matchResults[i].dataURL} alt={`match-${i}`} />
             ) : (
-              <span className="cell-text">{cell.name || '—'}</span>
+              <div className="cell-empty" />
             )}
           </div>
         ))}
       </div>
 
-      {isFilling && (
-        <div className="fill-overlay" role="status" aria-live="polite">
-          <div className="fill-box">
-            <div className="fill-title">Analyzing screenshot…</div>
-            <div className="fill-bar">
-              <div className="fill-bar-inner" style={{ width: `${(fillStep / 25) * 100}%` }} />
-            </div>
-            <div className="fill-meta">{fillStep} / 25</div>
-            <div className="fill-hint">Tip: drop an image anywhere on this card to start.</div>
-          </div>
-        </div>
-      )}
-
-      {/* Debug crops modal */}
-      {showDebugCrops && lastCrops?.length === 25 && (
-        <div
-          className="fill-overlay"
-          style={{ zIndex: 9999 }}
-          onClick={() => setShowDebugCrops(false)}
-        >
-          <div
-            className="fill-box"
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxHeight: '70vh', overflow: 'auto' }}
-          >
-            <div
-              className="fill-title"
-              style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}
-            >
-              <span>Last Fill — Crops</span>
-              <button onClick={() => setShowDebugCrops(false)}>Close</button>
-            </div>
-            <div
-              style={{
-                display: 'grid',
-                gridTemplateColumns: 'repeat(5, 1fr)',
-                gap: 8,
-                background: '#111',
-                padding: 8,
-                borderRadius: 8,
-              }}
-            >
-              {(lastCrops || []).map((src, i) => (
-                <div key={i} style={{ background: '#222', padding: 6, borderRadius: 6 }}>
-                  <img
-                    src={src}
-                    alt={`crop ${i}`}
-                    style={{ width: 48, height: 48, imageRendering: 'pixelated' }}
-                  />
-                  <div
-                    style={{
-                      fontSize: 11,
-                      opacity: 0.8,
-                      marginTop: 4,
-                      textAlign: 'center',
-                    }}
-                  >
-                    {i === 12 ? 'center' : `#${i + 1}`}
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
+      {showTuner && (
+        <GridTunerModal
+          imageSrc={pendingImageSrc}
+          initialFractions={fractions}
+          onConfirm={onTunerConfirm}
+          onCancel={onTunerCancel}
+        />
       )}
     </div>
   );
