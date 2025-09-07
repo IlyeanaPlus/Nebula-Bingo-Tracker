@@ -13,13 +13,13 @@ const LS_KEYS = {
 
 const makeBlankCard = (title = "New Card") => ({
   title,
+  // keeping saved for compatibility; safe to remove later if unused
   saved: false,
   cells: Array.from({ length: 25 }, () => ({
     label: "",
     matchKey: "",
     matchUrl: "",
   })),
-  // store the most recent screenshot used for this card
   lastImage: null,
 });
 
@@ -29,14 +29,14 @@ export default function App() {
       const raw = localStorage.getItem(LS_KEYS.CARDS);
       if (raw) return JSON.parse(raw);
     } catch {}
-    return [makeBlankCard("New Card")];
-  });
-  const [currentIndex, setCurrentIndex] = useState(() => {
-    const raw = localStorage.getItem(LS_KEYS.CURRENT);
-    return raw ? Number(raw) : 0;
+    return []; // ⬅ start with no cards
   });
 
-  const currentCard = cards[currentIndex] || makeBlankCard();
+  const [currentIndex, setCurrentIndex] = useState(() => {
+    const raw = localStorage.getItem(LS_KEYS.CURRENT);
+    const idx = raw ? Number(raw) : -1; // ⬅ -1 means “no selection”
+    return Number.isFinite(idx) ? idx : -1;
+  });
 
   // Persist cards & current index
   useEffect(() => {
@@ -44,38 +44,41 @@ export default function App() {
       localStorage.setItem(LS_KEYS.CARDS, JSON.stringify(cards));
     } catch {}
   }, [cards]);
+
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEYS.CURRENT, String(currentIndex));
+      localStorage.setItem(LS_KEYS.CURRENT, String(currentIndex)); // -1 allowed
     } catch {}
   }, [currentIndex]);
 
   // Manifest (sprites index) is stored at app level
   const [manifest, setManifest] = useState(null);
-
-  function handleGetSprites(indexObj) {
-    setManifest(indexObj);
-  }
+  function handleGetSprites(indexObj) { setManifest(indexObj); }
 
   function handleNewCard() {
-    setCards((prev) => [...prev, makeBlankCard(`Card ${prev.length + 1}`)]);
-    setCurrentIndex(cards.length);
+    setCards(prev => {
+      const next = [...prev, makeBlankCard(`Card ${prev.length + 1}`)];
+      setCurrentIndex(next.length - 1); // select newly created
+      return next;
+    });
   }
 
-  function handleSelectCard(i) {
-    setCurrentIndex(i);
-  }
+  function handleSelectCard(i) { setCurrentIndex(i); }
 
   function handleUpdateCard(nextCard) {
-    setCards((prev) => prev.map((c, i) => (i === currentIndex ? nextCard : c)));
+    if (currentIndex < 0) return;
+    setCards(prev => prev.map((c, i) => (i === currentIndex ? nextCard : c)));
   }
 
   function handleRemoveCard() {
-    setCards((prev) => {
-      if (prev.length <= 1) return [makeBlankCard("Card 1")];
+    if (currentIndex < 0) return;
+    setCards(prev => {
       const next = [...prev.slice(0, currentIndex), ...prev.slice(currentIndex + 1)];
-      const newIndex = Math.max(0, currentIndex - 1);
-      setCurrentIndex(newIndex);
+      if (next.length === 0) {
+        setCurrentIndex(-1); // nothing selected
+      } else {
+        setCurrentIndex(Math.min(currentIndex, next.length - 1));
+      }
       return next;
     });
   }
@@ -94,25 +97,32 @@ export default function App() {
         />
 
         <main className="main-content">
-          <div className="cards-grid">
-            {cards.map((card, i) => (
-              <BingoCard
-                key={card.id || i}
-                card={card}
-                onChange={(next) => {
-                  setCards((prev) => prev.map((c, j) => (j === i ? next : c)));
-                }}
-                onRemove={() => {
-                  setCards((prev) => {
-                    if (prev.length <= 1) return [makeBlankCard("Card 1")];
-                    const next = [...prev.slice(0, i), ...prev.slice(i + 1)];
-                    return next;
-                  });
-                }}
-                manifest={manifest}
-              />
-            ))}
-          </div>
+          {cards.length > 0 ? (
+            <div className="cards-grid">
+              {cards.map((card, i) => (
+                <BingoCard
+                  key={card.id || i}
+                  card={card}
+                  onChange={(next) => {
+                    setCards(prev => prev.map((c, j) => (j === i ? next : c)));
+                  }}
+                  onRemove={() => {
+                    setCards(prev => {
+                      const next = [...prev.slice(0, i), ...prev.slice(i + 1)];
+                      if (next.length === 0) setCurrentIndex(-1);
+                      else if (currentIndex >= next.length) setCurrentIndex(next.length - 1);
+                      return next;
+                    });
+                  }}
+                  manifest={manifest}
+                />
+              ))}
+            </div>
+          ) : (
+            <div style={{ opacity: 0.75, padding: 16 }}>
+              No cards yet. Click <strong>New Card</strong> in the sidebar to get started.
+            </div>
+          )}
         </main>
       </div>
     </div>
