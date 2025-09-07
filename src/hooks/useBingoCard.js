@@ -65,43 +65,77 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     console.log("[useBingoCard] showTuner set →", true);
   }
 
-  // --- Tuner confirm/cancel ---
+    // --- Tuner confirm/cancel ---
+  function clamp01(v) { return Math.max(0, Math.min(1, v)); }
+  function normalizeSquare(fr) {
+    // ensure 0..1 and square
+    const s = Math.max(0.05, Math.min(1, fr?.w ?? fr?.h ?? 0.6));
+    let x = clamp01(fr?.x ?? (1 - s) / 2);
+    let y = clamp01(fr?.y ?? (1 - s) / 2);
+    // keep fully inside image
+    x = Math.min(x, 1 - s);
+    y = Math.min(y, 1 - s);
+    return { x, y, w: s, h: s };
+  }
+
   async function confirmTuner(newFractions) {
+    // hide modal immediately, persist fractions
+    const f = normalizeSquare(newFractions);
     setShowTuner(false);
-    setFractions(newFractions);
-    saveFractions(newFractions);
+    setFractions(f);
+    saveFractions(f);
+
     if (!pendingImageSrc) return;
 
+    setAnalyzing(true);
+    setProgress(0);
+
     try {
-      setAnalyzing(true);
-      setProgress(0);
+      // 1) Crop into 25 squares using the tuner fractions
+      // computeCrops25 should accept (imageSrc, {x,y,w,h}) and return an Array(25)
+      // If yours also supports a progress callback, you can pass one; otherwise we
+      // bump to ~30% after cropping as a coarse milestone.
+      const crops = await computeCrops25(pendingImageSrc, f);
+      if (!Array.isArray(crops) || crops.length !== 25) {
+        console.warn("[useBingoCard] computeCrops25 did not return 25 crops:", crops);
+        setProgress(100);
+        return;
+      }
+      setProgress(30);
 
-      const crops = await computeCrops25(pendingImageSrc, newFractions);
-
-      // Free the blob URL now that we've read it
-      try { URL.revokeObjectURL(pendingImageSrc); } catch {}
-      setPendingImageSrc(null);
-
+      // 2) Optional matching against sprites manifest
       let next = Array(25).fill(null);
 
       if (spritesReady) {
         const refs = await prepareRefIndex(manifest);
+        // progress from 30 → 100 during matching
         for (let i = 0; i < 25; i++) {
           const best = await findBestMatch(crops[i], refs);
-          next[i] = best ? { label: best.name, matchKey: best.key, matchUrl: best.src } : null;
-          setProgress(Math.round(((i + 1) / 25) * 100));
+          next[i] = best
+            ? { label: best.name, matchKey: best.key, matchUrl: best.src }
+            : null;
+
+          const pct = 30 + Math.round(((i + 1) / 25) * 70);
+          setProgress(pct);
         }
       } else {
-        // No sprites yet; fill stays empty but we still complete progress
+        // No refs yet → just finalize crops progress
         setProgress(100);
       }
 
       setResults(next);
-      onChange?.({ ...(card || {}), title, cells: next, fractions: newFractions });
+      onChange?.({ ...(card || {}), title, cells: next, fractions: f });
+    } catch (err) {
+      console.error("[useBingoCard] confirmTuner error:", err);
+      setProgress(100);
     } finally {
+      // 3) Cleanup
+      try { URL.revokeObjectURL(pendingImageSrc); } catch {}
+      setPendingImageSrc(null);
       setAnalyzing(false);
     }
   }
+
 
   function cancelTuner() {
     setShowTuner(false);

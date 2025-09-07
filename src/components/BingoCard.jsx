@@ -35,16 +35,6 @@ export default function BingoCard({ card, manifest, onChange, onRemove }) {
           onCancel={h.cancelTuner}
         />
       )}
-
-      {/* Mount the tuner modal OUTSIDE the view so UI stays pure */}
-      {h.showTuner && (
-        <GridTunerModal
-          imageSrc={h.pendingImageSrc}
-          initialFractions={h.fractions}
-          onConfirm={h.confirmTuner}
-          onCancel={h.cancelTuner}
-        />
-      )}
     </>
   );
 }
