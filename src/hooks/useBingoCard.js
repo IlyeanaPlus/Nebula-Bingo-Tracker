@@ -58,10 +58,39 @@ function normalizeManifest(man) {
       const v = man[k] || {};
       const src = v.url || v.src || v.image;
       if (!src) return null;
+      // keep 'name' for display, key can be derived inside matcher if needed
       return { name: v.name || k, src };
     }).filter(Boolean);
   }
   return [];
+}
+
+// --- validation + single-cell recovery for crops ---
+function isDataUrl(v) {
+  return typeof v === "string" && v.startsWith("data:image/");
+}
+
+// recompute a single cell directly from the tuned grid if a crop is missing
+function recomputeCellDataUrl(imgEl, gridFractions, r, c) {
+  const { top, left, right, bottom, cols, rows } = gridFractions;
+  const L = left * imgEl.width,  R = right * imgEl.width;
+  const T = top  * imgEl.height, B = bottom * imgEl.height;
+  const W = R - L, H = B - T;
+  const x0 = L + W * cols[c];
+  const x1 = L + W * cols[c + 1];
+  const y0 = T + H * rows[r];
+  const y1 = T + H * rows[r + 1];
+  const cellW = x1 - x0, cellH = y1 - y0;
+  const side = Math.max(1, Math.floor(Math.min(cellW, cellH)));
+  const cx = x0 + (cellW - side) / 2;
+  const cy = y0 + (cellH - side) / 2;
+
+  const canvas = document.createElement("canvas");
+  canvas.width = side; canvas.height = side;
+  const ctx = canvas.getContext("2d");
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(imgEl, cx, cy, side, side, 0, 0, side, side);
+  return canvas.toDataURL("image/png");
 }
 
 export default function useBingoCard({ card, manifest, onChange, onRemove }) {
@@ -149,12 +178,21 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       const imgEl = await urlToImage(pendingImageSrc);
 
       // 1) Crop to 25 cells
-      const crops = computeCrops25(imgEl, gridFractions);
+      let crops = computeCrops25(imgEl, gridFractions);
       if (!Array.isArray(crops) || crops.length !== 25) {
         console.error("[useBingoCard] computeCrops25 did not return 25 crops:", crops);
         setProgress(100);
         return;
       }
+
+      // Harden crops: ensure every entry is a dataURL; if not, recompute that cell
+      for (let i = 0; i < 25; i++) {
+        if (!isDataUrl(crops[i])) {
+          const r = Math.floor(i / 5), c = i % 5;
+          crops[i] = recomputeCellDataUrl(imgEl, gridFractions, r, c);
+        }
+      }
+
       setProgress(30);
 
       // 2) Optional: match against sprites
@@ -169,29 +207,16 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
         } else {
           for (let i = 0; i < 25; i++) {
             try {
-              const cropUrl = crops[i]; // << dataURL string from computeCrops25
-
-              // Guard: ensure crop is a string (URL). If not, try to adapt.
-              let input = cropUrl;
-              if (typeof input !== "string") {
-                console.warn("[useBingoCard] crop is not a URL, adapting @ cell", i, input);
-                // Fallback adapter for ImageData/Canvas if it somehow happens:
-                if (input && input.data && input.width && input.height) {
-                  const c = document.createElement("canvas");
-                  c.width = input.width; c.height = input.height;
-                  const ctx = c.getContext("2d"); ctx.putImageData(input, 0, 0);
-                  input = c.toDataURL("image/png");
-                } else if (input && input.toDataURL) {
-                  input = input.toDataURL("image/png");
-                } else {
-                  throw new Error("Unsupported crop type");
-                }
+              const input = crops[i]; // dataURL string
+              if (!isDataUrl(input)) {
+                console.warn(`[useBingoCard] cell ${i} crop invalid after recovery; skipping`);
+                next[i] = null;
+              } else {
+                const best = await findBestMatch(input, refList); // pass array of refs
+                next[i] = best
+                  ? { label: best.name, matchKey: best.key, matchUrl: best.src }
+                  : null;
               }
-
-              const best = await findBestMatch(input, refList); // << pass array of refs
-              next[i] = best
-                ? { label: best.name, matchKey: best.key, matchUrl: best.src }
-                : null;
             } catch (e) {
               console.warn(`[useBingoCard] match failed for cell ${i}`, e);
               next[i] = null;
@@ -202,7 +227,6 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       } else {
         setProgress(100);
       }
-
 
       setResults(next);
       onChange?.({ ...(card || {}), title, cells: next, fractions: sqNorm });
