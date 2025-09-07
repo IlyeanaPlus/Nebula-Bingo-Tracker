@@ -1,15 +1,11 @@
 // src/components/Header.jsx
 import React from "react";
 
-export default function Header({ title = "Nebula Bingo Tracker", spritesCount = 0, onGetSprites }) {
+export default function AppHeader() {
   return (
     <header className="app-header">
-      <div className="title">{title}</div>
-      <div className="spacer" />
-      <button className="btn" onClick={onGetSprites}>
-        Get Sprites
-      </button>
-      <div className="badge">{spritesCount} / 2047</div>
+      <h1 className="title">Nebula Bingo Tracker</h1>
+      {/* Title-only header per spec. Styling will be handled later. */}
     </header>
   );
 }
