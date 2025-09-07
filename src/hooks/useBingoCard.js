@@ -51,15 +51,18 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   function onPickFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+    console.log("[useBingoCard] File picked:", file.name);
 
-    // Revoke any previous object URL to avoid memory leaks
     if (pendingImageSrc) {
       try { URL.revokeObjectURL(pendingImageSrc); } catch {}
     }
 
     const url = URL.createObjectURL(file);
+    console.log("[useBingoCard] Blob URL created:", url);
+
     setPendingImageSrc(url);
     setShowTuner(true);
+    console.log("[useBingoCard] showTuner set →", true);
   }
 
   // --- Tuner confirm/cancel ---
