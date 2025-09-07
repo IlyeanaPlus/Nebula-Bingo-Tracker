@@ -26,7 +26,6 @@ function dbgOn(flag) {
   } catch {}
   return false;
 }
-const dlog = (...a) => console.log('[matcher]', ...a);
 
 // ---------- Image load with retries (lh3 + raw + UC view) ----------
 function loadImageOnce(url) {
