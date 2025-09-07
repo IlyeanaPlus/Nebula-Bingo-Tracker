@@ -15,53 +15,146 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   const [fractions, setFractions] = useState(loadFractions());
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState(0);
+
+  // Tuner modal + file input state
   const [showTuner, setShowTuner] = useState(false);
   const [pendingImageSrc, setPendingImageSrc] = useState(null);
   const fileRef = useRef(null);
 
   const spritesReady = !!manifest && Object.keys(manifest).length > 0;
 
-  function startRename(){ setRenaming(true); }
-  function submitRename(e){ e?.preventDefault?.(); setRenaming(false); onChange?.({ ...(card||{}), title }); }
-  function onTitleChange(e){ setTitle(e.target.value); onChange?.({ ...(card||{}), title: e.target.value, cells: results, checked }); }
+  // --- Title rename flow ---
+  function startRename() { setRenaming(true); }
 
-  function pickImage(){ fileRef.current?.click(); }
-  function onPickFile(e){
+  function submitRename(e) {
+    e?.preventDefault?.();
+    setRenaming(false);
+    onChange?.({ ...(card || {}), title });
+  }
+
+  function onTitleChange(e) {
+    const t = e.target.value;
+    setTitle(t);
+    // Auto-persist as you type
+    onChange?.({ ...(card || {}), title: t, cells: results, checked });
+  }
+
+  // --- Pick image flow (opens OS picker reliably) ---
+  function pickImage() {
+    if (fileRef.current) {
+      // Ensure onChange fires even if the user re-selects the same file
+      fileRef.current.value = "";
+      fileRef.current.click();
+    }
+  }
+
+  function onPickFile(e) {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    // Revoke any previous object URL to avoid memory leaks
+    if (pendingImageSrc) {
+      try { URL.revokeObjectURL(pendingImageSrc); } catch {}
+    }
+
     const url = URL.createObjectURL(file);
     setPendingImageSrc(url);
     setShowTuner(true);
   }
 
-  async function confirmTuner(newFractions){
+  // --- Tuner confirm/cancel ---
+  async function confirmTuner(newFractions) {
     setShowTuner(false);
     setFractions(newFractions);
     saveFractions(newFractions);
     if (!pendingImageSrc) return;
+
     try {
-      setAnalyzing(true); setProgress(0);
+      setAnalyzing(true);
+      setProgress(0);
+
       const crops = await computeCrops25(pendingImageSrc, newFractions);
-      URL.revokeObjectURL(pendingImageSrc); setPendingImageSrc(null);
+
+      // Free the blob URL now that we've read it
+      try { URL.revokeObjectURL(pendingImageSrc); } catch {}
+      setPendingImageSrc(null);
+
       let next = Array(25).fill(null);
-      if (spritesReady){
+
+      if (spritesReady) {
         const refs = await prepareRefIndex(manifest);
-        for (let i=0;i<25;i++){ 
+        for (let i = 0; i < 25; i++) {
           const best = await findBestMatch(crops[i], refs);
           next[i] = best ? { label: best.name, matchKey: best.key, matchUrl: best.src } : null;
-          setProgress(Math.round(((i+1)/25)*100));
+          setProgress(Math.round(((i + 1) / 25) * 100));
         }
-      } else { setProgress(100); }
+      } else {
+        // No sprites yet; fill stays empty but we still complete progress
+        setProgress(100);
+      }
+
       setResults(next);
-      onChange?.({ ...(card||{}), title, cells: next, saved:false });
-    } finally { setAnalyzing(false); }
+      onChange?.({ ...(card || {}), title, cells: next, fractions: newFractions });
+    } finally {
+      setAnalyzing(false);
+    }
   }
-  function cancelTuner(){ setShowTuner(false); if (pendingImageSrc) URL.revokeObjectURL(pendingImageSrc); setPendingImageSrc(null); }
 
-  function toggleCell(i){ setChecked(prev=>{ const copy=prev.slice(); copy[i]=!copy[i]; onChange?.({ ...(card||{}), title, cells: results, checked: copy }); return copy; }); }
+  function cancelTuner() {
+    setShowTuner(false);
+    if (pendingImageSrc) {
+      try { URL.revokeObjectURL(pendingImageSrc); } catch {}
+    }
+    setPendingImageSrc(null);
+  }
 
-  return { title, renaming, analyzing, progress, spritesReady, cells:results, checked,
-    startRename, submitRename, onTitleChange, pickImage, onRemove, toggleCell,
-    fileInputProps:{ ref:fileRef, type:'file', accept:'image/*', style:{display:'none'}, onChange:onPickFile },
-    showTuner, pendingImageSrc, fractions, confirmTuner, cancelTuner };
+  // --- Cell toggle ---
+  function toggleCell(i) {
+    setChecked(prev => {
+      const copy = prev.slice();
+      copy[i] = !copy[i];
+      onChange?.({ ...(card || {}), title, cells: results, checked: copy });
+      return copy;
+    });
+  }
+
+  // Provide both a ready element and props (supports either usage in the view)
+  const fileInputProps = {
+    ref: fileRef,
+    type: "file",
+    accept: "image/*",
+    style: { display: "none" },
+    onChange: onPickFile,
+  };
+  const fileInput = (<input {...fileInputProps} />);
+
+  return {
+    // State for the view
+    title,
+    renaming,
+    analyzing,
+    progress,
+    spritesReady,
+    cells: results,
+    checked,
+
+    // Actions
+    startRename,
+    submitRename,
+    onTitleChange,
+    pickImage,
+    onRemove, // passed through for the header Remove button
+    toggleCell,
+
+    // Hidden file input (use either one)
+    fileInputProps,
+    fileInput,
+
+    // Tuner modal plumbing
+    showTuner,
+    pendingImageSrc,
+    fractions,
+    confirmTuner,
+    cancelTuner,
+  };
 }
