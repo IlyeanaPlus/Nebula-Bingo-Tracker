@@ -4,6 +4,8 @@ import React from "react";
 /**
  * Pure presentational component — UI locked.
  * Renders the card layout and wires callbacks passed from the container/hook.
+ *
+ * Sprites notice has been removed; only progress HUD remains here.
  */
 export default function BingoCardView({
   title,
@@ -13,7 +15,6 @@ export default function BingoCardView({
   onTitleChange,
   analyzing,
   progress,
-  spritesReady,
   cells,
   checked,
   onToggleCell,
@@ -27,6 +28,7 @@ export default function BingoCardView({
 
   return (
     <div className="bingo-card">
+      {/* Header */}
       <div className="card-header">
         {renaming ? (
           <form onSubmit={onRenameSubmit} className="rename-form">
@@ -35,6 +37,7 @@ export default function BingoCardView({
         ) : (
           <h3 className="card-title" onClick={onRenameStart} title="Click to rename">{title}</h3>
         )}
+
         <div className="card-actions">
           <button className="btn" onClick={onPickImage} disabled={analyzing}>Fill</button>
           <button className="btn" onClick={onSave} disabled={analyzing}>Save</button>
@@ -43,19 +46,28 @@ export default function BingoCardView({
         </div>
       </div>
 
-      <div className="bingo-card__status">
-        {spritesReady ? <span className="ok">sprites loaded!</span> : <span className="warn">load sprites to enable matching</span>}
-        {analyzing && (
-          <div className="progress-wrap">
-            <div className="progress-bar"><div className="progress-fill" style={{ width: `${progress}%` }} /></div>
-            <div className="progress-meta">analyzing… {progress}%</div>
+      {/* Progress HUD only */}
+      {analyzing && (
+        <div className="fill-hud">
+          <div className="fill-box">
+            <div className="fill-title">Analyzing…</div>
+            <div className="fill-bar">
+              <div className="fill-bar-inner" style={{ width: `${progress}%` }} />
+            </div>
+            <div className="fill-meta">{progress}%</div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
 
+      {/* 5x5 grid */}
       <div className="grid-5x5">
         {safeCells.map((result, i) => (
-          <div key={i} className={`cell${safeChecked[i] ? " complete" : ""}`} onClick={() => onToggleCell?.(i)}>
+          <div
+            key={i}
+            className={`cell${safeChecked[i] ? " complete" : ""}`}
+            onClick={() => onToggleCell?.(i)}
+            title={safeChecked[i] ? "Checked" : "Click to mark as done"}
+          >
             {result?.matchUrl ? (
               <img src={result.matchUrl} alt={result?.label || `cell-${i}`} />
             ) : (
