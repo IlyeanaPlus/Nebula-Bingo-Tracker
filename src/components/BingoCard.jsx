@@ -157,7 +157,7 @@ export default function BingoCard({ card, onChange, onRemove, manifest }) {
       <div className="card-header">
         <input
           className="title-inline"
-          value={safeCard.title ?? ''}                {/* guard title */}
+          value={safeCard.title ?? ''}                /* guard title */
           onChange={handleTitleChange}
           placeholder="Card title"
           aria-label="Card title"
