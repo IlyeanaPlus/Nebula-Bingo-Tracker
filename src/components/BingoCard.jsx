@@ -7,14 +7,16 @@ import { prepareRefIndex, findBestMatch } from "../utils/matchers";
 export default function BingoCard({ id, title, spritesIndex, onRemove, onRename }) {
   const [name, setName] = useState(title || `Card ${id}`);
   const [renaming, setRenaming] = useState(false);
-  const [spritesReady, setSpritesReady] = useState(!!spritesIndex && Object.keys(spritesIndex || {}).length > 0);
+  const [spritesReady, setSpritesReady] = useState(
+    !!spritesIndex && Object.keys(spritesIndex || {}).length > 0
+  );
   const [matchResults, setMatchResults] = useState(Array(25).fill(null));
   const [showTuner, setShowTuner] = useState(false);
   const [pendingImageSrc, setPendingImageSrc] = useState(null);
   const [fractions, setFractions] = useState(loadFractions());
   const fileInputRef = useRef(null);
 
-  // Renaming UX
+  // Renaming logic
   function handleRenameClick() {
     setRenaming(true);
   }
@@ -24,7 +26,7 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
     onRename?.(id, name);
   }
 
-  // Header buttons (scaled neatly)
+  // File → tuner pipeline
   function handlePickImage() {
     fileInputRef.current?.click();
   }
@@ -40,16 +42,16 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
     setShowTuner(false);
     setFractions(newFractions);
     saveFractions(newFractions);
-    // Convert pending image into crops and match
     if (!pendingImageSrc) return;
+
     const tmp = new Image();
     await new Promise((res, rej) => {
       tmp.onload = () => res();
       tmp.onerror = rej;
       tmp.src = pendingImageSrc;
     });
+
     const crops = computeCrops25(tmp, newFractions);
-    // Send crops to matcher for this card
     const results = await matchAll(crops);
     setMatchResults(results);
   }
@@ -59,7 +61,7 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
     setPendingImageSrc(null);
   }
 
-  // Matching logic: find best sprite for each crop using existing index
+  // Matching logic
   async function matchAll(crops) {
     if (!spritesIndex) return Array(25).fill(null);
     const prepared = prepareRefIndex(spritesIndex);
@@ -67,35 +69,43 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
     for (let i = 0; i < 25; i++) {
       const crop = crops[i];
       const best = await findBestMatch(crop, prepared);
-      out.push(best); // shape depends on matcher (e.g., {id, score, url})
+      out.push(best);
     }
     return out;
   }
 
   return (
-    <div className="bingo-card">
-      <div className="bingo-card__header">
-        {renaming ? (
-          <form onSubmit={handleRenameSubmit} className="rename-inline">
-            <input
-              className="rename-input"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              autoFocus
-              onBlur={() => setRenaming(false)}
-            />
-          </form>
-        ) : (
-          <h2 className="card-title" title="Click to rename" onClick={handleRenameClick}>
-            {name}
-          </h2>
-        )}
-        <div className="header-spacer" />
-        <div className="header-actions">
-          <button className="nbt-btn wide" onClick={handlePickImage} title="Fill: pick screenshot & fine-tune grid">
+    <div className="card">
+      <div className="card-header">
+        {/* Title row */}
+        <div className="title-row">
+          {renaming ? (
+            <form onSubmit={handleRenameSubmit}>
+              <input
+                className="title-inline"
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                autoFocus
+                onBlur={() => setRenaming(false)}
+              />
+            </form>
+          ) : (
+            <h2 className="title" title="Click to rename" onClick={handleRenameClick}>
+              {name}
+            </h2>
+          )}
+        </div>
+
+        {/* Actions row (buttons below title) */}
+        <div className="actions-row">
+          <button
+            className="btn"
+            onClick={handlePickImage}
+            title="Fill: pick screenshot & fine-tune grid"
+          >
             Fill
           </button>
-          <button className="nbt-btn ghost wide" onClick={() => onRemove?.(id)}>
+          <button className="btn" onClick={() => onRemove?.(id)}>
             Remove
           </button>
           <input
@@ -108,15 +118,25 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
         </div>
       </div>
 
+      {/* Status row */}
       <div className="bingo-card__status">
-        {spritesReady ? <span className="ok">sprites loaded!</span> : <span className="warn">load sprites to enable matching</span>}
+        {spritesReady ? (
+          <span className="ok">sprites loaded!</span>
+        ) : (
+          <span className="warn">load sprites to enable matching</span>
+        )}
       </div>
 
-      <div className="bingo-grid">
+      {/* Grid */}
+      <div className="grid-5x5">
         {Array.from({ length: 25 }, (_, i) => (
           <div key={i} className="cell">
             {matchResults[i] ? (
-              <img className="cell-sprite" src={matchResults[i].url || matchResults[i].dataURL} alt={`match-${i}`} />
+              <img
+                className="cell-sprite"
+                src={matchResults[i].url || matchResults[i].dataURL}
+                alt={`match-${i}`}
+              />
             ) : (
               <div className="cell-empty" />
             )}
@@ -124,6 +144,7 @@ export default function BingoCard({ id, title, spritesIndex, onRemove, onRename 
         ))}
       </div>
 
+      {/* Grid tuner modal */}
       {showTuner && (
         <GridTunerModal
           imageSrc={pendingImageSrc}
