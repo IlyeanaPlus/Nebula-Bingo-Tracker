@@ -4,19 +4,16 @@ import { computeCrops25, loadFractions, saveFractions } from "../utils/image";
 import { prepareRefIndex, findBestMatch } from "../utils/matchers";
 
 /**
- * Encapsulates all BingoCard logic; keeps UI separate and stable.
- * Consumer provides: card, manifest, onChange, onRemove
+ * Bingo card logic hook.
+ * UI (BingoCardView / GridTunerModal) stays dumb; this owns state + pipeline.
  *
- * NOTE ON FRACTIONS:
- * - The hook's public `fractions` state is a SQUARE object {x,y,w,h} for the GridTunerModal.
- * - We convert to the GRID schema {top,left,right,bottom, cols, rows} only when calling computeCrops25()
- *   and when persisting via saveFractions().
+ * Fractions:
+ * - Exposed to the tuner as a SQUARE {x,y,w,h} in 0..1.
+ * - Persisted/used for cropping as GRID {top,left,right,bottom, cols[], rows[]}.
  */
 
 // ---------- helpers ----------
-function clamp01(v) {
-  return Math.max(0, Math.min(1, v));
-}
+function clamp01(v) { return Math.max(0, Math.min(1, v)); }
 
 // grid (image.js) -> square (modal)
 function gridToSquare(fr) {
@@ -53,17 +50,29 @@ function urlToImage(url) {
   });
 }
 
+// manifest can be an array OR a dictionary; convert to array the matcher expects
+function normalizeManifest(man) {
+  if (Array.isArray(man)) return man;
+  if (man && typeof man === "object") {
+    return Object.keys(man).map((k) => {
+      const v = man[k] || {};
+      const src = v.url || v.src || v.image;
+      if (!src) return null;
+      return { name: v.name || k, src };
+    }).filter(Boolean);
+  }
+  return [];
+}
+
 export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   const [title, setTitle] = useState(card?.title || "New Card");
   const [renaming, setRenaming] = useState(false);
   const [results, setResults] = useState(Array(25).fill(null));
   const [checked, setChecked] = useState(Array(25).fill(false));
 
-  // Load persisted GRID fractions, but expose SQUARE to the UI (modal)
-  const persistedGrid = loadFractions();                // {top,left,right,bottom, cols, rows}
-  const [fractions, setFractions] = useState(           // SQUARE {x,y,w,h}
-    gridToSquare(persistedGrid)
-  );
+  // Load persisted GRID fractions, expose SQUARE to the modal
+  const persistedGrid = loadFractions();
+  const [fractions, setFractions] = useState(gridToSquare(persistedGrid)); // SQUARE {x,y,w,h}
 
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState(0);
@@ -87,14 +96,12 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   function onTitleChange(e) {
     const t = e.target.value;
     setTitle(t);
-    // Auto-persist as you type
     onChange?.({ ...(card || {}), title: t, cells: results, checked });
   }
 
   // --- Pick image flow (opens OS picker reliably) ---
   function pickImage() {
     if (fileRef.current) {
-      // Ensure onChange fires even if the user re-selects the same file
       fileRef.current.value = "";
       fileRef.current.click();
     }
@@ -104,7 +111,6 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    // Revoke any previous object URL to avoid memory leaks
     if (pendingImageSrc) {
       try { URL.revokeObjectURL(pendingImageSrc); } catch {}
     }
@@ -118,35 +124,31 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   async function confirmTuner(newSquareFractions) {
     // newSquareFractions: {x,y,w,h} from GridTunerModal
     setShowTuner(false);
-
     if (!pendingImageSrc) return;
 
     setAnalyzing(true);
     setProgress(0);
 
     try {
-      // Normalize, persist (as GRID), and keep SQUARE in state for future openings
+      // Normalize square & keep inside bounds
       const sq = {
         x: clamp01(newSquareFractions?.x ?? fractions.x),
         y: clamp01(newSquareFractions?.y ?? fractions.y),
         w: clamp01(newSquareFractions?.w ?? fractions.w),
         h: clamp01(newSquareFractions?.h ?? fractions.h),
       };
-      // keep inside bounds
       const s = Math.max(0.05, Math.min(1, Math.min(sq.w, sq.h)));
-      let sx = Math.min(sq.x, 1 - s);
-      let sy = Math.min(sq.y, 1 - s);
-      const sqNorm = { x: sx, y: sy, w: s, h: s };
+      const sqNorm = { x: Math.min(sq.x, 1 - s), y: Math.min(sq.y, 1 - s), w: s, h: s };
 
-      setFractions(sqNorm); // for the next time tuner opens
-
-      const gridFractions = squareToGrid(sqNorm); // what image.js expects
+      // Persist GRID form; keep SQUARE form in state for next open
+      const gridFractions = squareToGrid(sqNorm);
       saveFractions(gridFractions);
+      setFractions(sqNorm);
 
       // Load the blob URL into an Image for computeCrops25
       const imgEl = await urlToImage(pendingImageSrc);
 
-      // 1) Crop to 25 equal cells within the tuned square
+      // 1) Crop to 25 cells
       const crops = computeCrops25(imgEl, gridFractions);
       if (!Array.isArray(crops) || crops.length !== 25) {
         console.error("[useBingoCard] computeCrops25 did not return 25 crops:", crops);
@@ -155,10 +157,10 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       }
       setProgress(30);
 
-      // 2) Optional sprite matching
+      // 2) Optional: match against sprites
       let next = Array(25).fill(null);
       if (spritesReady) {
-        const refs = await prepareRefIndex(manifest);
+        const refs = await prepareRefIndex(normalizeManifest(manifest));
         for (let i = 0; i < 25; i++) {
           try {
             const best = await findBestMatch(crops[i], refs);
@@ -213,7 +215,7 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     style: { display: "none" },
     onChange: onPickFile,
   };
-  // Some views expect an element prop (no JSX in .js files)
+  // Avoid JSX inside .js file (fixes “Expression expected” build errors)
   const fileInput = React.createElement("input", fileInputProps);
 
   return {
@@ -231,17 +233,17 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     submitRename,
     onTitleChange,
     pickImage,
-    onRemove, // passed through for the header Remove button
+    onRemove, // passthrough for header Remove button
     toggleCell,
 
-    // Hidden file input (use either one)
+    // Hidden file input
     fileInputProps,
     fileInput,
 
     // Tuner modal plumbing
     showTuner,
     pendingImageSrc,
-    fractions,       // SQUARE {x,y,w,h} for GridTunerModal initialFractions
+    fractions,   // SQUARE {x,y,w,h} for GridTunerModal initialFractions
     confirmTuner,
     cancelTuner,
   };
