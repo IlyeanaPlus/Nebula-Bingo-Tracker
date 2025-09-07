@@ -507,3 +507,39 @@ header.app-header {
   font-size: 12px;
   opacity: .8;
 }
+
+/* --- Bingo card sizing & perfectly square cells --- */
+.card { max-width: 720px; }                 /* keeps the whole card a tidy width */
+.grid-5x5 {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid #1f1f1f;
+  border-radius: 10px;
+  background: #0f0f0f;
+}
+
+/* Square cells that scale with the card width */
+.cell {
+  aspect-ratio: 1 / 1;                      /* <-- perfect squares */
+  width: 100%;
+  /* remove any fixed heights you had earlier */
+  height: auto !important;
+  min-height: 0;
+  border-radius: 10px;
+  background: #141414;
+  border: 1px solid #252525;
+  box-shadow:
+    0 1px 0 rgba(255,255,255,0.02) inset,
+    0 -1px 0 rgba(0,0,0,0.4) inset;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.cell img {
+  max-width: 95%;
+  max-height: 95%;
+  image-rendering: pixelated;
+  object-fit: contain;
+}

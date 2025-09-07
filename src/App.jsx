@@ -50,80 +50,45 @@ export default function App() {
     [cards, currentIndex]
   );
 
-  // ---- Get Sprites from public/drive_cache.json, resolve URLs, preload into cache ----
   async function handleGetSprites() {
-    const normalize = (raw) => {
-      if (!raw) return [];
-      if (Array.isArray(raw) && raw.length && raw[0]?.name && raw[0]?.src) return raw;
-      const items = Array.isArray(raw.items) ? raw.items : Array.isArray(raw) ? raw : [];
-      return items.map((it) => {
-        const name =
-          it.name || it.title || it.filename || it.fileName || it.id || "";
-        const src =
-          it.src ||
-          it.url ||
-          it.downloadUrl ||
-          it.webContentLink ||
-          it.webViewLink ||
-          it.thumbnailLink ||
-          it.path ||
-          it.relativePath ||
-          "";
-        return name && src ? { name, src } : null;
-      }).filter(Boolean);
-    };
+  const normalize = (raw) => {
+    // Accept either an array or {items:[...]}
+    const items = Array.isArray(raw) ? raw : Array.isArray(raw?.items) ? raw.items : [];
+    return items.map((it) => {
+      // try all common shapes; keep exactly {name, src}
+      const name =
+        it.name || it.title || it.filename || it.fileName || it.id || "";
+      const src =
+        it.src || it.url || it.downloadUrl || it.webContentLink ||
+        it.webViewLink || it.thumbnailLink || it.path || it.relativePath || "";
+      return name && src ? { name, src } : null;
+    }).filter(Boolean);
+  };
 
-    const preload = (urls, onTick) =>
-      Promise.all(
-        urls.map(
-          (u) =>
-            new Promise((resolve) => {
-              const img = new Image();
-              img.onload = img.onerror = () => { onTick(); resolve(); };
-              img.decoding = "async";
-              img.referrerPolicy = "no-referrer";
-              img.crossOrigin = "anonymous"; // harmless if same-origin
-              img.src = u;
-            })
-        )
-      );
+  try {
+    const res = await fetch("./drive_cache.json", { cache: "no-store" });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const json = await res.json();
 
-    try {
-      const res = await fetch("./drive_cache.json", { cache: "no-store" });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const json = await res.json();
+    // normalize to the matcher’s expected shape
+    let mf = normalize(json);
 
-      // Normalize + absolutize URLs
-      const mf0 = normalize(json);
-      if (!mf0.length) {
-        console.warn("[GetSprites] drive_cache.json shape:", json);
-        alert("drive_cache.json loaded, but no sprite entries were recognized.");
-        return;
-      }
-      const base = new URL(location.href);
-      const mf = mf0.map(({ name, src }) => {
-        const abs = new URL(src, base).href;
-        return { name, src: abs };
-      });
+    // absolutize (keeps previous behavior when drive_cache entries are relative)
+    const base = new URL(location.href);
+    mf = mf.map(({ name, src }) => ({ name, src: new URL(src, base).href }));
 
-      // Preload with progress feedback
-      setSpritesProgress({ loaded: 0, total: mf.length, done: false });
-      let loaded = 0;
-      await preload(
-        mf.map((x) => x.src),
-        () => setSpritesProgress({ loaded: ++loaded, total: mf.length, done: loaded === mf.length })
-      );
+    // OPTIONAL: quick, non-blocking warm-up (doesn’t change app flow)
+    mf.slice(0, 50).forEach(({ src }) => { const i = new Image(); i.decoding = "async"; i.src = src; });
 
-      // Store for matchers & UI
-      setManifest(mf);
-      window.NBT = window.NBT || {};
-      window.NBT.spritesManifest = mf; // optional global
-      console.info(`[GetSprites] Preloaded ${mf.length} sprites from drive_cache.json`);
-    } catch (e) {
-      console.error("[GetSprites] Failed to load drive_cache.json:", e);
-      alert("Get Sprites failed. See console for details.");
-    }
+    setManifest(mf);
+    window.NBT = window.NBT || {};
+    window.NBT.spritesManifest = mf;      // keep global for other code paths
+    console.info(`[GetSprites] Loaded ${mf.length} sprites.`);
+  } catch (e) {
+    console.error("[GetSprites] Failed:", e);
+    alert("Get Sprites failed. Check drive_cache.json and console.");
   }
+}
 
   // card handlers
   function handleNewCard() {
