@@ -36,17 +36,13 @@ export default function App() {
   });
 
   const [manifest, setManifest] = useState([]);
+  const [spritesProgress, setSpritesProgress] = useState({ loaded: 0, total: 0, done: false });
 
   useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.CARDS, JSON.stringify(cards));
-    } catch {}
+    try { localStorage.setItem(LS_KEYS.CARDS, JSON.stringify(cards)); } catch {}
   }, [cards]);
-
   useEffect(() => {
-    try {
-      localStorage.setItem(LS_KEYS.CURRENT, String(currentIndex));
-    } catch {}
+    try { localStorage.setItem(LS_KEYS.CURRENT, String(currentIndex)); } catch {}
   }, [currentIndex]);
 
   const currentCard = useMemo(
@@ -54,54 +50,84 @@ export default function App() {
     [cards, currentIndex]
   );
 
-  // ---- Get Sprites from public/drive_cache.json ----
+  // ---- Get Sprites from public/drive_cache.json, resolve URLs, preload into cache ----
   async function handleGetSprites() {
     const normalize = (raw) => {
       if (!raw) return [];
       if (Array.isArray(raw) && raw.length && raw[0]?.name && raw[0]?.src) return raw;
-
       const items = Array.isArray(raw.items) ? raw.items : Array.isArray(raw) ? raw : [];
-      return items
-        .map((it) => {
-          const name =
-            it.name || it.title || it.filename || it.fileName || it.id || "";
-          const src =
-            it.src ||
-            it.url ||
-            it.downloadUrl ||
-            it.webContentLink ||
-            it.webViewLink ||
-            it.thumbnailLink ||
-            it.path ||
-            it.relativePath ||
-            "";
-          return name && src ? { name, src } : null;
-        })
-        .filter(Boolean);
+      return items.map((it) => {
+        const name =
+          it.name || it.title || it.filename || it.fileName || it.id || "";
+        const src =
+          it.src ||
+          it.url ||
+          it.downloadUrl ||
+          it.webContentLink ||
+          it.webViewLink ||
+          it.thumbnailLink ||
+          it.path ||
+          it.relativePath ||
+          "";
+        return name && src ? { name, src } : null;
+      }).filter(Boolean);
     };
 
+    const preload = (urls, onTick) =>
+      Promise.all(
+        urls.map(
+          (u) =>
+            new Promise((resolve) => {
+              const img = new Image();
+              img.onload = img.onerror = () => { onTick(); resolve(); };
+              img.decoding = "async";
+              img.referrerPolicy = "no-referrer";
+              img.crossOrigin = "anonymous"; // harmless if same-origin
+              img.src = u;
+            })
+        )
+      );
+
     try {
-      // public/* is served from the site root at runtime
       const res = await fetch("./drive_cache.json", { cache: "no-store" });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
-      const mf = normalize(json);
-      if (!mf.length) {
+
+      // Normalize + absolutize URLs
+      const mf0 = normalize(json);
+      if (!mf0.length) {
         console.warn("[GetSprites] drive_cache.json shape:", json);
         alert("drive_cache.json loaded, but no sprite entries were recognized.");
         return;
       }
+      const base = new URL(location.href);
+      const mf = mf0.map(({ name, src }) => {
+        const abs = new URL(src, base).href;
+        return { name, src: abs };
+      });
+
+      // Preload with progress feedback
+      setSpritesProgress({ loaded: 0, total: mf.length, done: false });
+      let loaded = 0;
+      await preload(
+        mf.map((x) => x.src),
+        () => setSpritesProgress({ loaded: ++loaded, total: mf.length, done: loaded === mf.length })
+      );
+
+      // Store for matchers & UI
       setManifest(mf);
-      console.info(`[GetSprites] Loaded ${mf.length} sprites from drive_cache.json`);
+      window.NBT = window.NBT || {};
+      window.NBT.spritesManifest = mf; // optional global
+      console.info(`[GetSprites] Preloaded ${mf.length} sprites from drive_cache.json`);
     } catch (e) {
       console.error("[GetSprites] Failed to load drive_cache.json:", e);
       alert("Get Sprites failed. See console for details.");
     }
   }
 
-  // ---- card handlers ----
+  // card handlers
   function handleNewCard() {
-    setCards((prev) => [...prev, makeBlankCard(`Card ${prev.length + 1}`)]);
+    setCards((prev) => [...prev, makeBlankCard(`New Card`)]); // label matches your UI
     setCurrentIndex(cards.length);
   }
   function handleUpdateCard(next) {
@@ -127,7 +153,6 @@ export default function App() {
     setCurrentIndex(0);
   }
 
-  // optional global hook target for the tuner
   useEffect(() => {
     window.NBT = window.NBT || {};
     window.NBT.consumeCrops = () => {};
@@ -141,7 +166,6 @@ export default function App() {
         onGetSprites={handleGetSprites}
       />
 
-      {/* LEFT COLUMN LAYOUT */}
       <div className="app-body">
         <Sidebar
           cards={cards}
@@ -149,6 +173,10 @@ export default function App() {
           onSelect={setCurrentIndex}
           onNewCard={handleNewCard}
           onClearSaved={handleClearSaved}
+          // show progress like in your screenshot
+          spritesLoaded={spritesProgress.loaded}
+          spritesTotal={spritesProgress.total}
+          onGetSprites={handleGetSprites}
         />
 
         <main className="main-content">
