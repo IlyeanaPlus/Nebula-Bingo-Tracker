@@ -24,24 +24,32 @@ export default function Sidebar({
   const pct = total > 0 ? Math.round((loaded / total) * 100) : 0;
   const showProgress = total > 0 || haveParentProgress;
 
-  async function handleGetSprites() {
-    setError("");
-    setLoading(true);
-    setLocalProgress({ loaded: 0, total: 0, done: false });
+async function handleGetSprites() {
+  setError("");
+  setLoading(true);
+  setLocalProgress({ loaded: 0, total: 0, done: false });
 
-    try {
-      // 1) Load /public/drive_cache.json
-      const index = await getSprites();
-      onGetSprites?.(index);
+  try {
+    // 1) Load /public/drive_cache.json
+    const index = await getSprites();
+    onGetSprites?.(index);
 
-      // 2) Optionally warm the cache & drive progress bar (remove if you don't want preloading)
-      await preloadSprites(index, (l, t) => setLocalProgress({ loaded: l, total: t, done: l === t }));
-    } catch (e) {
-      setError(e?.message ? String(e.message) : "Failed to load drive_cache.json");
-    } finally {
-      setLoading(false);
-    }
+    // 2) Warm the cache & drive progress bar (concurrent)
+    await preloadSprites(
+      index,
+      (l, t) => setLocalProgress({ loaded: l, total: t, done: l === t }),
+      { concurrency: 24, retry: 1 }
+    );
+  } catch (e) {
+    setError(
+      e?.message?.includes("404")
+        ? "drive_cache.json not found in /public (404)"
+        : e?.message || "Failed to load sprites"
+    );
+  } finally {
+    setLoading(false);
   }
+}
 
   return (
     <aside className="sidebar">

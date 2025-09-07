@@ -7,10 +7,8 @@ function resolvePublic(pathname) {
 
 /**
  * getSprites()
- * Loads /public/drive_cache.json and normalizes it into:
- *   { key: { url, name } }
- * NOTE: Do NOT filter by file extension. Google Drive links (lh3.googleusercontent.com/d/ID)
- *       often have no .png suffix but still serve PNG content.
+ * Loads /public/drive_cache.json and normalizes it into { key: { url, name } }.
+ * NOTE: Do NOT filter by file extension — Drive links often have no .png suffix.
  */
 export async function getSprites() {
   const url = resolvePublic("drive_cache.json");
@@ -25,11 +23,8 @@ export async function getSprites() {
   };
 
   if (Array.isArray(data)) {
-    // Your format: [{ name, src, ...hashes }]
     for (const entry of data) add(entry?.name || entry?.src, entry?.src, entry?.name);
   } else if (data && typeof data === "object") {
-    // Fallback formats:
-    // { key: "https://...", ... } OR { key: { src: "https://...", name? } }
     for (const [k, v] of Object.entries(data)) {
       if (typeof v === "string") add(k, v, k);
       else if (v && typeof v === "object") add(v.name || k, v.src || v.url, v.name || k);
@@ -41,31 +36,55 @@ export async function getSprites() {
 }
 
 /**
- * preloadSprites(index, onStep?)
- * Sequentially warms the browser cache by loading each sprite URL into an <img>.
- * Calls onStep(loaded, total) as it progresses.
+ * preloadSprites(index, onStep?, opts?)
+ * Concurrently warms the browser cache by loading each sprite URL into an <img>.
+ * - onStep(loaded, total) is called after each image settles (load OR error).
+ * - opts.concurrency: number of parallel requests (default 16, try 24–32 if your host is snappy).
+ * - opts.retry: number of retries per image (default 1).
  */
-export async function preloadSprites(index, onStep) {
+export async function preloadSprites(index, onStep, opts = {}) {
   const items = Object.values(index || {});
   const total = items.length;
   let loaded = 0;
 
+  const concurrency = Math.max(1, opts.concurrency ?? 16);
+  const retry = Math.max(0, opts.retry ?? 1);
+
   const loadOne = (src) =>
     new Promise((resolve) => {
-      const im = new Image();
-      im.onload = im.onerror = () => resolve();
-      // Drive links may be relative/absolute; make them absolute against baseURI for safety
-      try {
-        im.src = new URL(src, document.baseURI).href;
-      } catch {
-        im.src = src;
-      }
+      const tryOnce = (attempt) => {
+        const im = new Image();
+        im.onload = im.onerror = () => resolve();
+        try {
+          im.src = new URL(src, document.baseURI).href;
+        } catch {
+          im.src = src;
+        }
+        // If it errors, try again (lightweight) on next tick
+        if (attempt < retry) {
+          im.onerror = () => setTimeout(() => tryOnce(attempt + 1), 0);
+        }
+      };
+      tryOnce(0);
     });
 
-  for (const it of items) {
-    await loadOne(it.url);
-    loaded += 1;
-    onStep?.(loaded, total);
-  }
+  let i = 0;
+  // worker pool
+  const worker = async () => {
+    while (true) {
+      const idx = i++;
+      if (idx >= total) break;
+      const src = items[idx].url;
+      await loadOne(src);
+      loaded += 1;
+      onStep?.(loaded, total);
+      // Give the main thread a breath every so often
+      if (loaded % 50 === 0) await Promise.resolve();
+    }
+  };
+
+  // launch pool
+  const workers = Array.from({ length: Math.min(concurrency, total) }, () => worker());
+  await Promise.all(workers);
   return { loaded, total };
 }
