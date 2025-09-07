@@ -7,6 +7,33 @@
 //
 // Enable debug logs with ?debug or localStorage('nbt.debug'='1').
 
+let _driveCachePromise = null;
+async function loadDriveCache() {
+  if (_driveCachePromise) return _driveCachePromise;
+  _driveCachePromise = (async () => {
+    try {
+      const res = await fetch("/drive_cache.json", { cache: "force-cache" });
+      if (!res.ok) throw new Error(`drive_cache.json http ${res.status}`);
+      return await res.json();
+    } catch (e) {
+      console.warn("[matchers] no drive_cache.json, using manifest URLs", e);
+      return {};
+    }
+  })();
+  return _driveCachePromise;
+}
+
+function normalizeManifest(manifest) {
+  if (Array.isArray(manifest)) return manifest;
+  if (manifest && typeof manifest === "object") {
+    return Object.keys(manifest).map((k) => {
+      const v = manifest[k] || {};
+      return { key: k, name: v.name || k, src: v.url || v.src || v.image };
+    });
+  }
+  return [];
+}
+
 // --- Debug helper ---
 let NBT_DEBUG = true;
 function dlog(...args) { if (NBT_DEBUG) console.log('[matcher]', ...args); }
@@ -322,29 +349,17 @@ function bestOffsetScores(A, B) {
 
 // ---------- Public: reference index ----------
 export async function prepareRefIndex(manifest) {
-  const refs = [];
-  let ok = 0, fail = 0;
-  for (const e of manifest || []) {
-    const raw = e.src || e.image || e.url;
-    if (!raw) continue;
-    try {
-      const img = await loadImageRobust(raw);
-      const cnv = toCanvas(img);
-      const im = cnv.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, SIZE, SIZE);
-      refs.push({
-        name: e.name || e.id || 'Unknown',
-        src: raw,
-        im,                                 // transparent ref
-        hist: histRGBMasked(im)             // masked histogram (ignores alpha<=0.3)
-      });
-      ok++;
-    } catch (err) {
-      console.warn('Ref load failed:', e.name || e.id || '<unnamed>', raw, err);
-      fail++;
-    }
-  }
-  console.log(`[matchers] refs loaded: ${ok} ok, ${fail} failed, manifest: ${(manifest || []).length}`);
-  return refs;
+  const cache = await loadDriveCache();
+  const norm = normalizeManifest(manifest);
+
+  const list = norm.map((m) => {
+    const cached = cache[m.key] || cache[m.name];
+    const src = cached?.dataUrl || cached?.src || m.src;
+    return { ...m, src };
+  }).filter(Boolean);
+
+  const byKey = new Map(list.map((e) => [e.key, e]));
+  return { list, byKey };
 }
 
 // ---------- Public: find best match ----------
