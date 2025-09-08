@@ -260,10 +260,6 @@ async function hashCrop(dataUrl){
   };
 }
 
-// after computing `crop`, before candidates
-console.log("[matcher] crop hashes present:",
-  !!crop.dhash, !!crop.ahash, !!crop.edgeHash, "channels", !!crop.dhashR, !!crop.dhashG, !!crop.dhashB);
-
 
 export async function findBestMatch(cropUrl, refsIndexOrArray) {
   const refs = Array.isArray(refsIndexOrArray)
@@ -279,6 +275,11 @@ export async function findBestMatch(cropUrl, refsIndexOrArray) {
     ahashR: aHash(RR),  ahashG: aHash(GG),  ahashB: aHash(BB),
     dhashR: dHash(RR),  dhashG: dHash(GG),  dhashB: dHash(BB),
   };
+
+  // after computing `crop`, before candidates
+  console.log("[matcher] crop hashes present:",
+  !!crop.dhash, !!crop.ahash, !!crop.edgeHash, "channels", !!crop.dhashR, !!crop.dhashG, !!crop.dhashB);
+
 
   // Weights (tweakable)
   const W = { dhash: 2, ahash: 1, edge: 1, dR: 1, dG: 1, dB: 1, aR: 0.5, aG: 0.5, aB: 0.5 };
