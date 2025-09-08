@@ -1,6 +1,7 @@
 // src/utils/sprites.js
 // Prefer precomputed CLIP vectors from /sprite_index_clip.json (public).
 // Fallbacks: /sprite_index.json → build from drive_cache.json (embedding each).
+// Adds legacy shims: getSprites() and preloadSprites().
 
 import { prepareRefIndex } from './matchers';
 
@@ -128,4 +129,30 @@ export async function getSpriteIndex() {
 export async function getSprites() {
   const index = await getSpriteIndex();
   return index.meta; // array of { url, name, key }
+}
+
+/**
+ * Legacy preload helper to warm the browser image cache.
+ * Sidebar.jsx used to import this; keep it stable.
+ * @param {number} max how many images to preload (default 100; pass Infinity to preload all)
+ * @returns {Promise<Array<{url,name,key}>>} the meta entries attempted
+ */
+export async function preloadSprites(max = 100) {
+  const meta = await getSprites();
+  const subset = !isFinite(max) ? meta : meta.slice(0, Math.max(0, max));
+
+  await Promise.allSettled(
+    subset.map((m) => new Promise((resolve) => {
+      try {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.onload = img.onerror = () => resolve();
+        img.src = m.url;
+      } catch {
+        resolve();
+      }
+    }))
+  );
+
+  return subset;
 }
