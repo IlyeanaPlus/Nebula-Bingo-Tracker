@@ -12,6 +12,63 @@
 //
 //------------------------------------------------------------------------------
 
+// Is there at least one usable hash on the ref?
+function hasAnyHash(r) {
+  return !!(r.dhash || r.ahash || r.edgeHash || r.dhashR || r.dhashG || r.dhashB || r.ahashR || r.ahashG || r.ahashB || r.phash);
+}
+
+// Compute & memoize hashes for a ref if missing.
+// Uses the same pipeline as crops.
+async function ensureRefHashes(r) {
+  if (hasAnyHash(r)) return r;
+  if (!r || !r.src) return r;
+
+  // lazily compute once
+  if (!r.__hashing) {
+    r.__hashing = (async () => {
+      const id = await toRGBA(r.src, { trim: 0.06, size: 32 });
+      const { r: RR, g: GG, b: BB, gray } = channels(id, 32);
+      r.ahash    = aHash(gray);
+      r.dhash    = dHash(gray);
+      r.edgeHash = edgeHash(gray);
+      r.ahashR   = aHash(RR); r.ahashG = aHash(GG); r.ahashB = aHash(BB);
+      r.dhashR   = dHash(RR); r.dhashG = dHash(GG); r.dhashB = dHash(BB);
+      return r;
+    })().catch(() => r);
+  }
+  await r.__hashing;
+  return r;
+}
+
+// Weighted Hamming but only count signals that exist on BOTH sides.
+function weightedDistance(c, r, W) {
+  let score = 0;
+  let used = 0;
+
+  function add(a, b, w) {
+    if (a != null && b != null) {
+      score += w * ham64(a, b);
+      used++;
+    }
+  }
+
+  add(c.dhash,  r.dhash,  W.dhash);
+  add(c.ahash,  r.ahash,  W.ahash);
+  add(c.edgeHash, r.edge, W.edge || W.edgeHash || 1);
+
+  add(c.dhashR, r.dhashR, W.dR);
+  add(c.dhashG, r.dhashG, W.dG);
+  add(c.dhashB, r.dhashB, W.dB);
+
+  add(c.ahashR, r.ahashR, W.aR);
+  add(c.ahashG, r.ahashG, W.aG);
+  add(c.ahashB, r.ahashB, W.aB);
+
+  // If nothing usable, return Infinity so the ref is ignored.
+  return used ? score : Infinity;
+}
+
+
 let _driveCachePromise = null;
 
 async function loadDriveCache() {
@@ -162,21 +219,36 @@ function normalizeManifest(manifest){
   return out;
 }
 
-export async function prepareRefIndex(manifest){
-  const cache=await loadDriveCache();
-  const norm=normalizeManifest(manifest);
-  const list=norm.map(m=>{
-    const c=cache[m.key]||cache[m.name]||{};
+export async function prepareRefIndex(manifest) {
+  const cache = await loadDriveCache();
+  const norm = normalizeManifest(manifest);
+
+  const list = norm.map((m) => {
+    const c = cache[m.key] || cache[m.name] || {};
     return {
-      key:m.key,name:m.name,src:c.src||m.src,
-      ahash:parseHash(c.ahash),dhash:parseHash(c.dhash),
-      phash:parseHash(c.phash),edgeHash:parseHash(c.edgeHash),
-      ahashR:parseHash(c.ahashR),ahashG:parseHash(c.ahashG),ahashB:parseHash(c.ahashB),
-      dhashR:parseHash(c.dhashR),dhashG:parseHash(c.dhashG),dhashB:parseHash(c.dhashB),
+      key: m.key,
+      name: m.name,
+      src: c.src || m.src, // prefer local cached src if present
+
+      // parse every hash field we know about
+      ahash:    parseHash(c.ahash),
+      dhash:    parseHash(c.dhash),
+      phash:    parseHash(c.phash),
+      edgeHash: parseHash(c.edgeHash),
+
+      ahashR: parseHash(c.ahashR),
+      ahashG: parseHash(c.ahashG),
+      ahashB: parseHash(c.ahashB),
+
+      dhashR: parseHash(c.dhashR),
+      dhashG: parseHash(c.dhashG),
+      dhashB: parseHash(c.dhashB),
     };
-  }).filter(e=>e.src);
-  return {list,byKey:new Map(list.map(e=>[e.key,e]))};
+  }).filter(e => e.src); // at minimum we need a display src (for fallback hashing)
+
+  return { list, byKey: new Map(list.map(e => [e.key, e])) };
 }
+
 
 async function hashCrop(dataUrl){
   const id=await toRGBA(dataUrl,{trim:0.06,size:32});
@@ -188,32 +260,54 @@ async function hashCrop(dataUrl){
   };
 }
 
-export async function findBestMatch(cropUrl,refsIndexOrArray){
-  const refs=Array.isArray(refsIndexOrArray)?refsIndexOrArray:(refsIndexOrArray?.list||[]);
-  if(!cropUrl||!Array.isArray(refs)||refs.length===0) return null;
-  const c=await hashCrop(cropUrl);
-  const W={dhash:2,ahash:1,edge:1,dR:1,dG:1,dB:1,aR:0.5,aG:0.5,aB:0.5};
-  const K=Math.min(120,refs.length);
-  const coarse=refs.map(r=>({
-    r,
-    h:W.dhash*ham64(c.dhash,r.dhash)+
-      W.dR*ham64(c.dhashR,r.dhashR)+
-      W.dG*ham64(c.dhashG,r.dhashG)+
-      W.dB*ham64(c.dhashB,r.dhashB)
-  })).sort((a,b)=>a.h-b.h).slice(0,K);
-  let best=null,bestScore=Infinity;
-  for(const {r} of coarse){
-    let score=
-      W.dhash*ham64(c.dhash,r.dhash)+
-      W.ahash*ham64(c.ahash,r.ahash)+
-      W.edge*ham64(c.edgeHash,r.edgeHash)+
-      W.dR*ham64(c.dhashR,r.dhashR)+
-      W.dG*ham64(c.dhashG,r.dhashG)+
-      W.dB*ham64(c.dhashB,r.dhashB)+
-      W.aR*ham64(c.ahashR,r.ahashR)+
-      W.aG*ham64(c.ahashG,r.ahashG)+
-      W.aB*ham64(c.ahashB,r.ahashB);
-    if(score<bestScore){bestScore=score;best=r;}
+// after computing `crop`, before candidates
+console.log("[matcher] crop hashes present:",
+  !!crop.dhash, !!crop.ahash, !!crop.edgeHash, "channels", !!crop.dhashR, !!crop.dhashG, !!crop.dhashB);
+
+
+export async function findBestMatch(cropUrl, refsIndexOrArray) {
+  const refs = Array.isArray(refsIndexOrArray)
+    ? refsIndexOrArray
+    : (refsIndexOrArray?.list || []);
+  if (!cropUrl || !Array.isArray(refs) || refs.length === 0) return null;
+
+  // Hash the crop
+  const id = await toRGBA(cropUrl, { trim: 0.06, size: 32 });
+  const { r: RR, g: GG, b: BB, gray } = channels(id, 32);
+  const crop = {
+    ahash: aHash(gray), dhash: dHash(gray), edgeHash: edgeHash(gray),
+    ahashR: aHash(RR),  ahashG: aHash(GG),  ahashB: aHash(BB),
+    dhashR: dHash(RR),  dhashG: dHash(GG),  dhashB: dHash(BB),
+  };
+
+  // Weights (tweakable)
+  const W = { dhash: 2, ahash: 1, edge: 1, dR: 1, dG: 1, dB: 1, aR: 0.5, aG: 0.5, aB: 0.5 };
+
+  // Ensure each ref has hashes (either from cache or computed once from its local src)
+  // Also compute a quick coarse score for ordering.
+  const candidates = [];
+  for (const r of refs) {
+    await ensureRefHashes(r); // memoized
+    const coarse =
+      (r.dhash != null ? ham64(crop.dhash, r.dhash) : 64) +
+      (r.dhashR != null ? ham64(crop.dhashR, r.dhashR) : 64) +
+      (r.dhashG != null ? ham64(crop.dhashG, r.dhashG) : 64) +
+      (r.dhashB != null ? ham64(crop.dhashB, r.dhashB) : 64);
+    candidates.push({ r, coarse });
   }
-  return best?{key:best.key,name:best.name,src:best.src,score:bestScore}:null;
+
+  // Filter to top-K by coarse score
+  const K = Math.min(150, candidates.length);
+  candidates.sort((a, b) => a.coarse - b.coarse);
+  const shortlist = candidates.slice(0, K);
+
+  // Refine with weightedDistance using only available signals
+  let best = null, bestScore = Infinity;
+  for (const { r } of shortlist) {
+    const s = weightedDistance(crop, r, W);
+    if (s < bestScore) { bestScore = s; best = r; }
+  }
+
+  return best ? { key: best.key, name: best.name, src: best.src, score: bestScore } : null;
 }
+
