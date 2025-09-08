@@ -260,7 +260,6 @@ async function hashCrop(dataUrl){
   };
 }
 
-
 export async function findBestMatch(cropUrl, refsIndexOrArray) {
   const refs = Array.isArray(refsIndexOrArray)
     ? refsIndexOrArray

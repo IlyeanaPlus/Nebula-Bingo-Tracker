@@ -71,7 +71,6 @@ export default function BingoCardView({
             ) : (
               <div className="placeholder">{i + 1}</div>
             )}
-            {result?.label ? <div className="caption">{result.label}</div> : null}
           </div>
         ))}
       </div>
