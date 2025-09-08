@@ -1,6 +1,6 @@
 // src/utils/sprites.js
-// Prefer precomputed CLIP vectors from /sprite_index.json (public).
-// Fallback to building an index from drive_cache.json if vectors file is missing.
+// Prefer precomputed CLIP vectors from /sprite_index_clip.json (public).
+// Fallbacks: /sprite_index.json → build from drive_cache.json (embedding each).
 
 import { prepareRefIndex } from './matchers';
 
@@ -19,24 +19,29 @@ function decodeFloat32Base64(b64) {
   return new Float32Array(buf);
 }
 
-/**
- * Try to load precomputed sprite index:
- * Expected shapes:
- *  1) { vectors: number[][], meta: {url,name,key}[] }
- *  2) { vectors: string[], meta: [...] }  // base64 Float32
- *  3) [{ vector: number[]|string, url, name, key }, ...]  // array of entries
- */
-async function tryLoadPrecomputed() {
-  const url = resolvePublic('/sprite_index_clip.json');
-  const res = await fetch(url, { cache: 'no-store' });
-  if (!res.ok) return null;
-  const data = await res.json();
+async function fetchJsonNoThrow(path) {
+  const url = resolvePublic(path);
+  try {
+    const res = await fetch(url, { cache: 'no-store' });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
+/**
+ * Parse a precomputed index in one of the supported shapes:
+ *  1) { vectors: number[][], meta: {url,name,key}[] }
+ *  2) { vectors: string[], meta: [...] }           // base64 Float32
+ *  3) [{ vector: number[]|string, url, name, key }, ...]
+ */
+function parsePrecomputed(data) {
+  if (!data) return null;
   let vectors = [];
   let meta = [];
 
   if (Array.isArray(data)) {
-    // Array of entries
     for (const item of data) {
       let v;
       if (Array.isArray(item.vector)) v = new Float32Array(item.vector);
@@ -46,7 +51,6 @@ async function tryLoadPrecomputed() {
       meta.push({ url: item.url, name: item.name ?? item.key ?? '', key: item.key ?? item.name ?? item.url });
     }
   } else if (data && data.vectors && data.meta) {
-    // Object with separate arrays
     for (let i = 0; i < data.vectors.length; i++) {
       const raw = data.vectors[i];
       let v;
@@ -69,10 +73,8 @@ async function tryLoadPrecomputed() {
 
 /** Fallback: build from drive_cache.json (uses only src/name; ignores old hash fields) */
 async function buildFromDriveCache() {
-  const url = resolvePublic('/drive_cache.json');
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`getSprites: failed to fetch ${url}`);
-  const entries = await res.json();
+  const entries = await fetchJsonNoThrow('/drive_cache.json');
+  if (!entries) throw new Error('getSprites: failed to fetch /drive_cache.json');
   // Normalize into array with absolute urls
   const refs = Array.isArray(entries)
     ? entries.map((value) => ({
@@ -98,14 +100,32 @@ let _spriteIndex = null;
 export async function getSpriteIndex() {
   if (_spriteIndex) return _spriteIndex;
 
-  // Prefer precomputed index
-  const pre = await tryLoadPrecomputed().catch(() => null);
-  if (pre) {
-    _spriteIndex = pre;
+  // Prefer /sprite_index_clip.json
+  const clipData = await fetchJsonNoThrow('/sprite_index_clip.json');
+  const parsedClip = parsePrecomputed(clipData);
+  if (parsedClip) {
+    _spriteIndex = parsedClip;
     return _spriteIndex;
   }
 
-  // Fallback: derive from drive_cache.json (will embed each ref)
+  // Next, try /sprite_index.json
+  const genericData = await fetchJsonNoThrow('/sprite_index.json');
+  const parsedGeneric = parsePrecomputed(genericData);
+  if (parsedGeneric) {
+    _spriteIndex = parsedGeneric;
+    return _spriteIndex;
+  }
+
+  // Fallback: build from drive_cache.json
   _spriteIndex = await buildFromDriveCache();
   return _spriteIndex;
+}
+
+/**
+ * Compatibility wrapper for legacy code.
+ * Returns just the refs (meta array) from the sprite index.
+ */
+export async function getSprites() {
+  const index = await getSpriteIndex();
+  return index.meta; // array of { url, name, key }
 }
