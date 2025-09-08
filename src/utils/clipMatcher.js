@@ -7,10 +7,9 @@ import * as ort from "onnxruntime-web";
 // -------------------------------
 // Config: model + index locations
 // -------------------------------
+
 const MODEL_URL =
-  import.meta.env.VITE_CLIP_MODEL_URL ||
-  // Hosted on HF
-  "https://huggingface.co/Ilyeana/Nebula-ONNX/resolve/main/clip-vit-b32.onnx";
+  import.meta.env.VITE_CLIP_MODEL_URL || "/models/vision_model_int8.onnx";
 
 const INDEX_URL =
   import.meta.env.VITE_SPRITE_INDEX_URL || "sprite_index_clip.json"; // served from /public in your app
