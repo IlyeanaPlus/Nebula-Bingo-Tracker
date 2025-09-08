@@ -1,6 +1,5 @@
-// src/hooks/useBingoCard.js
-// Hook: compute 25 crops → CLIP embeddings → match against sprite index.
 
+// src/hooks/useBingoCard.js
 import { useRef, useState } from "react";
 import { computeCrops25, fileToImage, loadFractions } from "../utils/image";
 import { getSpriteIndex } from "../utils/sprites";
@@ -17,55 +16,61 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [showTuner, setShowTuner] = useState(false);
+  const fileInputRef = useRef(null);
 
-  // Public actions
   async function analyzeScreenshot(file) {
+    if (!file) return;
     setAnalyzing(true);
     setProgress(0);
     try {
       const img = await fileToImage(file);
-      const crops = computeCrops25(img, fractions);       // 25 dataURLs
+      const crops = computeCrops25(img, fractions);
       const session = await getClipSession();
       const index = await getSpriteIndex();
-
       const newResults = [];
-      for (let i = 0; i < crops.length; i++) {
+      for (let i=0;i<crops.length;i++) {
         try {
           const cropImg = await dataUrlToImage(crops[i]);
-          const tensor = await embedImage(cropImg, session); // returns Tensor
+          const tensor = await embedImage(cropImg, session);
           const best = findBestMatch(tensor.data, index);
           newResults.push(best);
-        } catch (e) {
+        } catch(e) {
           console.warn(`[useBingoCard] match failed for cell ${i}`, e);
           newResults.push(null);
         }
-        setProgress(Math.round(((i + 1) / crops.length) * 100));
+        setProgress(Math.round(((i+1)/crops.length)*100));
       }
-
       setResults(newResults);
-    } finally {
-      setAnalyzing(false);
+    } finally { setAnalyzing(false); }
+  }
+
+  function fillCard() {
+    let input = fileInputRef.current;
+    if (!input) {
+      input=document.createElement("input");
+      input.type="file"; input.accept="image/*"; input.style.display="none";
+      document.body.appendChild(input);
+      fileInputRef.current=input;
     }
+    const handler=(e)=>{
+      const file=e.target.files&&e.target.files[0];
+      e.target.value="";
+      input.removeEventListener("change",handler);
+      if(file) analyzeScreenshot(file);
+    };
+    input.addEventListener("change",handler,{once:true});
+    input.click();
   }
 
-  function toggleChecked(idx) {
-    setChecked(prev => {
-      const next = prev.slice();
-      next[idx] = !next[idx];
-      return next;
-    });
+  function bindFileInputRef(el){
+    fileInputRef.current=el||null;
+    if(el){ el.type="file"; el.accept="image/*"; el.style.display="none"; }
   }
 
-  function clearResults() {
-    setResults(Array(25).fill(null));
-    setChecked(Array(25).fill(false));
-  }
+  function toggleChecked(idx){ setChecked(prev=>{const next=prev.slice(); next[idx]=!next[idx]; return next;}); }
+  function clearResults(){ setResults(Array(25).fill(null)); setChecked(Array(25).fill(false)); }
 
-  return {
-    title, setTitle, renaming, setRenaming,
-    results, checked, fractions, setFractions,
-    analyzing, progress, showTuner, setShowTuner,
-    analyzeScreenshot, toggleChecked, clearResults,
-    onRemove,
-  };
+  return { title,setTitle,renaming,setRenaming, results,checked,fractions,setFractions,
+           analyzing,progress,showTuner,setShowTuner, analyzeScreenshot,fillCard,bindFileInputRef,
+           toggleChecked,clearResults,onRemove };
 }

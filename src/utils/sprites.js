@@ -1,16 +1,13 @@
+
 // src/utils/sprites.js
-// Prefer precomputed CLIP vectors from /sprite_index_clip.json (public).
-// Fallbacks: /sprite_index.json → build from drive_cache.json (embedding each).
-// Adds legacy shims: getSprites() and preloadSprites().
+// Legacy-compatible sprite utilities, CLIP-powered under the hood.
 
 import { prepareRefIndex } from './matchers';
 
-/** Resolve a public asset under the current base URL */
 function resolvePublic(pathname) {
   return new URL(pathname, document.baseURI).href;
 }
 
-/** Decode base64-encoded Float32 (little-endian) into Float32Array */
 function decodeFloat32Base64(b64) {
   const bin = atob(b64);
   const len = bin.length;
@@ -31,17 +28,9 @@ async function fetchJsonNoThrow(path) {
   }
 }
 
-/**
- * Parse a precomputed index in one of the supported shapes:
- *  1) { vectors: number[][], meta: {url,name,key}[] }
- *  2) { vectors: string[], meta: [...] }           // base64 Float32
- *  3) [{ vector: number[]|string, url, name, key }, ...]
- */
 function parsePrecomputed(data) {
   if (!data) return null;
-  let vectors = [];
-  let meta = [];
-
+  let vectors = [], meta = [];
   if (Array.isArray(data)) {
     for (const item of data) {
       let v;
@@ -62,97 +51,46 @@ function parsePrecomputed(data) {
       const m = data.meta[i] || {};
       meta.push({ url: m.url, name: m.name ?? m.key ?? '', key: m.key ?? m.name ?? m.url });
     }
-  } else {
-    return null;
-  }
-
-  if (vectors.length && meta.length === vectors.length) {
-    return { vectors, meta };
-  }
+  } else return null;
+  if (vectors.length && meta.length === vectors.length) return { vectors, meta };
   return null;
 }
 
-/** Fallback: build from drive_cache.json (uses only src/name; ignores old hash fields) */
 async function buildFromDriveCache() {
   const entries = await fetchJsonNoThrow('/drive_cache.json');
   if (!entries) throw new Error('getSprites: failed to fetch /drive_cache.json');
-  // Normalize into array with absolute urls
   const refs = Array.isArray(entries)
-    ? entries.map((value) => ({
-        key: value?.name ?? value?.src ?? '',
-        name: value?.name ?? '',
-        url: (value?.src ?? '').startsWith('http') ? value.src : resolvePublic(value?.src ?? ''),
-      }))
-    : Object.entries(entries).map(([key, value]) => {
-        const name = value?.name ?? key;
-        const src  = value?.src  ?? value ?? key;
+    ? entries.map((v) => ({ key: v?.name ?? v?.src ?? '', name: v?.name ?? '', url: (v?.src ?? '').startsWith('http') ? v.src : resolvePublic(v?.src ?? '') }))
+    : Object.entries(entries).map(([key, v]) => {
+        const name = v?.name ?? key;
+        const src  = v?.src  ?? v ?? key;
         const abs  = String(src).startsWith('http') ? src : resolvePublic(src);
         return { key, name, url: abs };
       });
-
-  // Build CLIP embeddings on the fly
   return await prepareRefIndex(refs);
 }
 
-// Cache in-memory
 let _spriteIndex = null;
-
-/** Public: return the sprite index with vectors + meta */
 export async function getSpriteIndex() {
   if (_spriteIndex) return _spriteIndex;
-
-  // Prefer /sprite_index_clip.json
   const clipData = await fetchJsonNoThrow('/sprite_index_clip.json');
   const parsedClip = parsePrecomputed(clipData);
-  if (parsedClip) {
-    _spriteIndex = parsedClip;
-    return _spriteIndex;
-  }
-
-  // Next, try /sprite_index.json
+  if (parsedClip) { _spriteIndex = parsedClip; return _spriteIndex; }
   const genericData = await fetchJsonNoThrow('/sprite_index.json');
   const parsedGeneric = parsePrecomputed(genericData);
-  if (parsedGeneric) {
-    _spriteIndex = parsedGeneric;
-    return _spriteIndex;
-  }
-
-  // Fallback: build from drive_cache.json
+  if (parsedGeneric) { _spriteIndex = parsedGeneric; return _spriteIndex; }
   _spriteIndex = await buildFromDriveCache();
   return _spriteIndex;
 }
-
-/**
- * Compatibility wrapper for legacy code.
- * Returns just the refs (meta array) from the sprite index.
- */
 export async function getSprites() {
   const index = await getSpriteIndex();
-  return index.meta; // array of { url, name, key }
+  return index.meta;
 }
-
-/**
- * Legacy preload helper to warm the browser image cache.
- * Sidebar.jsx used to import this; keep it stable.
- * @param {number} max how many images to preload (default 100; pass Infinity to preload all)
- * @returns {Promise<Array<{url,name,key}>>} the meta entries attempted
- */
-export async function preloadSprites(max = 100) {
+export async function preloadSprites(max=100) {
   const meta = await getSprites();
-  const subset = !isFinite(max) ? meta : meta.slice(0, Math.max(0, max));
-
-  await Promise.allSettled(
-    subset.map((m) => new Promise((resolve) => {
-      try {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.onload = img.onerror = () => resolve();
-        img.src = m.url;
-      } catch {
-        resolve();
-      }
-    }))
-  );
-
+  const subset = !isFinite(max) ? meta : meta.slice(0, Math.max(0,max));
+  await Promise.allSettled(subset.map(m=> new Promise(res=>{
+    try{ const img=new Image(); img.crossOrigin='anonymous'; img.onload=img.onerror=()=>res(); img.src=m.url; }catch{res();}
+  })));
   return subset;
 }
