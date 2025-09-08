@@ -1,41 +1,43 @@
 // src/components/Sidebar.jsx
 import React, { useState } from "react";
-import { getSprites, preloadSprites } from "../utils/sprites";
+import { getSpriteIndex } from "../utils/sprites";
 
 export default function Sidebar({
   cards = [],
   currentIndex = 0,
   onSelect,
   onNewCard,
-  onGetSprites,          // parent callback receives the loaded index
-  spritesLoaded = 0,     // parent-provided live progress (optional)
-  spritesTotal = 0,      // parent-provided live progress (optional)
-  spritesReady = false,  // whether manifest is loaded
+  onGetSprites,          // parent callback receives the loaded meta (or full index if you prefer)
+  // spritesLoaded,      // no longer used (preloading removed)
+  // spritesTotal,       // no longer used (preloading removed)
+  spritesReady = false,  // parent can still reflect readiness if desired
 }) {
   const [loading, setLoading] = useState(false);
+  const [ready, setReady] = useState(!!spritesReady);
   const [error, setError] = useState("");
-  const [loaded, setLoaded] = useState(0);
-  const [total, setTotal] = useState(0);
 
   async function handleGetSprites() {
     setError("");
     setLoading(true);
     try {
-      const index = await getSprites();
-      if (!index || Object.keys(index).length === 0) {
-        setError("No sprites found in drive_cache.json");
+      // Load CLIP index (vectors + meta). Matching uses vectors internally;
+      // Sidebar only needs meta for listing, so we forward meta by default.
+      const index = await getSpriteIndex();
+      const meta = index?.meta || [];
+
+      if (!meta.length) {
+        setError("No sprites found (sprite_index_clip.json missing or empty).");
+        setReady(false);
         return;
       }
 
-    await preloadSprites(index, (loaded, total) => {
-      setLoaded(loaded);
-      setTotal(total);
-    }, { concurrency: 24, retry: 1 });
-
-      onGetSprites?.(index);
+      // Notify parent (keep old prop name). If your parent wants full index, pass `index`.
+      onGetSprites?.(meta);
+      setReady(true);
     } catch (e) {
       console.error(e);
       setError(e?.message || "Failed to load sprites");
+      setReady(false);
     } finally {
       setLoading(false);
     }
@@ -52,16 +54,11 @@ export default function Sidebar({
           </button>
         </div>
 
-        {(total > 0) && (
-          <div className="row small">
-            <div>Sprite Cache: {loaded} / {total}</div>
-          </div>
-        )}
-
+        {/* Status (no progress bar—preloading removed) */}
         <div className="row small">
           {error ? (
             <div className="row error">{error}</div>
-          ) : spritesReady ? (
+          ) : ready ? (
             <div>Sprites loaded ✔</div>
           ) : (
             <div style={{ color: "#fbbf24" }}>Load sprites to enable matching</div>
@@ -74,7 +71,7 @@ export default function Sidebar({
 
         <div className="divider" />
 
-        <div className="panel-title">Cards</div>
+        <div className="panel-title">Card Library</div>
         <div className="list">
           {cards.length === 0 ? (
             <div className="empty">No cards yet.</div>
