@@ -1,14 +1,10 @@
 // src/utils/matchers.js
-//
-// Matcher utilities for Nebula Bingo Tracker.
-// - Loads drive_cache.json (relative path) and merges with manifest
-// - Normalizes & parses cached hashes to BigInt (supports object/array forms)
-// - Hashes crops and (if needed) refs using same pipeline (unboard + resize)
-// - Matches via weighted Hamming distance with color/edge emphasis
-// -----------------------------------------------------------------------------
+// Color-heavy, stable sprite matcher for Nebula Bingo Tracker.
 
-const DEFAULT_TRIM = 0.02; // empirically best for your sprites
+const DEFAULT_TRIM = 0.02; // empirically best
+const SHORTLIST_K = 150;
 
+// -------- drive cache --------
 let _driveCachePromise = null;
 async function loadDriveCache() {
   if (_driveCachePromise) return _driveCachePromise;
@@ -25,8 +21,7 @@ async function loadDriveCache() {
   return _driveCachePromise;
 }
 
-// --- hash parsing -------------------------------------------------------------
-
+// -------- hash parsing / distance --------
 function parseHash(h) {
   if (h == null) return null;
   if (typeof h === "bigint") return h;
@@ -63,8 +58,7 @@ function ham64(a, b) {
   return c;
 }
 
-// --- canvas helpers -----------------------------------------------------------
-
+// -------- canvas helpers --------
 function loadImage(src) {
   return new Promise((res, rej) => {
     const img = new Image();
@@ -97,14 +91,19 @@ function channels(id, size = 32) {
   const gray = new Float32Array(n);
   const p = id.data;
   for (let i = 0, j = 0; i < p.length; i += 4, j++) {
-    const R = p[i], G = p[i+1], B = p[i+2];
+    const R = p[i], G = p[i + 1], B = p[i + 2];
     r[j] = R / 255; g[j] = G / 255; b[j] = B / 255;
     gray[j] = (0.2126 * R + 0.7152 * G + 0.0722 * B) / 255;
   }
   return { r, g, b, gray };
 }
 
-// aHash / dHash on one channel vector
+function sample(vec, size, fx, fy) {
+  const x = Math.max(0, Math.min(size - 1, Math.floor(fx)));
+  const y = Math.max(0, Math.min(size - 1, Math.floor(fy)));
+  return vec[y * size + x];
+}
+
 function aHash(vec, size = 32, h = 8) {
   const block = size / h;
   let sum = 0; for (let i = 0; i < vec.length; i++) sum += vec[i];
@@ -125,7 +124,7 @@ function dHash(vec, size = 32, w = 9, h = 8) {
   const sx = size / w, sy = size / h;
   let bits = 0n;
   for (let y = 0; y < h; y++) {
-    let prev = sample(vec, size, (0.5) * sx, (y + 0.5) * sy);
+    let prev = sample(vec, size, 0.5 * sx, (y + 0.5) * sy);
     for (let x = 1; x < w; x++) {
       const cur = sample(vec, size, (x + 0.5) * sx, (y + 0.5) * sy);
       bits = (bits << 1n) | (prev > cur ? 1n : 0n);
@@ -135,35 +134,28 @@ function dHash(vec, size = 32, w = 9, h = 8) {
   return bits;
 }
 
-function sample(vec, size, fx, fy) {
-  const x = Math.max(0, Math.min(size - 1, Math.floor(fx)));
-  const y = Math.max(0, Math.min(size - 1, Math.floor(fy)));
-  return vec[y * size + x];
-}
-
 function edgeHash(gray, size = 32) {
   const W = size, H = size;
   const mag = new Float32Array(W * H);
   const sobelX = [[-1,0,1],[-2,0,2],[-1,0,1]];
   const sobelY = [[-1,-2,-1],[0,0,0],[1,2,1]];
-  for (let y = 1; y < H-1; y++) {
-    for (let x = 1; x < W-1; x++) {
+  for (let y = 1; y < H - 1; y++) {
+    for (let x = 1; x < W - 1; x++) {
       let gx = 0, gy = 0;
       for (let j = -1; j <= 1; j++) {
         for (let i = -1; i <= 1; i++) {
-          const v = gray[(y+j)*W + (x+i)];
-          gx += v * sobelX[j+1][i+1];
-          gy += v * sobelY[j+1][i+1];
+          const v = gray[(y + j) * W + (x + i)];
+          gx += v * sobelX[j + 1][i + 1];
+          gy += v * sobelY[j + 1][i + 1];
         }
       }
-      mag[y*W + x] = Math.hypot(gx, gy);
+      mag[y * W + x] = Math.hypot(gx, gy);
     }
   }
   return aHash(mag, size, 8);
 }
 
-// --- manifest / refs ----------------------------------------------------------
-
+// -------- manifest / refs --------
 function normalizeManifest(manifest) {
   if (Array.isArray(manifest)) {
     return manifest.map((e, i) => ({
@@ -188,8 +180,8 @@ export async function prepareRefIndex(manifest) {
 
   let list;
   if (norm.length === 0) {
-    // Fallback: build entirely from cache so matching works even before "Get Sprites"
-    list = Object.keys(cache).map(k => {
+    // Fallback: cache-only refs (works before "Get Sprites")
+    list = Object.keys(cache).map((k) => {
       const c = cache[k] || {};
       return {
         key: k,
@@ -208,7 +200,7 @@ export async function prepareRefIndex(manifest) {
       };
     }).filter(e => e.src);
   } else {
-    list = norm.map(m => {
+    list = norm.map((m) => {
       const c = cache[m.key] || cache[m.name] || {};
       return {
         key: m.key,
@@ -231,15 +223,14 @@ export async function prepareRefIndex(manifest) {
   return { list, byKey: new Map(list.map(e => [e.key, e])) };
 }
 
-// --- crop + ref hashing -------------------------------------------------------
-
+// -------- crop & ref hashing --------
 async function hashCrop(dataUrl) {
   const id = await toRGBA(dataUrl, { trim: DEFAULT_TRIM, size: 32 });
   const { r, g, b, gray } = channels(id, 32);
   return {
     ahash: aHash(gray), dhash: dHash(gray), edgeHash: edgeHash(gray),
-    ahashR: aHash(r), ahashG: aHash(g), ahashB: aHash(b),
-    dhashR: dHash(r), dhashG: dHash(g), dhashB: dHash(b),
+    ahashR: aHash(r),   ahashG: aHash(g),   ahashB: aHash(b),
+    dhashR: dHash(r),   dhashG: dHash(g),   dhashB: dHash(b),
   };
 }
 
@@ -249,48 +240,50 @@ function hasAnyHash(r) {
             r.ahashR || r.ahashG || r.ahashB || r.phash);
 }
 
+const _refHashMemo = new Map();
 async function ensureRefHashes(r) {
-  if (hasAnyHash(r) || !r?.src) return r;
-  if (!r.__hashing) {
-    r.__hashing = (async () => {
-      try {
-        const id = await toRGBA(r.src, { trim: DEFAULT_TRIM, size: 32 });
-        const { r: RR, g: GG, b: BB, gray } = channels(id, 32);
-        r.ahash    = aHash(gray);
-        r.dhash    = dHash(gray);
-        r.edgeHash = edgeHash(gray);
-        r.ahashR   = aHash(RR); r.ahashG = aHash(GG); r.ahashB = aHash(BB);
-        r.dhashR   = dHash(RR); r.dhashG = dHash(GG); r.dhashB = dHash(BB);
-      } catch {}
-      return r;
-    })();
-  }
-  await r.__hashing;
+  if (!r?.key) return r;
+  const memo = _refHashMemo.get(r.key);
+  if (memo) { Object.assign(r, memo); return r; }
+
+  if (hasAnyHash(r)) { _refHashMemo.set(r.key, r); return r; }
+  if (!r.src) return r;
+
+  try {
+    const id = await toRGBA(r.src, { trim: DEFAULT_TRIM, size: 32 });
+    const { r: RR, g: GG, b: BB, gray } = channels(id, 32);
+    const computed = {
+      ahash: aHash(gray), dhash: dHash(gray), edgeHash: edgeHash(gray),
+      ahashR: aHash(RR),  ahashG: aHash(GG),  ahashB: aHash(BB),
+      dhashR: dHash(RR),  dhashG: dHash(GG),  dhashB: dHash(BB),
+    };
+    _refHashMemo.set(r.key, computed);
+    Object.assign(r, computed);
+  } catch {}
   return r;
 }
 
-// --- scoring ------------------------------------------------------------------
-
+// -------- color-heavy weights & scoring --------
 const WEIGHTS = {
-  // grayscale less dominant
-  dhash: 1, ahash: 0.5,
-  // color structure stronger
-  dR: 2, dG: 2, dB: 2,
-  aR: 0.5, aG: 0.5, aB: 0.5,
-  // outlines help
-  edge: 2,
+  // grayscale much less influential
+  dhash: 0.35,
+  ahash: 0.20,
+  // color structure dominates
+  dR: 4, dG: 4, dB: 4,
+  // small color aHash assist
+  aR: 0.25, aG: 0.25, aB: 0.25,
+  // edges help, but don't dominate
+  edge: 0.75,
 };
 
-// use whatever signals exist (avoids identical coarse scores)
-function coarseScore(c, r, W = WEIGHTS) {
+function coarseScore(c, r) {
+  // rank by color dHash first; tiny nudge from edge if present
   let s = 0, used = 0;
   const add = (a, b, w) => { if (a != null && b != null) { s += w * ham64(a, b); used++; } };
-  add(c.dhash,  r.dhash,  W.dhash);
-  add(c.dhashR, r.dhashR, W.dR);
-  add(c.dhashG, r.dhashG, W.dG);
-  add(c.dhashB, r.dhashB, W.dB);
-  add(c.ahash,  r.ahash,  W.ahash);
-  add(c.edgeHash, r.edgeHash, W.edge);
+  add(c.dhashR, r.dhashR, 1);
+  add(c.dhashG, r.dhashG, 1);
+  add(c.dhashB, r.dhashB, 1);
+  add(c.edgeHash, r.edgeHash, 0.25);
   return used ? s : Infinity;
 }
 
@@ -309,8 +302,12 @@ function weightedDistance(c, r, W = WEIGHTS) {
   return used ? score : Infinity;
 }
 
-// --- public API ---------------------------------------------------------------
+function tieBreak(aKey, bKey) {
+  const A = String(aKey), B = String(bKey);
+  return A < B ? -1 : (A > B ? 1 : 0);
+}
 
+// -------- public API --------
 export async function findBestMatch(cropUrl, refsIndexOrArray) {
   const refs = Array.isArray(refsIndexOrArray)
     ? refsIndexOrArray
@@ -326,16 +323,20 @@ export async function findBestMatch(cropUrl, refsIndexOrArray) {
     candidates.push({ r, coarse: coarseScore(crop, r) });
   }
 
-  // shortlist by coarse score
-  const K = Math.min(150, candidates.length);
-  candidates.sort((a, b) => a.coarse - b.coarse);
-  const shortlist = candidates.slice(0, K);
+  // shortlist with deterministic tiebreak
+  candidates.sort((a, b) => {
+    if (a.coarse !== b.coarse) return a.coarse - b.coarse;
+    return tieBreak(a.r.key, b.r.key);
+  });
+  const shortlist = candidates.slice(0, Math.min(SHORTLIST_K, candidates.length));
 
-  // refine by weighted distance
-  let best = null, bestScore = Infinity;
+  // refine by weighted distance (deterministic tie break)
+  let best = null, bestScore = Infinity, bestKey = null;
   for (const { r } of shortlist) {
-    const s = weightedDistance(crop, r);
-    if (s < bestScore) { bestScore = s; best = r; }
+    const s = weightedDistance(crop, r, WEIGHTS);
+    if (s < bestScore || (s === bestScore && tieBreak(r.key, bestKey) < 0)) {
+      best = r; bestScore = s; bestKey = r.key;
+    }
   }
 
   return best ? { key: best.key, name: best.name, src: best.src, score: bestScore } : null;
