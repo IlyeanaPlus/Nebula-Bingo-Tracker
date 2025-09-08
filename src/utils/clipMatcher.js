@@ -10,7 +10,7 @@ import * as ort from "onnxruntime-web";
 const MODEL_URL =
   import.meta.env.VITE_CLIP_MODEL_URL ||
   // Default to a public HF vision-encoder ONNX. You can swap to your own host.
-  "https://huggingface.co/onnx-community/clip-vit-base-patch32-vision/resolve/main/vision_model.onnx";
+  "https://github.com/IlyeanaPlus/Nebula-Bingo-Tracker/releases/download/Hosted/clip-vit-b32.onnx";
 
 const INDEX_URL =
   import.meta.env.VITE_SPRITE_INDEX_URL || "sprite_index_clip.json"; // served from /public in your app
