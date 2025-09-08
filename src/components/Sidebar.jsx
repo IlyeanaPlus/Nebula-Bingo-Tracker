@@ -46,22 +46,12 @@ export default function Sidebar({
   return (
     <aside className="sidebar">
       <div className="panel">
-        <div className="panel-title">Controls</div>
 
-        <div className="row">
-          <button className="btn" onClick={handleGetSprites} disabled={loading}>
-            {loading ? "Loading Sprites…" : "Get Sprites"}
-          </button>
-        </div>
-
-        {/* Status (no progress bar—preloading removed) */}
         <div className="row small">
-          {error ? (
-            <div className="row error">{error}</div>
-          ) : ready ? (
-            <div>Sprites loaded ✔</div>
+          {ready ? (
+            <div>Sprites ready ✔</div>
           ) : (
-            <div style={{ color: "#fbbf24" }}>Load sprites to enable matching</div>
+            <div style={{ color: "#fbbf24" }}>Sprites not loaded</div>
           )}
         </div>
 
