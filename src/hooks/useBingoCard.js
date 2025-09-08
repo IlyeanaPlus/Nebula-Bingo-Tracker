@@ -107,27 +107,57 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   }
 
   // ----- FILL BUTTON → file picker → open tuner -----
-  function fillCard() {
+
+  function fillCard(ev) {
+    // Keep the user gesture: do everything sync in the same call stack
+    if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
+    if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+
+    // 1) Modern API: showOpenFilePicker (best compatibility with gesture gating)
+    const canUsePicker = typeof window.showOpenFilePicker === "function";
+    if (canUsePicker) {
+      // Use synchronous .then chain instead of async/await to keep the gesture intact
+      window.showOpenFilePicker({
+        types: [{ description: "Images", accept: { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".bmp"] } }],
+        excludeAcceptAllOption: false,
+        multiple: false,
+      })
+      .then(handles => handles?.[0]?.getFile())
+      .then(file => { if (file) return openTunerForFile(file); })
+      .catch(() => {/* user canceled or unsupported — silently ignore */});
+      return;
+    }
+
+    // 2) Fallback: hidden <input type="file">
     let input = fileInputRef.current;
     if (!input) {
       input = document.createElement("input");
       input.type = "file";
       input.accept = "image/*";
-      input.style.display = "none";
+      input.style.position = "fixed";
+      input.style.left = "-9999px";
+      input.style.top = "0";
       document.body.appendChild(input);
       fileInputRef.current = input;
     }
-    const handler = async (e) => {
+
+    // Fresh listener per click, kept sync with the gesture
+    const handler = (e) => {
       const file = e.target.files && e.target.files[0];
+      // Clear value so same file can be re-picked later
       e.target.value = "";
       input.removeEventListener("change", handler);
       if (file) {
-        try { await openTunerForFile(file); } catch (err) { console.warn("openTunerForFile failed:", err); }
+        // Open tuner before analyze (legacy flow)
+        openTunerForFile(file).catch(err => console.warn("openTunerForFile failed:", err));
       }
     };
+
     input.addEventListener("change", handler, { once: true });
+    // Important: trigger click *synchronously* inside the user gesture
     input.click();
   }
+
 
   // ----- Misc helpers -----
   function bindFileInputRef(el) {
