@@ -1,75 +1,77 @@
 // src/utils/image.js
-/**
- * Minimal image helpers for Nebula Bingo Tracker — gridbox-first.
- * Auto-cropping is intentionally removed. We rely on user-tuned grid fractions.
- */
+// Crop utilities for 5x5 bingo grids + helpers.
 
-export function fileToImage(file) {
-  return new Promise((resolve, reject) => {
-    const url = URL.createObjectURL(file);
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = (e) => reject(e);
-    img.src = url;
-  });
+/** Load grid fractions from localStorage (saved by tuner UI) */
+export function loadFractions() {
+  try {
+    const raw = localStorage.getItem('nbt.gridFractions');
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch {
+    return null;
+  }
+}
+
+/** Save fractions */
+export function saveFractions(frac) {
+  try {
+    localStorage.setItem('nbt.gridFractions', JSON.stringify(frac));
+  } catch {}
 }
 
 /**
- * computeCrops25(img, fractions)
- * - fractions: { top,left,right,bottom, cols:[0..1]*6, rows:[0..1]*6 }
- * Returns 25 dataURLs (native-scale square crops).
- * We compute each cell box within the frame, then crop a centered square.
+ * Compute 25 crops (as dataURLs) using saved grid fractions (equalized 5x5).
+ * Expects an <img> element already loaded.
  */
-export function computeCrops25(img, fractions) {
-  const { top, left, right, bottom, cols, rows } = fractions;
-  const L = left * img.width;
-  const R = right * img.width;
-  const T = top * img.height;
-  const B = bottom * img.height;
+export function computeCrops25(img, fractions = loadFractions()) {
+  const W = img.naturalWidth ?? img.width;
+  const H = img.naturalHeight ?? img.height;
+  if (!W || !H) throw new Error("computeCrops25: image lacks dimensions");
+
+  // Default to equal 5x5 if no fractions present
+  let cols = fractions?.cols ?? Array(5).fill(1/5);
+  let rows = fractions?.rows ?? Array(5).fill(1/5);
+
+  // Convert fractions → pixel ranges
+  const xEdges = [0];
+  const yEdges = [0];
+  for (let i = 0; i < 5; i++) xEdges.push(xEdges[i] + Math.round(cols[i] * W));
+  for (let j = 0; j < 5; j++) yEdges.push(yEdges[j] + Math.round(rows[j] * H));
+  xEdges[5] = W; yEdges[5] = H;
 
   const crops = [];
-  const W = R - L;
-  const H = B - T;
-
-  // helper: crop region to dataURL
-  const toURL = (x, y, w, h) => {
-    const c = document.createElement("canvas");
-    c.width = Math.max(1, Math.floor(w));
-    c.height = Math.max(1, Math.floor(h));
-    const ctx = c.getContext("2d");
-    ctx.imageSmoothingEnabled = false;
-    ctx.drawImage(img, x, y, w, h, 0, 0, c.width, c.height);
-    return c.toDataURL("image/png");
-  };
-
   for (let r = 0; r < 5; r++) {
-    const y0 = T + H * rows[r];
-    const y1 = T + H * rows[r + 1];
     for (let c = 0; c < 5; c++) {
-      const x0 = L + W * cols[c];
-      const x1 = L + W * cols[c + 1];
-      const cellW = x1 - x0;
-      const cellH = y1 - y0;
-      const side = Math.min(cellW, cellH);
-      const cx = x0 + (cellW - side) / 2;
-      const cy = y0 + (cellH - side) / 2;
-      crops.push(toURL(cx, cy, side, side));
+      const x = xEdges[c];
+      const y = yEdges[r];
+      const w = xEdges[c+1] - x;
+      const h = yEdges[r+1] - y;
+
+      // Inset slightly to avoid grid lines
+      const inset = Math.floor(Math.min(w, h) * 0.06);
+      const sx = x + inset, sy = y + inset;
+      const sw = Math.max(1, w - inset*2), sh = Math.max(1, h - inset*2);
+
+      const can = document.createElement('canvas');
+      can.width = sw; can.height = sh;
+      const ctx = can.getContext('2d', { willReadFrequently: true });
+      ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+      crops.push(can.toDataURL('image/png'));
     }
   }
   return crops;
 }
 
-/** loadFractions() / saveFractions() */
-export function loadFractions() {
-  try {
-    const saved = JSON.parse(localStorage.getItem("nbt.gridFractions") || "null");
-    if (saved) return saved;
-  } catch {}
-  // default equal grid
-  const eq = (n) => Array.from({ length: n+1 }, (_, i) => i / n);
-  return { top: 0, left: 0, right: 1, bottom: 1, cols: eq(5), rows: eq(5) };
-}
-
-export function saveFractions(f) {
-  localStorage.setItem("nbt.gridFractions", JSON.stringify(f));
+/** Utility to convert a File to an <img> element */
+export function fileToImage(file) {
+  return new Promise((resolve, reject) => {
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      resolve(img);
+    };
+    img.onerror = reject;
+    img.src = url;
+  });
 }

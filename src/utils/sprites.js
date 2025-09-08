@@ -1,114 +1,111 @@
 // src/utils/sprites.js
+// Prefer precomputed CLIP vectors from /sprite_index.json (public).
+// Fallback to building an index from drive_cache.json if vectors file is missing.
 
-/** Resolve a public asset under the correct base URL (works with Vite base + GH Pages). */
-export function resolvePublic(pathname) {
+import { prepareRefIndex } from './matchers';
+
+/** Resolve a public asset under the current base URL */
+function resolvePublic(pathname) {
   return new URL(pathname, document.baseURI).href;
 }
 
-/**
- * getSprites()
- * Loads /public/drive_cache.json and normalizes it into:
- *   { key: { url, name } }
- * - No extension filtering (Drive links often lack .png).
- * - Dedupes by key and by URL.
- */
-export async function getSprites() {
-  const url = resolvePublic("drive_cache.json");
-  const res = await fetch(url, { cache: "force-cache" });
-  if (!res.ok) throw new Error(`getSprites: failed to fetch ${url} (${res.status})`);
-  const data = await res.json();
-
-  const index = {};
-  const seenUrls = new Set();
-
-  const add = (key, src, name) => {
-    if (!key || !src) return;
-    // Normalize to absolute against baseURI so we don't create dup entries
-    let abs = src;
-    try { abs = new URL(src, document.baseURI).href; } catch {}
-    if (seenUrls.has(abs)) return;
-    seenUrls.add(abs);
-    index[key] = { url: abs, name: name || key };
-  };
-
-  if (Array.isArray(data)) {
-    // Expect: [{ name, src, ...hashes }]
-    for (const entry of data) add(entry?.name || entry?.src, entry?.src, entry?.name);
-  } else if (data && typeof data === "object") {
-    // Fallback: { key: "https://..." } or { key: { src/url, name? } }
-    for (const [k, v] of Object.entries(data)) {
-      if (typeof v === "string") add(k, v, k);
-      else if (v && typeof v === "object") add(v.name || k, v.src || v.url, v.name || k);
-    }
-  }
-
-  console.log("Sprites index count:", Object.keys(index).length);
-  return index;
+/** Decode base64-encoded Float32 (little-endian) into Float32Array */
+function decodeFloat32Base64(b64) {
+  const bin = atob(b64);
+  const len = bin.length;
+  const buf = new ArrayBuffer(len);
+  const bytes = new Uint8Array(buf);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i) & 0xff;
+  return new Float32Array(buf);
 }
 
 /**
- * preloadSprites(index, onStep?, opts?)
- * Concurrently warms the browser cache by loading each sprite URL into an <img>.
- * - onStep(loaded, total) is called after each image settles (load OR error).
- * - opts.concurrency: number of parallel requests (default 24; 12–32 is typical).
- * - opts.retry: number of retries per image (default 1).
- * - opts.signal: optional AbortSignal to cancel preloading early.
- * - Returns { loaded, total } when all settle.
+ * Try to load precomputed sprite index:
+ * Expected shapes:
+ *  1) { vectors: number[][], meta: {url,name,key}[] }
+ *  2) { vectors: string[], meta: [...] }  // base64 Float32
+ *  3) [{ vector: number[]|string, url, name, key }, ...]  // array of entries
  */
-export async function preloadSprites(index, onStep, opts = {}) {
-  // Filter to only well-formed { url } entries to avoid counting nulls
-  const items = Object.values(index || {}).filter(v => v && typeof v.url === "string");
-  const total = items.length;
-  let loaded = 0;
+async function tryLoadPrecomputed() {
+  const url = resolvePublic('/sprite_index_clip.json');
+  const res = await fetch(url, { cache: 'no-store' });
+  if (!res.ok) return null;
+  const data = await res.json();
 
-  const concurrency = Math.max(1, opts.concurrency ?? 24);
-  const retry = Math.max(0, opts.retry ?? 1);
-  const signal = opts.signal || (typeof AbortController !== "undefined" ? new AbortController().signal : undefined);
+  let vectors = [];
+  let meta = [];
 
-  // Report initial progress so the UI shows "0 / total"
-  onStep?.(loaded, total);
-  if (total === 0) return { loaded, total };
-
-  const loadOne = (src) =>
-    new Promise((resolve) => {
-      if (signal?.aborted) return resolve();
-      const tryOnce = (attempt) => {
-        if (signal?.aborted) return resolve();
-        const im = new Image();
-        // Helpful for cross-origin Drive images
-        im.crossOrigin = "anonymous";
-        im.referrerPolicy = "no-referrer";
-        im.decoding = "async";
-        im.onload = () => resolve();
-        im.onerror = () => {
-          if (attempt < retry) {
-            // minimal backoff without blocking the main thread
-            setTimeout(() => tryOnce(attempt + 1), 0);
-          } else {
-            resolve(); // settle even on error; still advances progress
-          }
-        };
-        // Ensure absolute URL is used
-        try { im.src = new URL(src, document.baseURI).href; } catch { im.src = src; }
-      };
-      tryOnce(0);
-    });
-
-  let i = 0;
-  async function worker() {
-    while (true) {
-      const idx = i++;
-      if (idx >= total) break;
-      const src = items[idx].url;
-      await loadOne(src);
-      loaded += 1;
-      onStep?.(loaded, total);
-      // Yield periodically to keep UI responsive
-      if (loaded % 50 === 0) await Promise.resolve();
+  if (Array.isArray(data)) {
+    // Array of entries
+    for (const item of data) {
+      let v;
+      if (Array.isArray(item.vector)) v = new Float32Array(item.vector);
+      else if (typeof item.vector === 'string') v = decodeFloat32Base64(item.vector);
+      else continue;
+      vectors.push(v);
+      meta.push({ url: item.url, name: item.name ?? item.key ?? '', key: item.key ?? item.name ?? item.url });
     }
+  } else if (data && data.vectors && data.meta) {
+    // Object with separate arrays
+    for (let i = 0; i < data.vectors.length; i++) {
+      const raw = data.vectors[i];
+      let v;
+      if (Array.isArray(raw)) v = new Float32Array(raw);
+      else if (typeof raw === 'string') v = decodeFloat32Base64(raw);
+      else continue;
+      vectors.push(v);
+      const m = data.meta[i] || {};
+      meta.push({ url: m.url, name: m.name ?? m.key ?? '', key: m.key ?? m.name ?? m.url });
+    }
+  } else {
+    return null;
   }
 
-  const workers = Array.from({ length: Math.min(concurrency, total) }, () => worker());
-  await Promise.all(workers);
-  return { loaded, total };
+  if (vectors.length && meta.length === vectors.length) {
+    return { vectors, meta };
+  }
+  return null;
+}
+
+/** Fallback: build from drive_cache.json (uses only src/name; ignores old hash fields) */
+async function buildFromDriveCache() {
+  const url = resolvePublic('/drive_cache.json');
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`getSprites: failed to fetch ${url}`);
+  const entries = await res.json();
+  // Normalize into array with absolute urls
+  const refs = Array.isArray(entries)
+    ? entries.map((value) => ({
+        key: value?.name ?? value?.src ?? '',
+        name: value?.name ?? '',
+        url: (value?.src ?? '').startsWith('http') ? value.src : resolvePublic(value?.src ?? ''),
+      }))
+    : Object.entries(entries).map(([key, value]) => {
+        const name = value?.name ?? key;
+        const src  = value?.src  ?? value ?? key;
+        const abs  = String(src).startsWith('http') ? src : resolvePublic(src);
+        return { key, name, url: abs };
+      });
+
+  // Build CLIP embeddings on the fly
+  return await prepareRefIndex(refs);
+}
+
+// Cache in-memory
+let _spriteIndex = null;
+
+/** Public: return the sprite index with vectors + meta */
+export async function getSpriteIndex() {
+  if (_spriteIndex) return _spriteIndex;
+
+  // Prefer precomputed index
+  const pre = await tryLoadPrecomputed().catch(() => null);
+  if (pre) {
+    _spriteIndex = pre;
+    return _spriteIndex;
+  }
+
+  // Fallback: derive from drive_cache.json (will embed each ref)
+  _spriteIndex = await buildFromDriveCache();
+  return _spriteIndex;
 }
