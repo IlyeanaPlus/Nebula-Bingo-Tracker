@@ -22,35 +22,78 @@ export default function BingoCardView({
   onRemove,
   fileInput,
 }) {
-  const safeCells = Array.isArray(cells) && cells.length === 25 ? cells : Array(25).fill(null);
-  const safeChecked = Array.isArray(checked) && checked.length === 25 ? checked : Array(25).fill(false);
+  const safeCells =
+    Array.isArray(cells) && cells.length === 25 ? cells : Array(25).fill(null);
+  const safeChecked =
+    Array.isArray(checked) && checked.length === 25 ? checked : Array(25).fill(false);
+
+  // --- Helpers to safely read CLIP-based match results (or legacy hashes) ---
+  const cellThumb = (r) =>
+    r?.matchUrl || r?.url || r?.ref?.url || null; // prefer explicit matchUrl, then url, then ref.url
+  const cellLabel = (r) =>
+    r?.label ?? r?.name ?? r?.key ?? ""; // prefer human label, then name/key
 
   return (
-    <div className="bingo-card">
+    <div className="bingo-card" aria-busy={!!analyzing}>
       {/* Header */}
       <div className="card-header">
         {renaming ? (
           <form onSubmit={onRenameSubmit} className="rename-form">
-            <input autoFocus value={title} onChange={onTitleChange} onBlur={onRenameSubmit} />
+            <input
+              autoFocus
+              type="text"
+              value={title}
+              onChange={onTitleChange}
+              onBlur={onRenameSubmit}
+            />
           </form>
         ) : (
-          <h3 className="card-title" onClick={onRenameStart} title="Click to rename">{title}</h3>
+          <h3
+            className="card-title"
+            onClick={onRenameStart}
+            title="Click to rename"
+          >
+            {title}
+          </h3>
         )}
 
         <div className="card-actions">
-          <button className="btn" onClick={onPickImage} disabled={analyzing}>Fill</button>
-          <button className="btn danger" onClick={onRemove} disabled={analyzing}>Remove</button>
+          {/* Important: type='button' to avoid accidental form submissions */}
+          <button
+            className="btn"
+            type="button"
+            onClick={onPickImage}
+            disabled={analyzing}
+            aria-label="Fill from screenshot"
+            title="Fill"
+          >
+            Fill
+          </button>
+          <button
+            className="btn danger"
+            type="button"
+            onClick={onRemove}
+            disabled={analyzing}
+            aria-label="Remove card"
+          >
+            Remove
+          </button>
+
+          {/* Hidden file input element provided by container/hook */}
           {fileInput}
         </div>
       </div>
 
       {/* Progress HUD only */}
       {analyzing && (
-        <div className="fill-hud">
+        <div className="fill-hud" role="status" aria-live="polite">
           <div className="fill-box">
             <div className="fill-title">Analyzing…</div>
-            <div className="fill-bar">
-              <div className="fill-bar-inner" style={{ width: `${progress}%` }} />
+            <div className="fill-bar" aria-hidden="true">
+              <div
+                className="fill-bar-inner"
+                style={{ width: `${progress}%` }}
+              />
             </div>
             <div className="fill-meta">{progress}%</div>
           </div>
@@ -59,20 +102,24 @@ export default function BingoCardView({
 
       {/* 5x5 grid */}
       <div className="grid-5x5">
-        {safeCells.map((result, i) => (
-          <div
-            key={i}
-            className={`cell${safeChecked[i] ? " complete" : ""}`}
-            onClick={() => onToggleCell?.(i)}
-            title={safeChecked[i] ? "Checked" : "Click to mark as done"}
-          >
-            {result?.matchUrl ? (
-              <img src={result.matchUrl} alt={result?.label || `cell-${i}`} />
-            ) : (
-              <div className="placeholder">{i + 1}</div>
-            )}
-          </div>
-        ))}
+        {safeCells.map((result, i) => {
+          const src = cellThumb(result);
+          const alt = cellLabel(result) || `cell-${i + 1}`;
+          return (
+            <div
+              key={i}
+              className={`cell${safeChecked[i] ? " complete" : ""}`}
+              onClick={() => onToggleCell?.(i)}
+              title={safeChecked[i] ? "Checked" : "Click to mark as done"}
+            >
+              {src ? (
+                <img src={src} alt={alt} />
+              ) : (
+                <div className="placeholder">{i + 1}</div>
+              )}
+            </div>
+          );
+        })}
       </div>
     </div>
   );

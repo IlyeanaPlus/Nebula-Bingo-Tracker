@@ -1,8 +1,8 @@
 // src/hooks/useBingoCard.js
-// Legacy flow with Tuner step: Fill → file picker → **Grid Tuner** → crops → CLIP analyze → 25 results.
-// Exposes tuner state & callbacks so your existing Tuner modal can bind directly.
+// Legacy flow w/ Tuner: Fill → file picker → Grid Tuner → crops → CLIP analyze → 25 results.
+// Also restores robust "click title → rename" behavior.
 
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { computeCrops25, fileToImage, loadFractions, saveFractions } from "../utils/image";
 import { getSpriteIndex } from "../utils/sprites";
 import { dataUrlToImage } from "../utils/clip";
@@ -10,8 +10,55 @@ import { getClipSession, embedImage } from "../utils/clipSession";
 import { findBestMatch } from "../utils/matchers";
 
 export default function useBingoCard({ card, manifest, onChange, onRemove }) {
+  // ---------- Title / rename ----------
   const [title, setTitle] = useState(card?.title || "New Card");
   const [renaming, setRenaming] = useState(false);
+  const prevTitleRef = useRef(title);
+
+  // Begin rename on title click
+  function startRenaming(ev) {
+    if (ev?.preventDefault) ev.preventDefault();
+    prevTitleRef.current = title;
+    setRenaming(true);
+  }
+
+  // Commit rename (Enter or blur)
+  function commitRenaming(nextTitle) {
+    const newTitle = (typeof nextTitle === "string" ? nextTitle : title).trim();
+    const finalTitle = newTitle.length ? newTitle : prevTitleRef.current;
+    setTitle(finalTitle);
+    setRenaming(false);
+    if (onChange) {
+      try {
+        onChange({ ...card, title: finalTitle });
+      } catch (e) {
+        console.warn("[useBingoCard] onChange(title) failed:", e);
+      }
+    }
+  }
+
+  // Cancel (Esc or click-away)
+  function cancelRenaming() {
+    setTitle(prevTitleRef.current);
+    setRenaming(false);
+  }
+
+  // Props helpers you can spread onto your title input/element
+  const titleEditing = {
+    renaming,
+    title,
+    // For a static <h*> title:
+    onTitleClick: startRenaming,
+    // For an <input> shown only while renaming:
+    onTitleInputChange: (e) => setTitle(e.target.value),
+    onTitleInputKeyDown: (e) => {
+      if (e.key === "Enter") commitRenaming(e.currentTarget.value);
+      else if (e.key === "Escape") cancelRenaming();
+    },
+    onTitleInputBlur: (e) => commitRenaming(e.currentTarget.value),
+  };
+
+  // ---------- Results / checks ----------
   const [results, setResults] = useState(Array(25).fill(null));
   const [checked, setChecked] = useState(Array(25).fill(false));
 
@@ -22,19 +69,19 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   const [analyzing, setAnalyzing] = useState(false);
   const [progress, setProgress] = useState(0);
 
-  // === Grid Tuner state ===
+  // ---------- Grid Tuner state ----------
   const [showTuner, setShowTuner] = useState(false);
-  const [tunerImage, setTunerImage] = useState(null);          // <img> for preview
+  const [tunerImage, setTunerImage] = useState(null); // <img> for preview
   const [tunerFractions, setTunerFractions] = useState(
-    fractions ?? { rows: Array(5).fill(1/5), cols: Array(5).fill(1/5) }
+    fractions ?? { rows: Array(5).fill(1 / 5), cols: Array(5).fill(1 / 5) }
   );
-  const [tunerCrops, setTunerCrops] = useState([]);            // 25 preview crops (dataURLs)
-  const pendingFileRef = useRef(null);                         // file awaiting confirm
+  const [tunerCrops, setTunerCrops] = useState([]); // 25 preview crops (dataURLs)
+  const pendingFileRef = useRef(null); // file awaiting confirm
 
   // Hidden file input for "Fill"
   const fileInputRef = useRef(null);
 
-  // ----- ANALYZE (runs AFTER tuner confirm) -----
+  // ---------- ANALYZE (runs AFTER tuner confirm) ----------
   async function analyzeScreenshot(file) {
     if (!file) return;
     setAnalyzing(true);
@@ -42,15 +89,30 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     try {
       const img = await fileToImage(file);
       const crops = computeCrops25(img, fractions); // use persisted, confirmed fractions
-      const session = await getClipSession();
-      const index = await getSpriteIndex();
+
+      // Load CLIP and index (robust to missing precomputed files)
+      let session, index;
+      try {
+        session = await getClipSession();
+      } catch (e) {
+        console.error("[useBingoCard] Failed to init CLIP session:", e);
+        setResults(Array(25).fill(null));
+        return;
+      }
+      try {
+        index = await getSpriteIndex();
+      } catch (e) {
+        console.warn("[useBingoCard] No sprite index available (sprite_index_clip.json / fallbacks missing).", e);
+        setResults(Array(25).fill(null));
+        return;
+      }
 
       const newResults = [];
       for (let i = 0; i < crops.length; i++) {
         try {
           const cropImg = await dataUrlToImage(crops[i]);
           const tensor = await embedImage(cropImg, session);
-          const best = findBestMatch(tensor.data, index); // legacy-friendly shape
+          const best = findBestMatch(tensor.data, index); // { score, idx, key, name, url, ref }
           newResults.push(best);
         } catch (e) {
           console.warn(`[useBingoCard] match failed for cell ${i}`, e);
@@ -64,11 +126,11 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     }
   }
 
-  // ----- TUNER FLOW -----
+  // ---------- TUNER FLOW ----------
   async function openTunerForFile(file) {
     const img = await fileToImage(file);
     pendingFileRef.current = file;
-    const init = fractions ?? { rows: Array(5).fill(1/5), cols: Array(5).fill(1/5) };
+    const init = fractions ?? { rows: Array(5).fill(1 / 5), cols: Array(5).fill(1 / 5) };
     setTunerImage(img);
     setTunerFractions(init);
     setTunerCrops(computeCrops25(img, init));
@@ -106,29 +168,36 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     setTunerCrops([]);
   }
 
-  // ----- FILL BUTTON → file picker → open tuner -----
-
+  // ---------- FILL BUTTON → file picker → open tuner ----------
   function fillCard(ev) {
     // Keep the user gesture: do everything sync in the same call stack
-    if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
-    if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
+    if (ev?.preventDefault) ev.preventDefault();
+    if (ev?.stopPropagation) ev.stopPropagation();
 
-    // 1) Modern API: showOpenFilePicker (best compatibility with gesture gating)
-    const canUsePicker = typeof window.showOpenFilePicker === "function";
-    if (canUsePicker) {
-      // Use synchronous .then chain instead of async/await to keep the gesture intact
-      window.showOpenFilePicker({
-        types: [{ description: "Images", accept: { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".bmp"] } }],
-        excludeAcceptAllOption: false,
-        multiple: false,
-      })
-      .then(handles => handles?.[0]?.getFile())
-      .then(file => { if (file) return openTunerForFile(file); })
-      .catch(() => {/* user canceled or unsupported — silently ignore */});
+    // Modern API (if available on the platform)
+    if (typeof window.showOpenFilePicker === "function") {
+      window
+        .showOpenFilePicker({
+          types: [
+            {
+              description: "Images",
+              accept: { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".bmp"] },
+            },
+          ],
+          excludeAcceptAllOption: false,
+          multiple: false,
+        })
+        .then((handles) => handles?.[0]?.getFile())
+        .then((file) => {
+          if (file) return openTunerForFile(file);
+        })
+        .catch(() => {
+          /* user canceled or unsupported — silently ignore */
+        });
       return;
     }
 
-    // 2) Fallback: hidden <input type="file">
+    // Fallback: hidden <input type="file"> (must exist or we create it)
     let input = fileInputRef.current;
     if (!input) {
       input = document.createElement("input");
@@ -141,28 +210,27 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       fileInputRef.current = input;
     }
 
-    // Fresh listener per click, kept sync with the gesture
     const handler = (e) => {
       const file = e.target.files && e.target.files[0];
-      // Clear value so same file can be re-picked later
-      e.target.value = "";
+      e.target.value = ""; // allow re-pick of same file later
       input.removeEventListener("change", handler);
       if (file) {
-        // Open tuner before analyze (legacy flow)
-        openTunerForFile(file).catch(err => console.warn("openTunerForFile failed:", err));
+        openTunerForFile(file).catch((err) => console.warn("openTunerForFile failed:", err));
       }
     };
 
     input.addEventListener("change", handler, { once: true });
-    // Important: trigger click *synchronously* inside the user gesture
-    input.click();
+    input.click(); // IMPORTANT: synchronous in the user-gesture stack
   }
 
-
-  // ----- Misc helpers -----
+  // ---------- Misc helpers ----------
   function bindFileInputRef(el) {
     fileInputRef.current = el || null;
-    if (el) { el.type = "file"; el.accept = "image/*"; el.style.display = "none"; }
+    if (el) {
+      el.type = "file";
+      el.accept = "image/*";
+      el.style.display = "none";
+    }
   }
 
   function toggleChecked(idx) {
@@ -178,17 +246,35 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     setChecked(Array(25).fill(false));
   }
 
-  // Expose everything needed for the legacy UI, including tuner controls
+  // ---------- Expose API for UI wiring ----------
   return {
     // state
-    title, setTitle, renaming, setRenaming,
-    results, checked, fractions, setFractions,
-    analyzing, progress,
+    title,
+    setTitle, // keep for controlled inputs if you already use it
+    renaming,
+    setRenaming, // keep for legacy, but prefer start/commit/cancel helpers below
+    results,
+    checked,
+    fractions,
+    setFractions,
+    analyzing,
+    progress,
+
+    // title editing helpers (recommended)
+    titleEditing,         // { renaming, title, onTitleClick, onTitleInputChange, onTitleInputKeyDown, onTitleInputBlur }
+    startRenaming,
+    commitRenaming,
+    cancelRenaming,
 
     // tuner
-    showTuner, setShowTuner,
-    tunerImage, tunerCrops, tunerFractions,
-    updateTunerFractions, confirmTuner, cancelTuner,
+    showTuner,
+    setShowTuner,
+    tunerImage,
+    tunerCrops,
+    tunerFractions,
+    updateTunerFractions,
+    confirmTuner,
+    cancelTuner,
 
     // actions
     analyzeScreenshot,
@@ -196,6 +282,8 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     bindFileInputRef,
     toggleChecked,
     clearResults,
+
+    // passthrough
     onRemove,
   };
 }
