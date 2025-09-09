@@ -7,14 +7,16 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DIST = path.resolve(__dirname, "..", "dist");
 
+// Keep ONLY this JSEP loader
+const ALLOWED = ["ort-wasm-simd-threaded.jsep.mjs"];
+
+// Patterns to prune (catch-all, then whitelist)
 const patterns = [
-  /ort-wasm.*simd.*\.wasm$/i,
-  /ort-wasm.*thread.*\.wasm$/i,
-  /ort-wasm.*simd.*\.js$/i,
-  /ort-wasm.*thread.*\.js$/i,
+  /ort-wasm.*\.wasm$/i,
+  /ort-wasm.*\.js$/i,
+  /jsep.*\.mjs$/i,
   /worker.*\.js$/i,
   /proxy.*\.js$/i,
-  /jsep.*\.wasm$/i
 ];
 
 function walk(dir, out = []) {
@@ -34,13 +36,15 @@ const files = walk(DIST);
 let removed = [];
 
 for (const f of files) {
-  const rel = f.replace(/\\/g, "/");
+  const rel = f.replace(/\\/g, "/").toLowerCase();
   if (patterns.some((re) => re.test(rel))) {
-    try {
-      fs.unlinkSync(f);
-      removed.push(rel);
-    } catch (e) {
-      console.warn("prune-ort: could not remove", rel, e?.message || e);
+    if (!ALLOWED.some((a) => rel.endsWith(a))) {
+      try {
+        fs.unlinkSync(f);
+        removed.push(rel);
+      } catch (e) {
+        console.warn("prune-ort: could not remove", rel, e?.message || e);
+      }
     }
   }
 }

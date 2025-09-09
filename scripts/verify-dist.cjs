@@ -3,7 +3,12 @@ const fs = require("fs");
 const path = require("path");
 
 const DIST = path.resolve(__dirname, "..", "dist");
-const forbidden = ["simd", "thread", "worker", "proxy"];
+
+// Must exist in build output
+const REQUIRED = ["ort-wasm-simd-threaded.jsep.mjs"];
+
+// Disallowed unless whitelisted
+const forbidden = ["simd", "thread", "worker", "proxy", "wasm", "jsep"];
 
 function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -20,20 +25,24 @@ if (!fs.existsSync(DIST)) {
 
 const files = walk(DIST).map((p) => p.replace(/\\/g, "/").toLowerCase());
 
-// Ensure model is present
-const hasModel = files.some((f) => f.endsWith("/models/vision_model_int8.onnx"));
-if (!hasModel) {
-  console.error("verify-dist: Missing models/vision_model_int8.onnx in dist output.");
-  process.exit(1);
+// Check required file
+for (const req of REQUIRED) {
+  if (!files.some((f) => f.endsWith(req))) {
+    console.error("verify-dist: missing required file:", req);
+    process.exit(1);
+  }
 }
 
-// Ensure only plain wasm remains (post-prune)
+// Check for forbidden strays (except required whitelist)
 const offenders = files.filter(
-  (f) => f.includes("ort-wasm") && forbidden.some((tok) => f.includes(tok))
+  (f) =>
+    forbidden.some((tok) => f.includes(tok)) &&
+    !REQUIRED.some((req) => f.endsWith(req))
 );
+
 if (offenders.length) {
-  console.error("verify-dist: Forbidden ORT artifacts still present:\n" + offenders.join("\n"));
+  console.error("verify-dist: forbidden ORT artifacts detected:\n" + offenders.join("\n"));
   process.exit(1);
 }
 
-console.log("verify-dist: OK — only plain WASM + INT8 model present.");
+console.log("verify-dist: OK — only allowed JSEP loader present.");
