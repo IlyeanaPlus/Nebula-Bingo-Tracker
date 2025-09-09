@@ -1,41 +1,38 @@
-// scripts/verify-dist.js
+// scripts/verify-dist.cjs
 const fs = require("fs");
 const path = require("path");
 
 const DIST = path.resolve(__dirname, "..", "dist");
-const forbidden = [
-  "simd", "thread", "worker", "proxy"
-]; // catches ort-wasm-simd.wasm, -threaded.wasm, workers, etc.
+const forbidden = ["simd", "thread", "worker", "proxy"];
 
-function walk(dir, hits = []) {
+function walk(dir, out = []) {
   for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
     const p = path.join(dir, entry.name);
-    if (entry.isDirectory()) walk(p, hits);
-    else hits.push(p);
+    entry.isDirectory() ? walk(p, out) : out.push(p);
   }
-  return hits;
+  return out;
 }
 
 if (!fs.existsSync(DIST)) {
-  console.error("verify-dist: dist/ not found, did build fail?");
+  console.error("verify-dist: dist/ not found — did build fail?");
   process.exit(1);
 }
 
-const files = walk(DIST).map(p => p.replace(/\\/g, "/").toLowerCase());
+const files = walk(DIST).map((p) => p.replace(/\\/g, "/").toLowerCase());
 
 // Ensure model is present
-const hasModel = files.some(f => f.endsWith("/models/vision_model_int8.onnx"));
+const hasModel = files.some((f) => f.endsWith("/models/vision_model_int8.onnx"));
 if (!hasModel) {
   console.error("verify-dist: Missing models/vision_model_int8.onnx in dist output.");
   process.exit(1);
 }
 
-// Ensure only plain wasm is present
-const offenders = files.filter(f =>
-  f.includes("ort-wasm") && forbidden.some(tok => f.includes(tok))
+// Ensure only plain wasm remains (post-prune)
+const offenders = files.filter(
+  (f) => f.includes("ort-wasm") && forbidden.some((tok) => f.includes(tok))
 );
 if (offenders.length) {
-  console.error("verify-dist: Forbidden ORT artifacts detected:\n" + offenders.join("\n"));
+  console.error("verify-dist: Forbidden ORT artifacts still present:\n" + offenders.join("\n"));
   process.exit(1);
 }
 

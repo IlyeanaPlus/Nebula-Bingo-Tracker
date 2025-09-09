@@ -7,7 +7,7 @@
   "scripts": {
     "preinstall": "node ./scripts/ci-only.js",
     "dev": "vite",
-    "build": "vite build && node ./scripts/verify-dist.cjs",
+    "build": "vite build && node ./scripts/prune-ort.mjs && node ./scripts/verify-dist.cjs",
     "lint": "eslint .",
     "preview": "vite preview"
   },
