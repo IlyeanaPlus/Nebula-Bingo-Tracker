@@ -31,7 +31,7 @@ export default function BingoCardView({
   const cellThumb = (r) =>
     r?.matchUrl || r?.url || r?.ref?.url || null; // prefer explicit matchUrl, then url, then ref.url
   const cellLabel = (r) =>
-    r?.label ?? r?.name ?? r?.key ?? ""; // prefer human label, then name/key
+    r?.label ?? r?.name ?? r?.key ?? (r?.empty ? "No match" : ""); // show "No match" label for empties
 
   return (
     <div className="bingo-card" aria-busy={!!analyzing}>
@@ -115,8 +115,11 @@ export default function BingoCardView({
               {src ? (
                 <img src={src} alt={alt} />
               ) : (
-                <div className="placeholder">{i + 1}</div>
+                <div className="no-match">
+                  <span>No match</span>
+                </div>
               )}
+              <div className="caption">{alt}</div>
             </div>
           );
         })}

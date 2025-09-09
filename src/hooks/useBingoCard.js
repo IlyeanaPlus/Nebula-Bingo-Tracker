@@ -56,23 +56,56 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       const index = await getSpriteIndex();
       console.log('[useBingoCard] index ready. refs=', index?.meta?.length, 'vecs=', index?.vectors?.length);
 
-      const newResults = [];
+      // ----- collect results from embeddings -----
+      const matches = [];
       for (let i = 0; i < crops.length; i++) {
         try {
           if (i % 5 === 0) console.log(`[useBingoCard] embedding crop ${i + 1}/${crops.length}`);
           const cropImg = await dataUrlToImage(crops[i]);
           const tensor = await embedImage(cropImg, session);
-          const best = findBestMatch(tensor.data, index);
-          newResults.push(best);
+
+          const best = findBestMatch(tensor.data, index, 0.28); // keep your threshold
+          if (!best) {
+            matches.push({
+              cell: i,
+              label: "No match",
+              matchUrl: "",
+              score: 0,
+              ref: null,
+              empty: true,
+            });
+          } else {
+            matches.push({ cell: i, ...best });
+          }
         } catch (e) {
           console.warn(`[useBingoCard] match failed for cell ${i}`, e);
-          newResults.push(null);
+          matches.push({
+            cell: i,
+            label: "No match",
+            matchUrl: "",
+            score: 0,
+            ref: null,
+            empty: true,
+          });
         }
         setProgress(Math.round(((i + 1) / crops.length) * 100));
       }
 
-      console.log('[useBingoCard] done. filled results=', newResults.filter(Boolean).length);
-      setResults(newResults);
+      // ----- debug logs (collapsed group) -----
+      const sample = matches.slice(0, 5).map(m => ({
+        cell: m.cell,
+        label: m.label,
+        score: Number(m.score ?? 0).toFixed(3),
+        url: m.matchUrl || m?.ref?.url || "",
+        empty: !!m.empty,
+      }));
+      console.groupCollapsed("[useBingoCard] match summary");
+      console.table(sample);
+      console.log("matched:", matches.filter(m => !m.empty).length, "/", matches.length);
+      console.groupEnd();
+
+      console.log('[useBingoCard] done. filled results=', matches.filter(m => !m.empty).length);
+      setResults(matches);
     } catch (e) {
       console.error('[useBingoCard] analyze fatal error:', e);
       setResults(Array(25).fill(null));
@@ -80,7 +113,6 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       setAnalyzing(false);
     }
   }
-
 
   // ----- TUNER FLOW -----
   async function openTunerForFile(file) {
@@ -125,7 +157,6 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   }
 
   // ----- FILL BUTTON → file picker → open tuner -----
-
   function fillCard(ev) {
     // Keep the user gesture: do everything sync in the same call stack
     if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
@@ -175,7 +206,6 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     // Important: trigger click *synchronously* inside the user gesture
     input.click();
   }
-
 
   // ----- Misc helpers -----
   function bindFileInputRef(el) {
