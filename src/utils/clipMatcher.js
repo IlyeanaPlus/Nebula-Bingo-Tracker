@@ -20,12 +20,6 @@ let _sessionPromise = null;
 export async function getSession() {
   if (_sessionPromise) return _sessionPromise;
 
-  // Optional: mild perf tuning
-  try {
-    // allow threading hints; harmless if ignored
-    ort.env.wasm.numThreads = Math.max(2, navigator?.hardwareConcurrency ? Math.floor(navigator.hardwareConcurrency / 2) : 2);
-  } catch {}
-
   _sessionPromise = ort.InferenceSession.create(MODEL_URL, {
     executionProviders: ["webgl", "wasm"], // webgl first, fallback to wasm
   });
