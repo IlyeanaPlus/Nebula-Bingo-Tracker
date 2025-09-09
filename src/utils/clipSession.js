@@ -1,5 +1,4 @@
 // src/utils/clipSession.js
-import "../utils/ortEnv"; // must be first
 import ort, { ORT_EXECUTION_PROVIDERS } from "../utils/ortEnv";
 import { resolvePublic } from "./publicPath";
 import { imageToClipTensor } from "./clip";

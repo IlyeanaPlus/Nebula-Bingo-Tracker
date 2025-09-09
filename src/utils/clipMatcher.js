@@ -1,8 +1,5 @@
 // src/utils/clipMatcher.js
 
-import "../utils/ortEnv";
-import * as ort from "onnxruntime-web";
-
 // -------------------------------
 // Config: model + index locations
 // -------------------------------
