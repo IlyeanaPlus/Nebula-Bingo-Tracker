@@ -1,48 +1,41 @@
 // scripts/verify-dist.cjs
-const fs = require("fs");
-const path = require("path");
+const fs = require("node:fs");
+const path = require("node:path");
 
-const DIST = path.resolve(__dirname, "..", "dist");
-const REQUIRED_REL = "ort-wasm/ort-wasm-simd-threaded.jsep.mjs";
+const DIST = path.resolve("dist");
+const mustExist = [
+  "ort-wasm/ort-wasm-simd-threaded.jsep.mjs",
+  "ort-wasm/ort-wasm-simd-threaded.jsep.wasm",
+];
 
-function walk(dir, out = []) {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, e.name);
-    e.isDirectory() ? walk(p, out) : out.push(p);
+function exists(rel) {
+  return fs.existsSync(path.join(DIST, rel));
+}
+
+// 1) forbid wasm anywhere under assets/
+function* walk(dir) {
+  for (const name of fs.readdirSync(dir)) {
+    const p = path.join(dir, name);
+    const s = fs.statSync(p);
+    if (s.isDirectory()) yield* walk(p);
+    else yield p;
   }
-  return out;
 }
-
-if (!fs.existsSync(DIST)) {
-  console.error("verify-dist: dist/ not found — did build fail?");
-  process.exit(1);
+const wasmStrays = [];
+for (const f of walk(path.join(DIST, "assets"))) {
+  if (/\.wasm$/i.test(f)) wasmStrays.push(path.relative(DIST, f));
 }
-
-const filesAbs = walk(DIST);
-const files = filesAbs.map((p) => p.replace(/\\/g, "/").toLowerCase());
-
-// 1) Required JSEP loader must exist exactly at dist/ort-wasm/...
-if (!files.some((f) => f.endsWith(REQUIRED_REL))) {
-  console.error("verify-dist: missing required runtime:", REQUIRED_REL);
-  process.exit(1);
-}
-
-// 2) No .wasm anywhere
-const wasmStrays = files.filter((f) => f.endsWith(".wasm"));
 if (wasmStrays.length) {
-  console.error("verify-dist: found forbidden .wasm file(s):\n" + wasmStrays.join("\n"));
+  console.error("verify-dist: found forbidden wasm file(s):\n" + wasmStrays.join("\n"));
   process.exit(1);
 }
 
-// 3) No other JSEP loaders/glue besides the required one
-const otherJsep = files.filter(
-  (f) => /jsep\.mjs$/.test(f) && !f.endsWith(REQUIRED_REL)
-);
-if (otherJsep.length) {
-  console.error(
-    "verify-dist: unexpected JSEP loader(s) present:\n" + otherJsep.join("\n")
-  );
-  process.exit(1);
+// 2) require the two public ORT runtime files
+for (const rel of mustExist) {
+  if (!exists(rel)) {
+    console.error(`verify-dist: missing required file: ${rel}`);
+    process.exit(1);
+  }
 }
 
-console.log("verify-dist: OK — only the whitelisted JSEP loader is present, no .wasm files.");
+console.log("verify-dist: OK — JSEP runtime present, no wasm in assets/.");

@@ -1,49 +1,31 @@
 // scripts/prune-ort.mjs
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-const DIST = path.resolve(__dirname, "..", "dist");
+const DIST = path.resolve("dist");
 
-// Only this file is allowed to remain
-const ALLOWED_REL = "ort-wasm/ort-wasm-simd-threaded.jsep.mjs";
-
-function walk(dir, out = []) {
-  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-    const p = path.join(dir, e.name);
-    e.isDirectory() ? walk(p, out) : out.push(p);
+// delete ONLY wasm that landed in /assets (hashed bundles)
+function* walk(dir) {
+  for (const name of fs.readdirSync(dir)) {
+    const p = path.join(dir, name);
+    const s = fs.statSync(p);
+    if (s.isDirectory()) yield* walk(p);
+    else yield p;
   }
-  return out;
 }
 
-if (!fs.existsSync(DIST)) {
-  console.error("prune-ort: dist/ not found — did build fail?");
-  process.exit(1);
-}
-
-const files = walk(DIST);
 const removed = [];
-
-for (const abs of files) {
-  const rel = abs.replace(/\\/g, "/").toLowerCase();
-
-  // Delete ALL .wasm files, no exceptions
-  if (rel.endsWith(".wasm")) {
-    try { fs.unlinkSync(abs); removed.push(rel); } catch {}
-    continue;
-  }
-
-  // Delete any other jsep/glue/worker/proxy artifacts EXCEPT our whitelisted loader
-  const isAllowed = rel.endsWith(ALLOWED_REL);
-  if (!isAllowed && /jsep\.mjs$|worker.*\.js$|proxy.*\.js$|ort-wasm.*\.js$/i.test(rel)) {
-    try { fs.unlinkSync(abs); removed.push(rel); } catch {}
+for (const f of walk(DIST)) {
+  const rel = path.relative(DIST, f).replace(/\\/g, "/");
+  if (rel.startsWith("assets/") && /\.wasm$/i.test(rel)) {
+    fs.unlinkSync(f);
+    removed.push(path.resolve(f));
   }
 }
 
-console.log(
-  removed.length
-    ? "prune-ort: removed artifacts:\n" + removed.join("\n")
-    : "prune-ort: nothing to prune."
-);
+if (removed.length) {
+  console.log("prune-ort: removed artifacts:");
+  for (const f of removed) console.log(f);
+} else {
+  console.log("prune-ort: nothing to remove");
+}
