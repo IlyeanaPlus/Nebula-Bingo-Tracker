@@ -2,51 +2,53 @@
 import * as ort from "onnxruntime-web";
 import { resolvePublic } from "./publicPath";
 
-// --- harden for GH Pages ---
+/**
+ * GH Pages–safe ORT env:
+ *  - WASM backend only
+ *  - single-thread, no proxy worker
+ *  - SIMD disabled (safe baseline)
+ *  - JSEP loader only (no .wasm URLs advertised)
+ */
+
+// Harden runtime
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.proxy = false;
 ort.env.wasm.simd = false;
 ort.env.debug = false;
 
+// Map ONLY the JSEP loader we vendored in /public/ort-wasm/
 const base = resolvePublic("ort-wasm/");
-const PUBLIC_WASM = base + "ort-wasm-simd-threaded.jsep.wasm"; // if you ship the wasm
-const PUBLIC_JSEP = base + "ort-wasm-simd-threaded.jsep.mjs";
-
-// Map every variant ORT/JSEP might try
 ort.env.wasm.wasmPaths = {
-  "ort-wasm-simd-threaded.jsep.mjs": PUBLIC_JSEP,
-  "ort-wasm-simd-threaded.jsep.wasm": PUBLIC_WASM,
-  "ort-wasm-simd-threaded.wasm":      PUBLIC_WASM,
-  "ort-wasm-simd.wasm":               PUBLIC_WASM,
+  "ort-wasm-simd-threaded.jsep.mjs": base + "ort-wasm-simd-threaded.jsep.mjs",
 };
 
-// ---- RUNTIME SHIM (optional but helpful): redirect any stray .wasm fetch/XHR to our public copy ----
+// Optional: last-resort guard. If some path still tries ".wasm",
+// rewrite it to our JSEP loader. (Safe to leave in.)
+// NOTE: If you *also* ship the .wasm, change DEST to base + "ort-wasm-simd-threaded.jsep.wasm".
 (() => {
-  const dest = PUBLIC_WASM;
+  const DEST = base + "ort-wasm-simd-threaded.jsep.mjs";
   const origFetch = window.fetch;
   window.fetch = function (input, init) {
-    let url = typeof input === "string" ? input : (input?.url ?? "");
-    if (typeof url === "string" && url.includes(".wasm")) input = dest;
+    const url = typeof input === "string" ? input : (input?.url ?? "");
+    if (typeof url === "string" && url.includes(".wasm")) input = DEST;
     return origFetch.call(this, input, init);
   };
   const XO = XMLHttpRequest.prototype.open;
   XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-    if (typeof url === "string" && url.includes(".wasm")) url = dest;
+    if (typeof url === "string" && url.includes(".wasm")) url = DEST;
     return XO.call(this, method, url, ...rest);
   };
 })();
 
-// ---- Debug surface so you can inspect from DevTools Console ----
+// Tiny debug surface for DevTools
 window.__ORTDBG__ = {
-  ort,
   wasmPaths: ort.env.wasm.wasmPaths,
   settings: {
     simd: ort.env.wasm.simd,
     threads: ort.env.wasm.numThreads,
     proxy: ort.env.wasm.proxy,
-  }
+  },
 };
-
 console.log("[ORT env init]", window.__ORTDBG__);
 
 export const ORT_EXECUTION_PROVIDERS = ["wasm"];
