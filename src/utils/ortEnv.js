@@ -1,4 +1,3 @@
-// src/utils/ortEnv.js
 import * as ort from "onnxruntime-web";
 import { resolvePublic } from "./publicPath";
 
@@ -9,18 +8,17 @@ ort.env.debug = false;
 
 const base = resolvePublic("ort-wasm/");
 
-// Map BOTH names: some ORT paths still try requesting a .wasm name
 ort.env.wasm.wasmPaths = {
+  // Direct JSEP loader
   "ort-wasm-simd-threaded.jsep.mjs": base + "ort-wasm-simd-threaded.jsep.mjs",
-  "ort-wasm-simd-threaded.jsep.wasm": base + "ort-wasm-simd-threaded.jsep.mjs"
+
+  // The loader's internal .wasm fallbacks — point them back to the same .mjs file
+  "ort-wasm-simd-threaded.jsep.wasm": base + "ort-wasm-simd-threaded.jsep.mjs",
+  "ort-wasm-simd-threaded.wasm": base + "ort-wasm-simd-threaded.jsep.mjs",
+  "ort-wasm-simd.wasm": base + "ort-wasm-simd-threaded.jsep.mjs"
 };
 
-console.log("[ORT env init]", {
-  wasmPaths: ort.env.wasm.wasmPaths,
-  simd: ort.env.wasm.simd,
-  threads: ort.env.wasm.numThreads,
-  proxy: ort.env.wasm.proxy
-});
+console.log("[ORT env init]", ort.env.wasm.wasmPaths);
 
 export const ORT_EXECUTION_PROVIDERS = ["wasm"];
 export default ort;
