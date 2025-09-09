@@ -1,6 +1,6 @@
 // src/utils/clipSession.js
 import "../utils/ortEnv"; // must be first
-import ort, { ORT_EXECUTION_PROVIDERS, preloadOrtWasm } from "../utils/ortEnv";
+import ort, { ORT_EXECUTION_PROVIDERS } from "../utils/ortEnv";
 import { resolvePublic } from "./publicPath";
 import { imageToClipTensor } from "./clip";
 
@@ -34,9 +34,6 @@ export async function getClipSession(opts = {}) {
     executionProviders: ORT_EXECUTION_PROVIDERS,
     graphOptimizationLevel: "all",
   };
-
-  // Preload wasm binary before any session creation
-  await preloadOrtWasm();
 
   try {
     const bytes = await preloadClipModel();
