@@ -4,7 +4,7 @@ import { resolvePublic } from "./publicPath";
 import { imageToClipTensor } from "./clip";
 
 let _session = null;
-let _modelUrl = resolvePublic("models/vision_model_int8.onnx");
+let _modelUrl = resolvePublic("models/vision_model_int8_qlinear.onnx");
 let _modelBytes = null;
 
 export function setClipModelUrl(url) {

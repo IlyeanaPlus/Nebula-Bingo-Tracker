@@ -24,4 +24,6 @@ dist-ssr
 *.sw?
 *.py
 *.bat
+..calib_images
+
 
