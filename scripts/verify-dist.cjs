@@ -3,17 +3,16 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const DIST = path.resolve("dist");
-const mustExist = [
-  "ort-wasm/ort-wasm-simd-threaded.jsep.mjs",
-  "ort-wasm/ort-wasm-simd-threaded.jsep.wasm",
-];
+const ASSETS = path.join(DIST, "assets");
 
-function exists(rel) {
-  return fs.existsSync(path.join(DIST, rel));
-}
+// In bundled mode, the JSEP loader .mjs is typically inlined into index-*.js.
+// We only require that the sibling WASM was emitted.
+// Allow either jsep.<hash>.wasm or jsep-<hash>.wasm
+const JSEP_WASM_RX = /ort-wasm-simd-threaded\.jsep[-.][a-z0-9_-]+\.wasm$/i;
 
-// 1) forbid wasm anywhere under assets/
+
 function* walk(dir) {
+  if (!fs.existsSync(dir)) return;
   for (const name of fs.readdirSync(dir)) {
     const p = path.join(dir, name);
     const s = fs.statSync(p);
@@ -21,21 +20,49 @@ function* walk(dir) {
     else yield p;
   }
 }
-const wasmStrays = [];
-for (const f of walk(path.join(DIST, "assets"))) {
-  if (/\.wasm$/i.test(f)) wasmStrays.push(path.relative(DIST, f));
-}
-if (wasmStrays.length) {
-  console.error("verify-dist: found forbidden wasm file(s):\n" + wasmStrays.join("\n"));
-  process.exit(1);
-}
 
-// 2) require the two public ORT runtime files
-for (const rel of mustExist) {
-  if (!exists(rel)) {
-    console.error(`verify-dist: missing required file: ${rel}`);
-    process.exit(1);
+let jsepWasm = null;
+
+for (const f of walk(ASSETS)) {
+  if (JSEP_WASM_RX.test(f)) {
+    jsepWasm = f;
+    break;
   }
 }
 
-console.log("verify-dist: OK — JSEP runtime present, no wasm in assets/.");
+// 1) Require the JSEP wasm
+if (!jsepWasm) {
+  console.error("verify-dist (bundled): missing JSEP wasm (.wasm) in /assets/.");
+  process.exit(1);
+}
+
+// 2) Sanity: file must be non-empty
+const wasmSize = fs.statSync(jsepWasm).size;
+if (wasmSize <= 0) {
+  console.error(`verify-dist (bundled): invalid wasm size (${wasmSize} bytes)`);
+  process.exit(1);
+}
+
+// 3) Optional: warn (not fail) if we don’t detect the name in main JS (loader likely inlined/minified)
+let warned = false;
+const indexJs = fs
+  .readdirSync(ASSETS)
+  .find((n) => /^index-.*\.js$/i.test(n));
+if (indexJs) {
+  const jsPath = path.join(ASSETS, indexJs);
+  const js = fs.readFileSync(jsPath, "utf8");
+  if (!/ort-wasm-simd-threaded\.jsep/i.test(js)) {
+    warned = true;
+    console.warn(
+      "verify-dist (bundled): could not find explicit 'ort-wasm-simd-threaded.jsep' marker in index JS. " +
+        "This is usually fine (loader code is inlined/minified)."
+    );
+  }
+}
+
+console.log(
+  "verify-dist (bundled): OK\n  wasm:",
+  path.relative(DIST, jsepWasm),
+  `(${wasmSize} bytes)`,
+  warned ? "\n  note: loader marker not found in JS (non-fatal)" : ""
+);

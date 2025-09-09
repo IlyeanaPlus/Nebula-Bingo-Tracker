@@ -3,29 +3,22 @@ import fs from "node:fs";
 import path from "node:path";
 
 const DIST = path.resolve("dist");
+const LEGACY_PUBLIC_DIR = path.join(DIST, "ort-wasm");
 
-// delete ONLY wasm that landed in /assets (hashed bundles)
-function* walk(dir) {
-  for (const name of fs.readdirSync(dir)) {
-    const p = path.join(dir, name);
-    const s = fs.statSync(p);
-    if (s.isDirectory()) yield* walk(p);
-    else yield p;
-  }
+function rmrf(p) {
+  if (!fs.existsSync(p)) return false;
+  const stat = fs.statSync(p);
+  if (stat.isDirectory()) fs.rmSync(p, { recursive: true, force: true });
+  else fs.unlinkSync(p);
+  return true;
 }
 
 const removed = [];
-for (const f of walk(DIST)) {
-  const rel = path.relative(DIST, f).replace(/\\/g, "/");
-  if (rel.startsWith("assets/") && /\.wasm$/i.test(rel)) {
-    fs.unlinkSync(f);
-    removed.push(path.resolve(f));
-  }
-}
+if (rmrf(LEGACY_PUBLIC_DIR)) removed.push(LEGACY_PUBLIC_DIR);
 
 if (removed.length) {
-  console.log("prune-ort: removed artifacts:");
-  for (const f of removed) console.log(f);
+  console.log("prune-ort (bundled mode): removed legacy artifacts:");
+  for (const f of removed) console.log("  " + f);
 } else {
-  console.log("prune-ort: nothing to remove");
+  console.log("prune-ort (bundled mode): nothing to remove.");
 }

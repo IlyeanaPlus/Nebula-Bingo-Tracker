@@ -1,5 +1,6 @@
 // src/main.jsx
 import "./utils/ortEnv"; // must be first
+import "./ensureOrtAsset";     // then force emit the wasm asset
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
