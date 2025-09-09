@@ -1,13 +1,25 @@
 // src/utils/sprites.js
 // Single source of truth for loading the CLIP sprite index.
-// Supports base64 Float32 vectors or numeric arrays; caches in-memory.
+// Uses Vite/GitHub-Pages–safe path resolution (no "/public" at runtime).
 
-let SPRITE_INDEX_URL = "/sprite_index_clip.json";
+import { resolvePublic } from "./publicPath"; // same helper you use elsewhere
+
+// Default index lives at public/sprite_index_clip.json → served at /<base>/sprite_index_clip.json
+let SPRITE_INDEX_URL = resolvePublic("sprite_index_clip.json");
 let _indexPromise = null;
 
-/** Optionally point to a different index path */
+/** Optionally point to a different index path (relative names are resolved via resolvePublic). */
 export function setSpriteIndexUrl(url) {
-  SPRITE_INDEX_URL = url || SPRITE_INDEX_URL;
+  if (!url) return;
+  // Allow absolute http(s)://, absolute-from-origin (/foo), or relative ("foo/bar.json")
+  if (/^https?:\/\//i.test(url)) {
+    SPRITE_INDEX_URL = url;
+  } else if (url.startsWith("/")) {
+    // Keep absolute-from-origin as-is (useful for testing)
+    SPRITE_INDEX_URL = url;
+  } else {
+    SPRITE_INDEX_URL = resolvePublic(url.replace(/^public\//, "")); // tolerate "public/..." inputs
+  }
   _indexPromise = null; // reset cache
 }
 
@@ -20,7 +32,7 @@ function b64ToFloat32(b64) {
   return new Float32Array(buf);
 }
 
-/** Normalize vector to unit length */
+/** L2-normalize vector */
 function l2(v) {
   let s = 0;
   for (let i = 0; i < v.length; i++) s += v[i] * v[i];
@@ -35,11 +47,17 @@ export async function getSpriteIndex() {
   if (_indexPromise) return _indexPromise;
 
   _indexPromise = (async () => {
-    // Try filtered index first; fall back to legacy names if you keep them
-    const urls = [SPRITE_INDEX_URL, "/public/sprite_index_clip.json"];
-    let raw = null, lastErr;
+    const tried = [];
+    const candidates = [
+      SPRITE_INDEX_URL,                            // explicit/default
+      resolvePublic("sprite_index_clip.json"),     // safety: recompute
+      "/sprite_index_clip.json",                   // last-resort absolute (useful locally)
+    ];
 
-    for (const u of urls) {
+    let raw = null, lastErr;
+    for (const u of candidates) {
+      if (tried.includes(u)) continue;
+      tried.push(u);
       try {
         const res = await fetch(u, { cache: "no-store" });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -50,16 +68,16 @@ export async function getSpriteIndex() {
         lastErr = e;
       }
     }
-    if (!raw) throw new Error(`[sprites] failed to load sprite index: ${lastErr?.message || "unknown"}`);
+    if (!raw) {
+      throw new Error(`[sprites] failed to load sprite index (${tried.join(" → ")}): ${lastErr?.message || "unknown"}`);
+    }
 
     // Accept either {vectors:[], meta:[]} or legacy array form (meta-only)
-    let meta = raw.meta || (Array.isArray(raw) ? raw : []);
-    let V = raw.vectors || [];
-
-    // Decode vectors if needed
+    const meta = raw.meta || (Array.isArray(raw) ? raw : []);
+    const V = raw.vectors || [];
     const vectors = new Array(meta.length);
+
     if (Array.isArray(V) && V.length === meta.length) {
-      // Either base64 strings or numeric arrays
       for (let i = 0; i < V.length; i++) {
         const vi = V[i];
         let f32;
@@ -67,29 +85,27 @@ export async function getSpriteIndex() {
         else if (Array.isArray(vi)) f32 = new Float32Array(vi);
         else if (vi instanceof Float32Array) f32 = vi;
         else throw new Error("Unsupported vector entry type");
-        vectors[i] = l2(f32); // store normalized (cosine match is fast)
+        vectors[i] = l2(f32); // normalize for cosine sims
       }
     } else if (V.length && V.length !== meta.length) {
       console.warn("[sprites] vector/meta length mismatch:", V.length, meta.length);
-    } else {
+    } else if (!V.length) {
       console.warn("[sprites] no vectors in index; matching will not work!");
     }
 
-    // Build compact accessor object
-    const index = { vectors, meta }; // both arrays length N
-    return index;
+    return { vectors, meta }; // N-length arrays
   })();
 
   return _indexPromise;
 }
 
-/** Legacy helper name kept for callers that expect sprite ‘meta’ only. */
+/** Legacy helper: return only meta list. */
 export async function getSprites() {
   const { meta } = await getSpriteIndex();
   return meta;
 }
 
-/** No-op now (we don’t need to preload images for matching). */
+/** No-op preload (kept for API compatibility). */
 export async function preloadSprites(/* countOrIndex, onProgress, opts */) {
   return [];
 }
