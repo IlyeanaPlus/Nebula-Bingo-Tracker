@@ -5,7 +5,7 @@
   "type": "module",
   "engines": { "node": "20.19.0" },
   "scripts": {
-    "preinstall": "node ./scripts/ci-only.js",
+    "preinstall": "node ./scripts/ci-only.cjs",
     "dev": "vite",
     "build": "vite build && node ./scripts/prune-ort.mjs && node ./scripts/verify-dist.cjs",
     "lint": "eslint .",
