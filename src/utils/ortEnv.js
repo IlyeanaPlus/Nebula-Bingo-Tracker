@@ -3,44 +3,33 @@ import * as ort from "onnxruntime-web";
 import { resolvePublic } from "./publicPath";
 
 /**
- * GH Pages–safe ORT env:
- *  - WASM backend only
- *  - single-thread, no proxy worker
- *  - SIMD disabled (safe baseline)
- *  - JSEP loader only (no .wasm URLs advertised)
+ * ORT-Web config for GitHub Pages
+ * - WASM backend only
+ * - Single-thread, no proxy worker, SIMD disabled
+ * - Load runtime from /public/ort-wasm/ (JSEP + its sibling .wasm)
  */
 
-// Harden runtime
-ort.env.wasm.numThreads = 1;
-ort.env.wasm.proxy = false;
-ort.env.wasm.simd = false;
+ort.env.wasm.numThreads = 1;   // GH Pages: no COOP/COEP, so keep single-thread
+ort.env.wasm.proxy = false;    // no worker proxy
+ort.env.wasm.simd = false;     // safe baseline (JSEP still works if SIMD is available)
 ort.env.debug = false;
 
-// Map ONLY the JSEP loader we vendored in /public/ort-wasm/
 const base = resolvePublic("ort-wasm/");
+
+// We host both runtime artifacts ourselves. Map every name ORT/JSEP may ask for.
 ort.env.wasm.wasmPaths = {
+  // Primary JSEP loader (JS module that boots wasm)
   "ort-wasm-simd-threaded.jsep.mjs": base + "ort-wasm-simd-threaded.jsep.mjs",
+
+  // Sibling wasm that the loader expects
+  "ort-wasm-simd-threaded.jsep.wasm": base + "ort-wasm-simd-threaded.jsep.wasm",
+
+  // Extra aliases some builds may request; point them to the same wasm
+  "ort-wasm-simd-threaded.wasm":      base + "ort-wasm-simd-threaded.jsep.wasm",
+  "ort-wasm-simd.wasm":               base + "ort-wasm-simd-threaded.jsep.wasm",
 };
 
-// Optional: last-resort guard. If some path still tries ".wasm",
-// rewrite it to our JSEP loader. (Safe to leave in.)
-// NOTE: If you *also* ship the .wasm, change DEST to base + "ort-wasm-simd-threaded.jsep.wasm".
-(() => {
-  const DEST = base + "ort-wasm-simd-threaded.jsep.mjs";
-  const origFetch = window.fetch;
-  window.fetch = function (input, init) {
-    const url = typeof input === "string" ? input : (input?.url ?? "");
-    if (typeof url === "string" && url.includes(".wasm")) input = DEST;
-    return origFetch.call(this, input, init);
-  };
-  const XO = XMLHttpRequest.prototype.open;
-  XMLHttpRequest.prototype.open = function (method, url, ...rest) {
-    if (typeof url === "string" && url.includes(".wasm")) url = DEST;
-    return XO.call(this, method, url, ...rest);
-  };
-})();
-
-// Tiny debug surface for DevTools
+// Optional: tiny debug surface so you can confirm at runtime from DevTools
 window.__ORTDBG__ = {
   wasmPaths: ort.env.wasm.wasmPaths,
   settings: {
