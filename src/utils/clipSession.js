@@ -3,7 +3,7 @@ import * as ort from "onnxruntime-web";
 import { imageToClipTensor } from "./clip";
 
 let _session = null;
-let _modelUrl = "/models/vision_model_int8.onnx"; // local by default
+let _modelUrl = "models/vision_model_int8.onnx"; // local by default
 let _modelBytes = null;
 
 export function setClipModelUrl(url) {
