@@ -7,10 +7,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DIST = path.resolve(__dirname, "..", "dist");
 
-// Keep ONLY this JSEP loader
+// Whitelist — this file is allowed to stay
 const ALLOWED = ["ort-wasm-simd-threaded.jsep.mjs"];
 
-// Patterns to prune (catch-all, then whitelist)
+// Catch-all prune patterns (delete all other wasm/simd/thread/proxy artifacts)
 const patterns = [
   /ort-wasm.*\.wasm$/i,
   /ort-wasm.*\.js$/i,

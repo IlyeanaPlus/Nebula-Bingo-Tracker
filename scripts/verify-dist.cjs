@@ -25,7 +25,7 @@ if (!fs.existsSync(DIST)) {
 
 const files = walk(DIST).map((p) => p.replace(/\\/g, "/").toLowerCase());
 
-// Check required file
+// Check required file is present
 for (const req of REQUIRED) {
   if (!files.some((f) => f.endsWith(req))) {
     console.error("verify-dist: missing required file:", req);
@@ -33,7 +33,7 @@ for (const req of REQUIRED) {
   }
 }
 
-// Check for forbidden strays (except required whitelist)
+// Block strays (unless explicitly whitelisted)
 const offenders = files.filter(
   (f) =>
     forbidden.some((tok) => f.includes(tok)) &&
