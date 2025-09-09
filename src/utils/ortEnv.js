@@ -8,7 +8,7 @@ ort.env.wasm.proxy = false;
 ort.env.debug = false;
 
 // Only ever fetch from /ort-wasm/
-ort.env.wasm.wasmPaths = new URL("/ort-wasm/", document.baseURI).href;
+ort.env.wasm.wasmPaths = new URL("ort-wasm/", document.baseURI).href;
 
 export const ORT_EXECUTION_PROVIDERS = ["wasm"];
 
