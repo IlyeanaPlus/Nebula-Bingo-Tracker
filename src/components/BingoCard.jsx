@@ -44,13 +44,13 @@ export default function BingoCard({ card, manifest, onChange, onRemove }) {
 
         /* fill / analyze */
         analyzing={h.analyzing}
-        analyzedOnce={analyzedOnce}
         progress={h.progress}
         onPickImage={h.fillCard}
         fileInput={fileInputEl}
 
         /* grid */
         cells={h.results}          // 25 results from CLIP matching
+        analyzedOnce={analyzedOnce}
         checked={h.checked}
         onToggleCell={h.toggleChecked}
 
