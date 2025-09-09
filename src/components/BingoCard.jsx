@@ -50,7 +50,7 @@ export default function BingoCard({ card, manifest, onChange, onRemove }) {
 
         /* grid */
         cells={h.results}          // 25 results from CLIP matching
-        analyzedOnce={analyzedOnce}
+        analyzedOnce={h.analyzedOnce}
         checked={h.checked}
         onToggleCell={h.toggleChecked}
 
