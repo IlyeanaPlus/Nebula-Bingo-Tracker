@@ -1,9 +1,9 @@
+// scripts/verify-dist.cjs
 const fs = require("fs");
 const path = require("path");
 
 const DIST = path.resolve(__dirname, "..", "dist");
-const REQUIRED = ["ort-wasm-simd-threaded.jsep.mjs"];
-const forbidden = ["simd", "thread", "worker", "proxy", "wasm", "jsep"];
+const REQUIRED_REL = "ort-wasm/ort-wasm-simd-threaded.jsep.mjs";
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -18,25 +18,31 @@ if (!fs.existsSync(DIST)) {
   process.exit(1);
 }
 
-const files = walk(DIST).map((p) => p.replace(/\\/g, "/").toLowerCase());
+const filesAbs = walk(DIST);
+const files = filesAbs.map((p) => p.replace(/\\/g, "/").toLowerCase());
 
-// 1) Ensure required JSEP file is present (copied from /public)
-for (const req of REQUIRED) {
-  if (!files.some((f) => f.endsWith(req))) {
-    console.error("verify-dist: missing required file:", req);
-    process.exit(1);
-  }
-}
-
-// 2) No forbidden strays (except our whitelist)
-const offenders = files.filter(
-  (f) => forbidden.some((tok) => f.includes(tok)) &&
-         !REQUIRED.some((req) => f.endsWith(req))
-);
-
-if (offenders.length) {
-  console.error("verify-dist: forbidden ORT artifacts detected:\n" + offenders.join("\n"));
+// 1) Required JSEP loader must exist exactly at dist/ort-wasm/...
+if (!files.some((f) => f.endsWith(REQUIRED_REL))) {
+  console.error("verify-dist: missing required runtime:", REQUIRED_REL);
   process.exit(1);
 }
 
-console.log("verify-dist: OK — only allowed JSEP loader present.");
+// 2) No .wasm anywhere
+const wasmStrays = files.filter((f) => f.endsWith(".wasm"));
+if (wasmStrays.length) {
+  console.error("verify-dist: found forbidden .wasm file(s):\n" + wasmStrays.join("\n"));
+  process.exit(1);
+}
+
+// 3) No other JSEP loaders/glue besides the required one
+const otherJsep = files.filter(
+  (f) => /jsep\.mjs$/.test(f) && !f.endsWith(REQUIRED_REL)
+);
+if (otherJsep.length) {
+  console.error(
+    "verify-dist: unexpected JSEP loader(s) present:\n" + otherJsep.join("\n")
+  );
+  process.exit(1);
+}
+
+console.log("verify-dist: OK — only the whitelisted JSEP loader is present, no .wasm files.");

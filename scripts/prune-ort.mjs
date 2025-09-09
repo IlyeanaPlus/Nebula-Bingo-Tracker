@@ -1,3 +1,4 @@
+// scripts/prune-ort.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -6,17 +7,8 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DIST = path.resolve(__dirname, "..", "dist");
 
-// Only this loader is allowed to remain in the bundle:
-const ALLOWED = ["ort-wasm-simd-threaded.jsep.mjs"];
-
-// Delete any other ORT runtime artifacts
-const patterns = [
-  /ort-wasm.*\.wasm$/i,                 // any wasm
-  /ort-wasm.*\.js$/i,                   // any js glue emitted by bundler
-  /jsep.*\.mjs$/i,                      // any jsep mjs
-  /worker.*\.js$/i,
-  /proxy.*\.js$/i,
-];
+// Only this file is allowed to remain
+const ALLOWED_REL = "ort-wasm/ort-wasm-simd-threaded.jsep.mjs";
 
 function walk(dir, out = []) {
   for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
@@ -32,16 +24,21 @@ if (!fs.existsSync(DIST)) {
 }
 
 const files = walk(DIST);
-let removed = [];
+const removed = [];
 
-for (const f of files) {
-  const rel = f.replace(/\\/g, "/");
-  const low = rel.toLowerCase();
-  if (patterns.some((re) => re.test(low))) {
-    if (!ALLOWED.some((a) => low.endsWith(a))) {
-      try { fs.unlinkSync(f); removed.push(rel); }
-      catch (e) { console.warn("prune-ort: could not remove", rel, e?.message || e); }
-    }
+for (const abs of files) {
+  const rel = abs.replace(/\\/g, "/").toLowerCase();
+
+  // Delete ALL .wasm files, no exceptions
+  if (rel.endsWith(".wasm")) {
+    try { fs.unlinkSync(abs); removed.push(rel); } catch {}
+    continue;
+  }
+
+  // Delete any other jsep/glue/worker/proxy artifacts EXCEPT our whitelisted loader
+  const isAllowed = rel.endsWith(ALLOWED_REL);
+  if (!isAllowed && /jsep\.mjs$|worker.*\.js$|proxy.*\.js$|ort-wasm.*\.js$/i.test(rel)) {
+    try { fs.unlinkSync(abs); removed.push(rel); } catch {}
   }
 }
 

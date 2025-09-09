@@ -1,3 +1,4 @@
+// vite.config.js
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
 
@@ -8,8 +9,8 @@ function forbidJsepImport() {
     resolveId(id, importer) {
       if (banned.test(id)) {
         throw new Error(
-          `[build guard] Do NOT import the JSEP loader. Keep it in /public and let ORT load it via wasmPaths.\n` +
-          `Importer: ${importer}\nTried to import: ${id}`
+          `[build guard] Do NOT import the ORT JSEP loader. Keep it in /public and let ORT load it via wasmPaths.\n` +
+          `Importer: ${importer}\nTried: ${id}`
         );
       }
       return null;
@@ -20,6 +21,6 @@ function forbidJsepImport() {
 export default defineConfig({
   plugins: [react(), forbidJsepImport()],
   base: process.env.GHPAGES ? "/Nebula-Bingo-Tracker/" : "/",
-  optimizeDeps: { exclude: ["onnxruntime-web"] }, // ensure ortEnv initializes first
-  build: { chunkSizeWarningLimit: 1200 },
+  optimizeDeps: { exclude: ["onnxruntime-web"] },
+  build: { chunkSizeWarningLimit: 1200 }
 });
