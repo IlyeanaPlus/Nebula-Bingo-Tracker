@@ -1,5 +1,5 @@
 // src/main.jsx
-import "./utils/ortEnv"; // must be first
+import "../utils/ortEnv"; // must be first
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
