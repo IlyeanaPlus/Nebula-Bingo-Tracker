@@ -1,5 +1,5 @@
 // src/utils/clipSession.js
-import "../utils/ortEnv";
+import "../utils/ortEnv";  // ensure env first
 import * as ort from "onnxruntime-web";
 import { imageToClipTensor } from "./clip";
 
@@ -13,13 +13,6 @@ export function setClipModelUrl(url) {
   _modelBytes = null;
 }
 
-// Optional: make ORT WASM loading robust on GH Pages
-// Use one (local OR CDN). Local: copy *.wasm files under /public/ort-wasm/ and point to it.
-/*
-ort.env.wasm.wasmPaths = "/ort-wasm/"; // if you host wasm locally
-*/
-// Or CDN fallback (simple & reliable):
-ort.env.wasm.wasmPaths = "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/";
 
 // Avoid COEP/COOP issues: single-threaded WASM is safest on GH Pages
 ort.env.wasm.numThreads = 1;
