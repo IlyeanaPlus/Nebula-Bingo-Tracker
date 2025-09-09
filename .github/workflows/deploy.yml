@@ -29,6 +29,8 @@ jobs:
 
       - name: Install (ci, not install)
         run: npm ci
+        env:
+          NPM_CONFIG_CI: "true"   # helps older checks; safe to include
 
       - name: Build
         run: npm run build
