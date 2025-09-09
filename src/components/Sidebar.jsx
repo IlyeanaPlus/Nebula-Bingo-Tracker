@@ -1,6 +1,7 @@
 // src/components/Sidebar.jsx
 import React, { useState } from "react";
 import { getSpriteIndex } from "../utils/sprites";
+import SidebarTuning from "./SidebarTuning.jsx";
 
 export default function Sidebar({
   cards = [],
@@ -45,15 +46,8 @@ export default function Sidebar({
 
   return (
     <aside className="sidebar">
+      <SidebarTuning />
       <div className="panel">
-
-        <div className="row small">
-          {ready ? (
-            <div>Sprites ready ✔</div>
-          ) : (
-            <div style={{ color: "#fbbf24" }}>Sprites not loaded</div>
-          )}
-        </div>
 
         <div className="row">
           <button className="btn" onClick={onNewCard}>New Card</button>

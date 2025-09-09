@@ -7,6 +7,8 @@ import { getSpriteIndex } from "../utils/sprites";
 import { dataUrlToImage } from "../utils/clip";
 import { getClipSession, embedImage } from "../utils/clipSession";
 import { findBestMatch } from "../utils/matchers";
+import { tuning } from "../tuning/tuningStore";
+
 
 export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   const [title, setTitle] = useState(card?.title || "New Card");
@@ -48,7 +50,9 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       const img = await fileToImage(file);
       console.log("[useBingoCard] image loaded:", img.naturalWidth, "x", img.naturalHeight);
 
-      const crops = computeCrops25(img, fractions);
+      // JITTER AND CROPPING
+      const { cropJitter } = tuning.get();
+      const crops = computeCrops25(img, fractions, { driftPx: cropJitter }); // ignored if not used
       console.log("[useBingoCard] crops:", crops.length);
 
       console.log("[useBingoCard] init CLIP session…");

@@ -6,6 +6,7 @@ import BingoCard from "./components/BingoCard.jsx";
 import "./styles/bingo.css";
 import "./utils/gridBox.js";
 import { prewarmOrtRuntime } from "./utils/ortPrewarm";
+import TuningPanel from "./components/TuningPanel.jsx";
 
 // ---- constants & helpers (outside component) ----
 const LS_KEYS = {

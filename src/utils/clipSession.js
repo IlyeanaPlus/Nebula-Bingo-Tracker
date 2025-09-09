@@ -2,6 +2,7 @@
 import ort, { ORT_EXECUTION_PROVIDERS } from "../utils/ortEnv";
 import { resolvePublic } from "./publicPath";
 import { imageToClipTensor } from "./clip";
+import { tuning } from "../tuning/tuningStore";
 
 let _session = null;
 let _modelUrl = resolvePublic("models/vision_model_int8_qlinear.onnx");
@@ -50,8 +51,8 @@ export async function getClipSession(opts = {}) {
 
 export async function embedImage(img, session) {
   const s = session || (await getClipSession());
-  const tensor = await imageToClipTensor(img);
-
+  const { unboardEps } = tuning.get();
+  const tensor = await imageToClipTensor(img, { unboardEps }); // option supported by your tensorizer
   const feeds = {};
   const inputName = (s.inputNames && s.inputNames[0]) || "pixel_values";
   feeds[inputName] = new ort.Tensor("float32", tensor.data, tensor.shape);

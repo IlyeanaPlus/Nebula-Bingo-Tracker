@@ -1,6 +1,8 @@
 // src/utils/matchers.js
 // Cosine best-match against preloaded CLIP index.
 
+import { tuning } from "../tuning/tuningStore";
+
 function pickSpriteUrl(ref) {
   if (!ref) return null;
   return (
@@ -21,7 +23,11 @@ function pickSpriteUrl(ref) {
  * @returns {{idx:number, score:number, ref:any, matchUrl:string}|null}
  */
 export function findBestMatch(embed, index, threshold = 0.28) {
-  const V = index?.vectors || [];
+   // live threshold unless caller passes their own
+   if (threshold === undefined || threshold === null) {
+     threshold = tuning.get().scoreThreshold;
+   }
+ const V = index?.vectors || [];
   const M = index?.meta || [];
   if (!V.length || V.length !== M.length) {
     console.warn("[matchers] bad index: vectors=", V.length, "meta=", M.length);
