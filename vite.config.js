@@ -1,7 +1,13 @@
-import { defineConfig } from 'vite' 
-import react from '@vitejs/plugin-react' 
- 
-export default defineConfig({ 
-  plugins: [react()], 
-  base: '/Nebula-Bingo-Tracker/', 
-}) 
+// vite.config.js
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  optimizeDeps: {
+    exclude: ["onnxruntime-web"], // don't prebundle; let our env run first
+  },
+  build: {
+    chunkSizeWarningLimit: 1200,
+  },
+});

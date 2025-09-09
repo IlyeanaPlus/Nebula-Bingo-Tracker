@@ -2,6 +2,7 @@
 // CLIP embedding matcher using onnxruntime-web.
 // Model is loaded from a URL (env override supported) so we don't commit the .onnx file.
 
+import "../utils/ortEnv";
 import * as ort from "onnxruntime-web";
 
 // -------------------------------

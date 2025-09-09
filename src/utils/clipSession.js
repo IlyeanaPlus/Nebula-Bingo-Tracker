@@ -1,4 +1,5 @@
 // src/utils/clipSession.js
+import "../utils/ortEnv";
 import * as ort from "onnxruntime-web";
 import { imageToClipTensor } from "./clip";
 
