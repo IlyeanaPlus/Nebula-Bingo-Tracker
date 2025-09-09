@@ -1,30 +1,32 @@
 // scripts/ci-only.js
 /**
  * Allow only `npm ci` on CI; allow everything locally.
- * Detects the command via npm environment.
+ * CI includes GitHub Actions (CI=true, GITHUB_ACTIONS=true).
  */
 const isCI =
   !!process.env.CI ||
   !!process.env.GITHUB_ACTIONS ||
   !!process.env.BUILD_BUILDID;
 
-const lifecycle = process.env.npm_lifecycle_event || ""; // e.g. "ci", "install"
+const lifecycle = process.env.npm_lifecycle_event || ""; // "ci", "install", etc.
+
 let argvIsCi = false;
 try {
-  // npm passes JSON in npm_config_argv with original user args
+  // npm_config_argv contains the original args; look for "ci"
   const cfg = JSON.parse(process.env.npm_config_argv || "{}");
   const cooked = Array.isArray(cfg.cooked) ? cfg.cooked.join(" ") : "";
   argvIsCi = /\bci\b/.test(cooked);
 } catch {}
 
-/**
- * PASS conditions:
- * - Not CI (local dev)  -> allow
- * - CI AND (lifecycle === "ci" OR args contain "ci") -> allow
- * Otherwise fail with a clear message.
+/** Pass if:
+ * - not CI (local dev), OR
+ * - CI and the lifecycle is "ci", OR
+ * - CI and the original args included "ci"
  */
 if (!isCI || lifecycle === "ci" || argvIsCi) {
-  console.log(`[ci-only] ok (isCI=${isCI}, lifecycle='${lifecycle}', argvIsCi=${argvIsCi})`);
+  console.log(
+    `[ci-only] ok (isCI=${isCI}, lifecycle='${lifecycle}', argvIsCi=${argvIsCi})`
+  );
   process.exit(0);
 }
 
