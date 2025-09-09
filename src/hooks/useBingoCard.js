@@ -1,6 +1,5 @@
 // src/hooks/useBingoCard.js
-// Legacy flow with Tuner step: Fill → file picker → **Grid Tuner** → crops → CLIP analyze → 25 results.
-// Exposes tuner state & callbacks so your existing Tuner modal can bind directly.
+// Flow: Fill → file picker → Grid Tuner → crops → CLIP analyze → 25 results.
 
 import { useRef, useState } from "react";
 import { computeCrops25, fileToImage, loadFractions, saveFractions } from "../utils/image";
@@ -15,6 +14,10 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   const [results, setResults] = useState(Array(25).fill(null));
   const [checked, setChecked] = useState(Array(25).fill(false));
 
+  // Becomes true after a successful analyzer pass; the view uses this to decide
+  // whether to show a “no-match” placeholder (vs numbered blanks before any run).
+  const [analyzedOnce, setAnalyzedOnce] = useState(false);
+
   // Persisted fractions (used for actual crop/analysis)
   const [fractions, setFractions] = useState(loadFractions());
 
@@ -24,14 +27,14 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
 
   // === Grid Tuner state ===
   const [showTuner, setShowTuner] = useState(false);
-  const [tunerImage, setTunerImage] = useState(null);          // <img> for preview
+  const [tunerImage, setTunerImage] = useState(null); // <img> for preview
   const [tunerFractions, setTunerFractions] = useState(
-    fractions ?? { rows: Array(5).fill(1/5), cols: Array(5).fill(1/5) }
+    fractions ?? { rows: Array(5).fill(1 / 5), cols: Array(5).fill(1 / 5) }
   );
-  const [tunerCrops, setTunerCrops] = useState([]);            // 25 preview crops (dataURLs)
-  const pendingFileRef = useRef(null);                         // file awaiting confirm
+  const [tunerCrops, setTunerCrops] = useState([]); // 25 preview crops (dataURLs)
+  const pendingFileRef = useRef(null);              // file awaiting confirm
 
-  // Hidden file input for "Fill"
+  // Hidden file input for "Fill" (fallback when showOpenFilePicker is not available)
   const fileInputRef = useRef(null);
 
   // ----- ANALYZE (runs AFTER tuner confirm) -----
@@ -39,76 +42,71 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     if (!file) return;
     setAnalyzing(true);
     setProgress(0);
-    console.log('[useBingoCard] analyze start. file=', file?.name || file?.type || 'blob');
+    console.log("[useBingoCard] analyze start. file=", file?.name || file?.type || "blob");
 
     try {
       const img = await fileToImage(file);
-      console.log('[useBingoCard] image loaded:', img.naturalWidth, 'x', img.naturalHeight);
+      console.log("[useBingoCard] image loaded:", img.naturalWidth, "x", img.naturalHeight);
 
       const crops = computeCrops25(img, fractions);
-      console.log('[useBingoCard] crops:', crops.length);
+      console.log("[useBingoCard] crops:", crops.length);
 
-      console.log('[useBingoCard] init CLIP session…');
+      console.log("[useBingoCard] init CLIP session…");
       const session = await getClipSession();
-      console.log('[useBingoCard] session ready.');
+      console.log("[useBingoCard] session ready.");
 
-      console.log('[useBingoCard] load sprite index…');
+      console.log("[useBingoCard] load sprite index…");
       const index = await getSpriteIndex();
-      console.log('[useBingoCard] index ready. refs=', index?.meta?.length, 'vecs=', index?.vectors?.length);
+      console.log("[useBingoCard] index ready. refs=", index?.meta?.length, "vecs=", index?.vectors?.length);
 
-      // ----- collect results from embeddings -----
-      const matches = [];
+      const newResults = [];
       for (let i = 0; i < crops.length; i++) {
         try {
-          if (i % 5 === 0) console.log(`[useBingoCard] embedding crop ${i + 1}/${crops.length}`);
+          if (i % 5 === 0) {
+            console.log(`[useBingoCard] embedding crop ${i + 1}/${crops.length}`);
+          }
           const cropImg = await dataUrlToImage(crops[i]);
           const tensor = await embedImage(cropImg, session);
 
-          const best = findBestMatch(tensor.data, index, 0.28); // keep your threshold
-          if (!best) {
-            matches.push({
-              cell: i,
-              label: "No match",
-              matchUrl: "",
-              score: 0,
-              ref: null,
-              empty: true,
+          // Use default threshold in findBestMatch; adjust here if needed
+          const best = findBestMatch(tensor.data, index);
+          if (best) {
+            console.log(`[match] cell ${i + 1}:`, {
+              idx: best.idx,
+              score: +best.score.toFixed(3),
+              url: best.matchUrl || best?.ref?.url || "",
             });
           } else {
-            matches.push({ cell: i, ...best });
+            console.log(`[match] cell ${i + 1}: no match (below threshold)`);
           }
+
+          newResults.push(best ?? null);
         } catch (e) {
           console.warn(`[useBingoCard] match failed for cell ${i}`, e);
-          matches.push({
-            cell: i,
-            label: "No match",
-            matchUrl: "",
-            score: 0,
-            ref: null,
-            empty: true,
-          });
+          newResults.push(null);
         }
         setProgress(Math.round(((i + 1) / crops.length) * 100));
       }
 
-      // ----- debug logs (collapsed group) -----
-      const sample = matches.slice(0, 5).map(m => ({
-        cell: m.cell,
-        label: m.label,
-        score: Number(m.score ?? 0).toFixed(3),
-        url: m.matchUrl || m?.ref?.url || "",
-        empty: !!m.empty,
+      const matchedCount = newResults.filter(Boolean).length;
+      console.log("[useBingoCard] done. filled results=", matchedCount, "/", newResults.length);
+
+      // Collapsed summary of first few cells
+      const sample = newResults.slice(0, 5).map((m, idx) => ({
+        cell: idx + 1,
+        score: m ? Number(m.score ?? 0).toFixed(3) : "—",
+        url: m?.matchUrl || m?.ref?.url || "",
       }));
-      console.groupCollapsed("[useBingoCard] match summary");
+      console.groupCollapsed("[useBingoCard] match summary (first 5)");
       console.table(sample);
-      console.log("matched:", matches.filter(m => !m.empty).length, "/", matches.length);
       console.groupEnd();
 
-      console.log('[useBingoCard] done. filled results=', matches.filter(m => !m.empty).length);
-      setResults(matches);
+      setResults(newResults);
+      setAnalyzedOnce(true);
     } catch (e) {
-      console.error('[useBingoCard] analyze fatal error:', e);
+      console.error("[useBingoCard] analyze fatal error:", e);
       setResults(Array(25).fill(null));
+      // keep analyzedOnce=false so “no-match” placeholders don’t appear after a fatal error
     } finally {
       setAnalyzing(false);
     }
@@ -118,7 +116,7 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   async function openTunerForFile(file) {
     const img = await fileToImage(file);
     pendingFileRef.current = file;
-    const init = fractions ?? { rows: Array(5).fill(1/5), cols: Array(5).fill(1/5) };
+    const init = fractions ?? { rows: Array(5).fill(1 / 5), cols: Array(5).fill(1 / 5) };
     setTunerImage(img);
     setTunerFractions(init);
     setTunerCrops(computeCrops25(img, init));
@@ -162,22 +160,26 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     if (ev && typeof ev.preventDefault === "function") ev.preventDefault();
     if (ev && typeof ev.stopPropagation === "function") ev.stopPropagation();
 
-    // 1) Modern API: showOpenFilePicker (best compatibility with gesture gating)
     const canUsePicker = typeof window.showOpenFilePicker === "function";
     if (canUsePicker) {
-      // Use synchronous .then chain instead of async/await to keep the gesture intact
-      window.showOpenFilePicker({
-        types: [{ description: "Images", accept: { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".bmp"] } }],
-        excludeAcceptAllOption: false,
-        multiple: false,
-      })
-      .then(handles => handles?.[0]?.getFile())
-      .then(file => { if (file) return openTunerForFile(file); })
-      .catch(() => {/* user canceled or unsupported — silently ignore */});
+      // Use synchronous .then chain to preserve the gesture
+      window
+        .showOpenFilePicker({
+          types: [{ description: "Images", accept: { "image/*": [".png", ".jpg", ".jpeg", ".webp", ".bmp"] } }],
+          excludeAcceptAllOption: false,
+          multiple: false,
+        })
+        .then((handles) => handles?.[0]?.getFile())
+        .then((file) => {
+          if (file) return openTunerForFile(file);
+        })
+        .catch(() => {
+          /* user canceled or unsupported — silently ignore */
+        });
       return;
     }
 
-    // 2) Fallback: hidden <input type="file">
+    // Fallback: hidden <input type="file">
     let input = fileInputRef.current;
     if (!input) {
       input = document.createElement("input");
@@ -190,27 +192,27 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       fileInputRef.current = input;
     }
 
-    // Fresh listener per click, kept sync with the gesture
     const handler = (e) => {
       const file = e.target.files && e.target.files[0];
-      // Clear value so same file can be re-picked later
-      e.target.value = "";
+      e.target.value = ""; // allow re-selecting same file
       input.removeEventListener("change", handler);
       if (file) {
-        // Open tuner before analyze (legacy flow)
-        openTunerForFile(file).catch(err => console.warn("openTunerForFile failed:", err));
+        openTunerForFile(file).catch((err) => console.warn("openTunerForFile failed:", err));
       }
     };
 
     input.addEventListener("change", handler, { once: true });
-    // Important: trigger click *synchronously* inside the user gesture
     input.click();
   }
 
   // ----- Misc helpers -----
   function bindFileInputRef(el) {
     fileInputRef.current = el || null;
-    if (el) { el.type = "file"; el.accept = "image/*"; el.style.display = "none"; }
+    if (el) {
+      el.type = "file";
+      el.accept = "image/*";
+      el.style.display = "none";
+    }
   }
 
   function toggleChecked(idx) {
@@ -224,19 +226,33 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   function clearResults() {
     setResults(Array(25).fill(null));
     setChecked(Array(25).fill(false));
+    setAnalyzedOnce(false);
   }
 
-  // Expose everything needed for the legacy UI, including tuner controls
+  // Expose everything needed for the UI, including tuner controls
   return {
     // state
-    title, setTitle, renaming, setRenaming,
-    results, checked, fractions, setFractions,
-    analyzing, progress,
+    title,
+    setTitle,
+    renaming,
+    setRenaming,
+    results,
+    checked,
+    fractions,
+    setFractions,
+    analyzing,
+    progress,
+    analyzedOnce,
 
     // tuner
-    showTuner, setShowTuner,
-    tunerImage, tunerCrops, tunerFractions,
-    updateTunerFractions, confirmTuner, cancelTuner,
+    showTuner,
+    setShowTuner,
+    tunerImage,
+    tunerCrops,
+    tunerFractions,
+    updateTunerFractions,
+    confirmTuner,
+    cancelTuner,
 
     // actions
     analyzeScreenshot,

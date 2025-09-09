@@ -44,6 +44,7 @@ export default function BingoCard({ card, manifest, onChange, onRemove }) {
 
         /* fill / analyze */
         analyzing={h.analyzing}
+        analyzedOnce={analyzedOnce}
         progress={h.progress}
         onPickImage={h.fillCard}
         fileInput={fileInputEl}
