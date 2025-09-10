@@ -95,7 +95,7 @@ export default function BingoCardView({
       <div className="grid-5x5">
         {safeCells.map((result, i) => {
           const src = cellThumb(result);
-          const alt = cellLabel(result) || `cell-${i + 1}`;
+          const alt = cellLabel(result) || String(i + 1);
           const noMatch = analyzedOnce && result?.noMatch && !src;
 
           return (
