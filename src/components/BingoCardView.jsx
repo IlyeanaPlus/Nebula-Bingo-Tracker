@@ -112,9 +112,9 @@ export default function BingoCardView({
               onClick={() => onToggleCell?.(i)}
               title={safeChecked[i] ? "Checked" : "Click to mark as done"}
             >
-              {cells?.spriteUrl ? (
+              {cell?.spriteUrl ? (
                 // show the sprite only (no label/title)
-                <img src={cells.spriteUrl} alt="" draggable={false} className="bingo-sprite" />
+                <img src={cell.spriteUrl} alt="" draggable={false} className="bingo-sprite" />
               ) : analyzedOnce && cell?.noMatch ? (
                 // only after a run that produced no match
                 <div className="no-match">no match</div>
