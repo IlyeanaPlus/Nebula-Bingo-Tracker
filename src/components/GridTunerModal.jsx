@@ -1,75 +1,66 @@
 // src/components/GridTunerModal.jsx
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 
+/**
+ * GridTunerModal
+ * Accepts either:
+ *   - imageSrc (string URL/data URL) OR
+ *   - image (HTMLImageElement)
+ * Also accepts:
+ *   - initialFractions or fractions (back-compat): { left, top, width, height }
+ */
 export default function GridTunerModal({
-  image,            // HTMLImageElement or data URL
-  crops,            // existing 25 crops meta
-  fractions,        // { left, top, width, height } or similar
+  image,
+  imageSrc,
+  crops,
+  initialFractions,
+  fractions,
   onChange,
   onConfirm,
   onCancel,
 }) {
-  const containerRef = useRef(null);
-  const [zoom, setZoom] = useState(1.5); // start larger
+  // Normalize props
+  const src = imageSrc ?? image?.src ?? null;
+  const [imgSize, setImgSize] = useState({ w: 1000, h: 1000 });
+  const [frac, setFrac] = useState(initialFractions ?? fractions ?? { left: 0, top: 0, width: 1, height: 1 });
+
+  // Load intrinsic size when src changes
+  useEffect(() => {
+    if (!src) return;
+    const i = new Image();
+    i.onload = () => setImgSize({ w: i.naturalWidth || 1000, h: i.naturalHeight || 1000 });
+    i.src = src;
+  }, [src]);
+
+  // allow parent to observe changes
+  useEffect(() => {
+    onChange?.(frac);
+  }, [frac, onChange]);
+
+  const [zoom, setZoom] = useState(1.5);
   const [fitToken, setFitToken] = useState(0);
 
-  // Fit image to 80% of viewport on mount or when clicking “Fit”
+  // Fit to viewport
   useEffect(() => {
     const fit = () => {
       const vw = Math.max(320, window.innerWidth * 0.8);
       const vh = Math.max(240, window.innerHeight * 0.8);
-      const iw = image?.naturalWidth || 1000;
-      const ih = image?.naturalHeight || 1000;
-      const scale = Math.min(vw / iw, vh / ih);
-      // bound zoom
+      const scale = Math.min(vw / imgSize.w, vh / imgSize.h);
       setZoom(Math.max(0.5, Math.min(3, scale)));
     };
-    fit(); // once
-  }, [image, fitToken]);
+    fit();
+  }, [imgSize, fitToken]);
 
   const styleStage = useMemo(() => ({
     transform: `scale(${zoom})`,
     transformOrigin: "top left",
-    width: image?.naturalWidth || "auto",
-    height: image?.naturalHeight || "auto",
+    width: imgSize.w,
+    height: imgSize.h,
     position: "relative",
     imageRendering: "auto",
-  }), [zoom, image]);
+  }), [zoom, imgSize]);
 
-  const stroke = 1 / zoom; // keep grid lines visually 1px
-  const overlay = (
-    <svg
-      width={image?.naturalWidth || 1000}
-      height={image?.naturalHeight || 1000}
-      style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
-    >
-      {/* 5x5 grid */}
-      {Array.from({ length: 6 }).map((_, i) => {
-        const x = (image?.naturalWidth || 1000) * (i / 5);
-        const y = (image?.naturalHeight || 1000) * (i / 5);
-        return (
-          <React.Fragment key={i}>
-            <line x1={x} y1={0} x2={x} y2={image?.naturalHeight || 1000}
-                  stroke="rgba(0,255,255,0.6)" strokeWidth={stroke} />
-            <line x1={0} y1={y} x2={image?.naturalWidth || 1000} y2={y}
-                  stroke="rgba(0,255,255,0.6)" strokeWidth={stroke} />
-          </React.Fragment>
-        );
-      })}
-      {/* current crop rect (fractions) */}
-      {fractions && (
-        <rect
-          x={(image?.naturalWidth || 1000) * (fractions.left || 0)}
-          y={(image?.naturalHeight || 1000) * (fractions.top || 0)}
-          width={(image?.naturalWidth || 1000) * (fractions.width || 1)}
-          height={(image?.naturalHeight || 1000) * (fractions.height || 1)}
-          fill="rgba(255,255,0,0.15)"
-          stroke="rgba(255,255,0,0.9)"
-          strokeWidth={stroke}
-        />
-      )}
-    </svg>
-  );
+  const stroke = 1 / zoom;
 
   return (
     <div
@@ -80,7 +71,6 @@ export default function GridTunerModal({
       onClick={(e) => { if (e.target === e.currentTarget) onCancel?.(); }}
     >
       <div
-        ref={containerRef}
         style={{
           background: "#111", color: "#eee", padding: 12, borderRadius: 12,
           maxWidth: "96vw", maxHeight: "92vh", overflow: "auto",
@@ -105,8 +95,38 @@ export default function GridTunerModal({
         {/* Stage */}
         <div style={{ position: "relative", overflow: "hidden", background: "#000" }}>
           <div style={styleStage}>
-            {image && <img src={image.src ?? image} alt="" draggable={false} />}
-            {overlay}
+            {src && <img src={src} alt="" draggable={false} />}
+            {/* Overlay: 5x5 grid lines */}
+            <svg
+              width={imgSize.w}
+              height={imgSize.h}
+              style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+            >
+              {Array.from({ length: 6 }).map((_, i) => {
+                const x = imgSize.w * (i / 5);
+                const y = imgSize.h * (i / 5);
+                return (
+                  <React.Fragment key={i}>
+                    <line x1={x} y1={0} x2={x} y2={imgSize.h}
+                          stroke="rgba(0,255,255,0.6)" strokeWidth={stroke} />
+                    <line x1={0} y1={y} x2={imgSize.w} y2={y}
+                          stroke="rgba(0,255,255,0.6)" strokeWidth={stroke} />
+                  </React.Fragment>
+                );
+              })}
+              {/* Fractions rect */}
+              {frac && (
+                <rect
+                  x={imgSize.w * (frac.left || 0)}
+                  y={imgSize.h * (frac.top || 0)}
+                  width={imgSize.w * (frac.width || 1)}
+                  height={imgSize.h * (frac.height || 1)}
+                  fill="rgba(255,255,0,0.15)"
+                  stroke="rgba(255,255,0,0.9)"
+                  strokeWidth={stroke}
+                />
+              )}
+            </svg>
           </div>
         </div>
       </div>

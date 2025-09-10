@@ -28,14 +28,14 @@ export default function BingoCard({ card, manifest, onChange, onRemove }) {
         /* fill / analyze */
         analyzing={h.analyzing}
         progress={h.progress}
-        onPickImage={h.pickImage}      // ⬅️ now uses hook’s pickImage()
+        onPickImage={h.pickImage}
         fileInput={
           <input
             ref={h.fileInputRef}
             type="file"
             accept="image/*"
             style={{ display: "none" }}
-            onChange={h.onFileChange}  // ⬅️ hook handles file selection
+            onChange={h.onFileChange}
           />
         }
 
@@ -56,6 +56,7 @@ export default function BingoCard({ card, manifest, onChange, onRemove }) {
           initialFractions={h.tunerFractions}
           onConfirm={h.confirmTuner}
           onCancel={h.cancelTuner}
+          onChange={h.setTunerFractions}
         />
       )}
     </>

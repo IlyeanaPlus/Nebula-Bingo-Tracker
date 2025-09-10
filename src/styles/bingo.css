@@ -85,7 +85,8 @@ body {
 }
 .sidebar .btn {
   flex: 1;
-  padding: 6px 10px;
+  height: 28px;  /* match card action/tuner control height */
+  padding: 0 10px;
   background: #1e1e1e;
   border: 1px solid #2c2c2c;
   border-radius: 8px;

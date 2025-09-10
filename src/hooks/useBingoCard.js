@@ -1,195 +1,146 @@
-import { useCallback, useMemo, useRef, useState } from "react";
+// src/hooks/useBingoCard.js
+import { useRef, useState } from "react";
+import { fileToImage, computeCrops25, loadFractions, saveFractions } from "../utils/image";
+import { prepareRefIndex, findBestMatch } from "../utils/matchers";
 
-import { getSpriteIndex } from "../utils/sprites";
-import { findBestMatch } from "../utils/matchers";
-import { getClipSession, embedImage } from "../utils/clipSession";
-import { tuning } from "../tuning/tuningStore";
+/**
+ * useBingoCard()
+ * Drives the card state (title/rename), tuner flow, and analyze/fill pipeline.
+ */
+export default function useBingoCard({ card, manifest, onChange, onRemove }) {
+  // --- Title / rename ---
+  const [title, setTitle] = useState(card?.title ?? "New Card");
+  const [renaming, setRenaming] = useState(false);
 
-const N = 25;
-
-/** Robust image loader for: File/Blob | HTMLImageElement | http(s) | /path | data:URL */
-function fileToImage(srcLike) {
-  return new Promise((resolve, reject) => {
-    if (!srcLike) return reject(new Error("No image source provided"));
-    if (srcLike instanceof HTMLImageElement) return resolve(srcLike);
-
-    const img = new Image();
-    img.onload = () => resolve(img);
-    img.onerror = () => reject(new Error("Failed to load image"));
-
-    if (typeof srcLike === "string") {
-      // direct string (http(s), /path, data:URL)
-      img.src = srcLike;
-    } else if (srcLike instanceof Blob) {
-      const url = URL.createObjectURL(srcLike);
-      img.onload = () => {
-        URL.revokeObjectURL(url);
-        resolve(img);
-      };
-      img.src = url;
-    } else {
-      reject(new Error("Unsupported image source type"));
-    }
-  });
-}
-
-// simple 5x5 equal grid cropper (use your own if you have one)
-function computeCrops25(img, { driftPx = 0 } = {}) {
-  const w = img.naturalWidth || img.width;
-  const h = img.naturalHeight || img.height;
-  const cw = Math.floor(w / 5);
-  const ch = Math.floor(h / 5);
-
-  const crops = [];
-  for (let gy = 0; gy < 5; gy++) {
-    for (let gx = 0; gx < 5; gx++) {
-      const x = gx * cw;
-      const y = gy * ch;
-      crops.push({
-        x: Math.max(0, x - driftPx),
-        y: Math.max(0, y - driftPx),
-        w: Math.min(w - x + driftPx, cw + 2 * driftPx),
-        h: Math.min(h - y + driftPx, ch + 2 * driftPx),
-      });
-    }
+  function startRenaming() { setRenaming(true); }
+  function cancelRenaming() { setRenaming(false); }
+  function commitRenaming(nextTitle) {
+    const t = (nextTitle ?? title ?? "").trim() || "New Card";
+    setTitle(t);
+    setRenaming(false);
+    onChange?.({ ...card, title: t });
   }
-  return crops;
-}
 
-async function cropToImageElement(img, crop) {
-  const c = document.createElement("canvas");
-  c.width = crop.w;
-  c.height = crop.h;
-  const ctx = c.getContext("2d");
-  ctx.drawImage(img, crop.x, crop.y, crop.w, crop.h, 0, 0, crop.w, crop.h);
-  return new Promise((resolve) => {
-    const out = new Image();
-    out.onload = () => resolve(out);
-    out.src = c.toDataURL("image/png");
-  });
-}
+  // Compatibility shim for older consumers (BingoCard.jsx checks titleEditing?)
+  const titleEditing = {
+    renaming,
+    onTitleClick: startRenaming,
+    onTitleInputChange: (e) => setTitle(e?.target?.value ?? ""),
+    onTitleInputBlur: (e) => commitRenaming(e?.currentTarget?.value),
+  };
 
-export default function useBingoCard() {
-  const [results, setResults] = useState(() =>
-    Array.from({ length: N }, (_, i) => ({
-      idx: i,
-      score: 0,
-      spriteUrl: "",
-      ref: null,
-      noMatch: false,
-    })),
-  );
-  const [checked, setChecked] = useState(() => Array(N).fill(false));
-  const [analyzing, setAnalyzing] = useState(false);
-  const [progress, setProgress] = useState(0);
+  // --- Card results / checkmarks ---
+  const [results, setResults] = useState(Array(25).fill(null));
+  const [checked, setChecked] = useState(Array(25).fill(false));
   const [analyzedOnce, setAnalyzedOnce] = useState(false);
 
-  const lastImageRef = useRef(null);
+  function toggleChecked(i) {
+    setChecked((prev) => {
+      const next = prev.slice();
+      next[i] = !next[i];
+      return next;
+    });
+  }
 
-  // hidden file input to trigger picker from the Fill button
+  // --- Tuner & Fractions ---
+  const [fractions, setFractions] = useState(loadFractions());
+  const [tunerFractions, setTunerFractions] = useState(fractions);
+  const [tunerImage, setTunerImage] = useState(null);
+  const [showTuner, setShowTuner] = useState(false);
+
+  // --- File input ---
   const fileInputRef = useRef(null);
-  const pickImage = useCallback(() => {
+
+  function pickImage() {
     fileInputRef.current?.click();
-  }, []);
-  const onFileChange = useCallback((e) => {
-    const f = e.target.files && e.target.files[0];
-    if (f) fillCard(f);
-    // reset so selecting the same file again still fires change
-    e.target.value = "";
-  }, []);
+  }
 
-  const toggleChecked = useCallback((i) => {
-    setChecked((prev) => prev.map((v, j) => (j === i ? !v : v)));
-  }, []);
+  async function onFileChange(e) {
+    const file = e?.target?.files?.[0];
+    if (!file) return;
+    const img = await fileToImage(file);
+    setTunerImage(img);
+    setTunerFractions(fractions || loadFractions());
+    setShowTuner(true);           // <-- open tuner BEFORE analyzing
+  }
 
-  // Main analyze function; accepts File/Blob, HTMLImageElement, or URL/data: string.
-  const fillCard = useCallback(async (fileOrImage) => {
+  function cancelTuner() {
+    setShowTuner(false);
+    setTunerImage(null);
+    // clear the input so picking the same file again still triggers change
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function confirmTuner() {
+    // Save chosen fractions and run analyze
+    const chosen = tunerFractions || fractions || loadFractions();
+    saveFractions(chosen);
+    setFractions(chosen);
+    setShowTuner(false);
+    await analyzeFromImage(tunerImage, chosen);
+    // don't clear tunerImage until analyze kicks off safely
+    setTunerImage(null);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  // --- Analyze / Fill pipeline ---
+  const [analyzing, setAnalyzing] = useState(false);
+  const [progress, setProgress] = useState(0);
+
+  async function analyzeFromImage(img, fracs) {
+    if (!img) return;
+    setAnalyzing(true);
+    setProgress(1);
     try {
-      // If called with an event or nothing: route to picker to avoid bad src to createObjectURL
-      if (!fileOrImage || (fileOrImage && fileOrImage.target)) {
-        pickImage();
-        return;
+      // Prepare reference index (vectors + meta). No-op if already prepped.
+      await prepareRefIndex();
+      setProgress(5);
+
+      // Compute crops (data URLs) from the provided image and fractions.
+      const crops = await computeCrops25(img, fracs);
+      setProgress(15);
+
+      // For each crop, find best match. Update progress along the way.
+      const nextResults = new Array(25);
+      for (let i = 0; i < 25; i++) {
+        const crop = crops?.[i];
+        const r = await findBestMatch(crop);
+        nextResults[i] = r || { noMatch: true, label: "", spriteUrl: "" };
+        setProgress(15 + Math.round(((i + 1) / 25) * 80)); // 15→95%
       }
 
-      setAnalyzing(true);
-      setAnalyzedOnce(false);
-      setProgress(0);
-
-      const img = await fileToImage(fileOrImage);
-      lastImageRef.current = img;
-
-      const { cropJitter } = tuning.get();
-      const crops = computeCrops25(img, { driftPx: cropJitter || 0 });
-
-      const [session, index] = await Promise.all([getClipSession(), getSpriteIndex()]);
-      const out = new Array(N);
-      let done = 0;
-
-      for (let i = 0; i < N; i++) {
-        const crop = crops[i];
-        const cropImg = await cropToImageElement(img, crop);
-        const embed = await embedImage(cropImg, session);
-        const best = findBestMatch(embed.data || embed, index);
-
-        const cell = {
-          idx: i,
-          score: best?.score ?? 0,
-          ref: best?.ref ?? null,
-          spriteUrl: best?.spriteUrl ?? "",
-          noMatch: !best?.spriteUrl,
-        };
-
-        if (i < 5) {
-          console.log("[match] cell", i, {
-            idx: best?.idx,
-            score: Number((cell.score || 0).toFixed(3)),
-            url: cell.spriteUrl ? "(url)" : "",
-          });
-        }
-
-        out[i] = cell;
-        done++;
-        setProgress(Math.round((done / N) * 100));
-      }
-
-      console.table(
-        out.slice(0, 5).map((c, i) => ({
-          index: i,
-          cell: c.idx,
-          score: Number((c.score || 0).toFixed(3)),
-          url: c.spriteUrl ? c.spriteUrl.slice(0, 48) + "…" : "<empty>",
-        })),
-      );
-
-      setResults(out);
+      setResults(nextResults);
       setAnalyzedOnce(true);
-      setAnalyzing(false);
+      setProgress(100);
     } catch (err) {
-      console.error("[useBingoCard] analyze fatal error:", err);
-      setAnalyzing(false);
-      setAnalyzedOnce(true);
+      console.error(err);
+      setResults((prev) => prev?.length === 25 ? prev : Array(25).fill(null));
+      setProgress(0);
+    } finally {
+      // brief delay so users can see 100%
+      setTimeout(() => setAnalyzing(false), 150);
     }
-  }, [pickImage]);
+  }
 
-  return useMemo(
-    () => ({
-      // state
-      analyzing,
-      progress,
-      results,
-      analyzedOnce,
-      checked,
+  // --- Remove card ---
+  function handleRemove() {
+    onRemove?.();
+  }
 
-      // refs (wire these into your container/Sidebar)
-      fileInputRef,
-      onFileChange,
-
-      // actions
-      pickImage,   // open file picker
-      fillCard,    // can still be called with File/URL/HTMLImageElement
-      toggleChecked,
-      setResults,
-    }),
-    [analyzing, progress, results, analyzedOnce, checked, pickImage, fillCard, toggleChecked],
-  );
+  return {
+    // title / rename
+    title, setTitle, renaming, startRenaming, commitRenaming, cancelRenaming, titleEditing,
+    // results / checks
+    results, analyzedOnce, checked, toggleChecked,
+    // analyze pipeline
+    analyzing, progress,
+    // file pick + tuner flow
+    fileInputRef, onFileChange, pickImage,
+    showTuner, tunerImage, tunerFractions, setTunerFractions,
+    confirmTuner, cancelTuner,
+    // fractions
+    fractions, setFractions,
+    // remove
+    onRemove: handleRemove,
+  };
 }

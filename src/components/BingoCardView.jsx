@@ -38,7 +38,7 @@ export default function BingoCardView({
             <input
               autoFocus
               type="text"
-              defaultValue={title}
+              value={title}
               onBlur={onRenameSubmit}
               onChange={onTitleChange}
             />
