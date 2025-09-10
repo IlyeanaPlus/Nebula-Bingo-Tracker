@@ -1,12 +1,6 @@
 // src/components/BingoCardView.jsx
 import React from "react";
 
-/**
- * Pure presentational component — UI locked.
- * Renders the card layout and wires callbacks passed from the container/hook.
- *
- * Sprites notice has been removed; only progress HUD remains here.
- */
 export default function BingoCardView({
   title,
   renaming,
@@ -20,19 +14,20 @@ export default function BingoCardView({
   onToggleCell,
   onPickImage,
   onRemove,
-  analyzedOnce,     // NEW
-  fileInput,
+  analyzedOnce,     // used to show "no match" only after a run
+  fileInput,        // hidden <input type="file"> from container
 }) {
   const safeCells =
     Array.isArray(cells) && cells.length === 25 ? cells : Array(25).fill(null);
   const safeChecked =
     Array.isArray(checked) && checked.length === 25 ? checked : Array(25).fill(false);
 
-  // --- Helpers to safely read CLIP-based match results (or legacy hashes) ---
+  // Prefer explicit spriteUrl, otherwise try common url keys for backward compat.
   const cellThumb = (r) =>
-    r?.matchUrl || r?.url || r?.ref?.url || null; // prefer explicit matchUrl, then url, then ref.url
+    r?.spriteUrl || r?.matchUrl || r?.url || r?.ref?.url || null;
+
   const cellLabel = (r) =>
-    r?.label ?? r?.name ?? r?.key ?? (r?.empty ? "No match" : ""); // show "No match" label for empties
+    r?.label ?? r?.name ?? r?.key ?? (r?.empty ? "No match" : "");
 
   return (
     <div className="bingo-card" aria-busy={!!analyzing}>
@@ -45,6 +40,7 @@ export default function BingoCardView({
               type="text"
               defaultValue={title}
               onBlur={onRenameSubmit}
+              onChange={onTitleChange}
             />
           </form>
         ) : (
@@ -58,7 +54,6 @@ export default function BingoCardView({
         )}
 
         <div className="card-actions">
-          {/* Important: type='button' to avoid accidental form submissions */}
           <button
             className="btn"
             type="button"
@@ -78,22 +73,18 @@ export default function BingoCardView({
           >
             Remove
           </button>
-
-          {/* Hidden file input element provided by container/hook */}
+          {/* Hidden file input element */}
           {fileInput}
         </div>
       </div>
 
-      {/* Progress HUD only */}
+      {/* Progress HUD */}
       {analyzing && (
         <div className="fill-hud" role="status" aria-live="polite">
           <div className="fill-box">
             <div className="fill-title">Analyzing…</div>
             <div className="fill-bar" aria-hidden="true">
-              <div
-                className="fill-bar-inner"
-                style={{ width: `${progress}%` }}
-              />
+              <div className="fill-bar-inner" style={{ width: `${progress}%` }} />
             </div>
             <div className="fill-meta">{progress}%</div>
           </div>
@@ -105,6 +96,8 @@ export default function BingoCardView({
         {safeCells.map((result, i) => {
           const src = cellThumb(result);
           const alt = cellLabel(result) || `cell-${i + 1}`;
+          const noMatch = analyzedOnce && result?.noMatch && !src;
+
           return (
             <div
               key={i}
@@ -112,11 +105,9 @@ export default function BingoCardView({
               onClick={() => onToggleCell?.(i)}
               title={safeChecked[i] ? "Checked" : "Click to mark as done"}
             >
-              {cell?.spriteUrl ? (
-                // show the sprite only (no label/title)
-                <img src={cell.spriteUrl} alt="" draggable={false} className="bingo-sprite" />
-              ) : analyzedOnce && cell?.noMatch ? (
-                // only after a run that produced no match
+              {src ? (
+                <img src={src} alt="" draggable={false} className="bingo-sprite" />
+              ) : noMatch ? (
                 <div className="no-match">no match</div>
               ) : (
                 <></>
