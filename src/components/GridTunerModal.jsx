@@ -1,309 +1,177 @@
 // src/components/GridTunerModal.jsx
-import React, { useEffect, useRef, useState } from "react";
-import ReactDOM from "react-dom";
+import React, { useEffect, useMemo, useState } from "react";
 
 /**
  * GridTunerModal
- * - Green-only 5×5 crop grid (canvas overlay)
- * - Centers on the image after load, aligned via wrapper/image offsets
- * - Center crosshair is the ONLY move handle (cursor: crosshair)
- * - Four corner handles are locked to the square's corners (resize 1:1)
- * - All interactions clamped to the image bounds
- * - Portal overlay above the whole app
+ * Accepts either:
+ *   - imageSrc (string URL/data URL) OR
+ *   - image (HTMLImageElement)
+ * Also accepts:
+ *   - initialFractions or fractions: { left, top, width, height }
  */
-export default function GridTunerModal({ imageSrc, initialFractions, onConfirm, onCancel }) {
-  const [open, setOpen] = useState(true);
-  const [imgReady, setImgReady] = useState(false);
-
-  const wrapRef = useRef(null);
-  const imgRef = useRef(null);
-  const overlayRef = useRef(null); // canvas
-  const boxRef = useRef(null);     // positioned square
-  const puckRef = useRef(null);    // center crosshair handle
-  const centeredOnceRef = useRef(false);
-
-  // Fractions {x,y,w,h} in [0..1], w==h
-  const centerFractions = (size = 0.6) => {
-    const s = Math.max(0.05, Math.min(1, size));
-    const c = (1 - s) / 2;
-    return { x: c, y: c, w: s, h: s };
-  };
-  const normalizeInit = (fr) => {
-    if (!fr) return centerFractions();
-    const s = Math.min(fr.w ?? fr.h ?? 0.6, fr.h ?? fr.w ?? 0.6);
-    const x = Math.max(0, Math.min(fr.x ?? 0.2, 1 - s));
-    const y = Math.max(0, Math.min(fr.y ?? 0.2, 1 - s));
-    return { x, y, w: s, h: s };
-  };
-  const [fractions, setFractions] = useState(normalizeInit(initialFractions));
-
-  const getRects = () => {
-    const wrap = wrapRef.current;
-    const img = imgRef.current;
-    if (!wrap || !img) return null;
-    const wrapRect = wrap.getBoundingClientRect();
-    const imgRect  = img.getBoundingClientRect();
-    return { wrapRect, imgRect, offsetX: imgRect.left - wrapRect.left, offsetY: imgRect.top - wrapRect.top };
-  };
-
-  const drawOverlay = () => {
-    const cv = overlayRef.current;
-    const rects = getRects();
-    if (!cv || !rects) return;
-    const { imgRect, offsetX, offsetY } = rects;
-
-    // Canvas covers displayed image
-    Object.assign(cv.style, {
-      position: "absolute",
-      left: `${offsetX}px`,
-      top: `${offsetY}px`,
-      width: `${imgRect.width}px`,
-      height: `${imgRect.height}px`,
-      pointerEvents: "none",
-    });
-    cv.width = imgRect.width;
-    cv.height = imgRect.height;
-
-    const ctx = cv.getContext("2d");
-    ctx.clearRect(0, 0, cv.width, cv.height);
-
-    const x = fractions.x * imgRect.width;
-    const y = fractions.y * imgRect.height;
-    const s = fractions.w * imgRect.width;
-
-    // Dim outside crop
-    ctx.save();
-    ctx.fillStyle = "rgba(0,0,0,0.35)";
-    ctx.fillRect(0, 0, cv.width, cv.height);
-    ctx.clearRect(x, y, s, s);
-    ctx.restore();
-
-    // Outer border
-    ctx.save();
-    ctx.strokeStyle = "rgba(34,197,94,0.95)";
-    ctx.lineWidth = 2;
-    ctx.strokeRect(x, y, s, s);
-
-    // 5×5 grid
-    ctx.strokeStyle = "rgba(34,197,94,0.85)";
-    ctx.lineWidth = 1;
-    const step = s / 5;
-    for (let i = 1; i < 5; i++) {
-      const gx = Math.round(x + i * step) + 0.5;
-      const gy = Math.round(y + i * step) + 0.5;
-      ctx.beginPath(); ctx.moveTo(gx, y); ctx.lineTo(gx, y + s); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(x, gy); ctx.lineTo(x + s, gy); ctx.stroke();
-    }
-    ctx.restore();
-
-    // Position square box (relative to wrapper, include image offset)
-    if (boxRef.current) {
-      Object.assign(boxRef.current.style, {
-        position: "absolute",
-        left: `${offsetX + x}px`,
-        top: `${offsetY + y}px`,
-        width: `${s}px`,
-        height: `${s}px`,
-        border: "2px solid rgba(34,197,94,0.95)",
-        pointerEvents: "auto", // children handles can receive events
-      });
-    }
-
-    // Position center crosshair (only move handle)
-    if (puckRef.current) {
-      const size = 22;
-      Object.assign(puckRef.current.style, {
-        position: "absolute",
-        left: `${offsetX + x + s / 2 - size / 2}px`,
-        top: `${offsetY + y + s / 2 - size / 2}px`,
-        width: `${size}px`,
-        height: `${size}px`,
-        cursor: "crosshair",
-        pointerEvents: "auto",
-        zIndex: 2,
-      });
-    }
-  };
-
-  const handleImageLoad = () => {
-    setImgReady(true);
-    if (!centeredOnceRef.current) {
-      centeredOnceRef.current = true;
-      setFractions(centerFractions(0.6)); // center on actual image size
-    }
-  };
-
-  useEffect(() => { if (imgReady) drawOverlay(); }, [fractions, imageSrc, imgReady]);
+export default function GridTunerModal({
+  image,
+  imageSrc,
+  crops,
+  initialFractions,
+  fractions,
+  onChange,
+  onConfirm,
+  onCancel,
+}) {
+  const src = imageSrc ?? image?.src ?? null;
+  const [imgSize, setImgSize] = useState({ w: 1000, h: 1000 });
+  const [frac, setFrac] = useState(
+    initialFractions ?? fractions ?? { left: 0, top: 0, width: 1, height: 1 }
+  );
 
   useEffect(() => {
-    if (!imgRef.current) return;
-    const ro = new ResizeObserver(() => { if (imgReady) drawOverlay(); });
-    ro.observe(imgRef.current);
-    return () => ro.disconnect();
-  }, [imgReady]);
+    if (!src) return;
+    const i = new Image();
+    i.onload = () =>
+      setImgSize({ w: i.naturalWidth || 1000, h: i.naturalHeight || 1000 });
+    i.src = src;
+  }, [src]);
 
-  // --- Interaction helpers ---
-  const onPuckDown = (e) => {
-    e.preventDefault();
-    const rects = getRects(); if (!rects) return;
-    const { imgRect } = rects;
-    const startX = e.clientX, startY = e.clientY;
-    const f0 = { ...fractions };
+  // notify parent whenever frac changes
+  useEffect(() => {
+    onChange?.(frac);
+  }, [frac, onChange]);
 
-    const mm = (ev) => {
-      const dx = (ev.clientX - startX) / imgRect.width;
-      const dy = (ev.clientY - startY) / imgRect.height;
-      let nx = f0.x + dx;
-      let ny = f0.y + dy;
-      nx = Math.max(0, Math.min(nx, 1 - f0.w));
-      ny = Math.max(0, Math.min(ny, 1 - f0.h));
-      setFractions({ ...f0, x: nx, y: ny });
+  const [zoom, setZoom] = useState(1.5);
+  const [fitToken, setFitToken] = useState(0);
+
+  useEffect(() => {
+    const fit = () => {
+      const vw = Math.max(320, window.innerWidth * 0.8);
+      const vh = Math.max(240, window.innerHeight * 0.8);
+      const scale = Math.min(vw / imgSize.w, vh / imgSize.h);
+      setZoom(Math.max(0.5, Math.min(3, scale)));
     };
-    const mu = () => {
-      window.removeEventListener("mousemove", mm);
-      window.removeEventListener("mouseup", mu);
-    };
-    window.addEventListener("mousemove", mm);
-    window.addEventListener("mouseup", mu);
-  };
+    fit();
+  }, [imgSize, fitToken]);
 
-  const onResizeStart = (corner) => (e) => {
-    e.preventDefault();
-    const rects = getRects(); if (!rects) return;
-    const { imgRect } = rects;
-    const startX = e.clientX, startY = e.clientY;
-    const f0 = { ...fractions };
+  const styleStage = useMemo(
+    () => ({
+      transform: `scale(${zoom})`,
+      transformOrigin: "top left",
+      width: imgSize.w,
+      height: imgSize.h,
+      position: "relative",
+      imageRendering: "auto",
+    }),
+    [zoom, imgSize]
+  );
 
-    const mm = (ev) => {
-      const dx = (ev.clientX - startX) / imgRect.width;
-      const dy = (ev.clientY - startY) / imgRect.height;
+  const stroke = 1 / zoom;
 
-      let ds = 0, nx = f0.x, ny = f0.y;
-      if (corner === "se") ds = Math.max(dx, dy);
-      if (corner === "nw") ds = -Math.max(-dx, -dy);
-      if (corner === "ne") ds = Math.max(dx, -dy);
-      if (corner === "sw") ds = Math.max(-dx, dy);
-
-      let s = f0.w + ds;
-      const minS = 32 / imgRect.width; // min 32px
-      s = Math.max(minS, Math.min(1, s));
-
-      if (corner === "nw") { nx = f0.x + (f0.w - s); ny = f0.y + (f0.h - s); }
-      if (corner === "ne") { nx = f0.x;                ny = f0.y + (f0.h - s); }
-      if (corner === "sw") { nx = f0.x + (f0.w - s);   ny = f0.y; }
-      if (corner === "se") { nx = f0.x;                ny = f0.y; }
-
-      nx = Math.max(0, Math.min(nx, 1 - s));
-      ny = Math.max(0, Math.min(ny, 1 - s));
-
-      setFractions({ x: nx, y: ny, w: s, h: s });
-    };
-    const mu = () => {
-      window.removeEventListener("mousemove", mm);
-      window.removeEventListener("mouseup", mu);
-    };
-    window.addEventListener("mousemove", mm);
-    window.addEventListener("mouseup", mu);
-  };
-
-  const handleConfirm = () => onConfirm?.(fractions);
-  const handleReset = () => setFractions(centerFractions(0.6));
-
-  if (!open) return null;
-
-  return ReactDOM.createPortal(
+  return (
     <div
       style={{
         position: "fixed",
         inset: 0,
-        background: "rgba(0,0,0,0.5)",
+        background: "rgba(0,0,0,0.75)",
         display: "grid",
         placeItems: "center",
-        zIndex: 2147483647,
+        zIndex: 9999,
+      }}
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onCancel?.();
       }}
     >
       <div
-        role="dialog"
-        aria-modal
         style={{
           background: "#111",
           color: "#eee",
+          padding: 12,
           borderRadius: 12,
-          padding: 16,
-          maxWidth: 900,
-          width: "95vw",
-          boxShadow: "0 10px 30px rgba(0,0,0,0.6)",
+          maxWidth: "96vw",
+          maxHeight: "92vh",
+          overflow: "auto",
+          boxShadow: "0 16px 40px rgba(0,0,0,0.5)",
         }}
       >
-        <div style={{ fontSize: 18, marginBottom: 8 }}>Grid Tuner</div>
-
-        <div ref={wrapRef} style={{ position: "relative", display: "grid", placeItems: "center" }}>
-          <img
-            ref={imgRef}
-            src={imageSrc}
-            alt="preview"
-            onLoad={handleImageLoad}
-            style={{ maxWidth: "100%", maxHeight: "60vh", objectFit: "contain" }}
+        {/* Controls */}
+        <div
+          style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 8 }}
+        >
+          <button onClick={() => setFitToken((t) => t + 1)} className="btn">
+            Fit
+          </button>
+          <span style={{ fontSize: 12, opacity: 0.8, width: 90 }}>
+            Zoom: {(zoom * 100) | 0}%
+          </span>
+          <input
+            type="range"
+            min={0.5}
+            max={3}
+            step={0.05}
+            value={zoom}
+            onChange={(e) => setZoom(Number(e.target.value))}
+            style={{ flex: 1 }}
           />
-          {/* Canvas draws the grid */}
-          <canvas ref={overlayRef} />
-
-          {/* Positioned square with handles locked to corners */}
-          <div ref={boxRef}>
-            {/* Corner handles (inside box so they stay locked to corners) */}
-            <div
-              onMouseDown={onResizeStart("nw")}
-              style={{ position: "absolute", width: 12, height: 12, left: -6, top: -6,
-                       background: "#22c55e", borderRadius: 6, cursor: "nwse-resize" }}
-            />
-            <div
-              onMouseDown={onResizeStart("ne")}
-              style={{ position: "absolute", width: 12, height: 12, right: -6, top: -6,
-                       background: "#22c55e", borderRadius: 6, cursor: "nesw-resize" }}
-            />
-            <div
-              onMouseDown={onResizeStart("sw")}
-              style={{ position: "absolute", width: 12, height: 12, left: -6, bottom: -6,
-                       background: "#22c55e", borderRadius: 6, cursor: "nesw-resize" }}
-            />
-            <div
-              onMouseDown={onResizeStart("se")}
-              style={{ position: "absolute", width: 12, height: 12, right: -6, bottom: -6,
-                       background: "#22c55e", borderRadius: 6, cursor: "nwse-resize" }}
-            />
-          </div>
-
-          {/* Center crosshair = ONLY move handle */}
-          <div
-            ref={puckRef}
-            onMouseDown={onPuckDown}
-            title="Drag to move"
-            style={{
-              // visual crosshair ring
-              background: "transparent",
-              borderRadius: "50%",
-              boxShadow: "0 0 0 2px #111, 0 0 0 4px rgba(34,197,94,0.6)",
-            }}
+          <div style={{ flex: 1 }} />
+          <button onClick={onCancel} className="btn">
+            Cancel
+          </button>
+          <button
+            onClick={() => onConfirm?.(frac)}
+            className="btn btn--primary"
           >
-            {/* crosshair lines */}
-            <div style={{
-              position: "absolute", left: 2, right: 2, top: "50%", height: 2,
-              transform: "translateY(-50%)", background: "#22c55e",
-            }} />
-            <div style={{
-              position: "absolute", top: 2, bottom: 2, left: "50%", width: 2,
-              transform: "translateX(-50%)", background: "#22c55e",
-            }} />
-          </div>
+            Confirm
+          </button>
         </div>
 
-        <div style={{ display: "flex", gap: 8, marginTop: 12, justifyContent: "flex-end" }}>
-          <button className="btn" onClick={handleReset}>Reset</button>
-          <button className="btn" onClick={() => { setOpen(false); onCancel?.(); }}>Cancel</button>
-          <button className="btn" onClick={handleConfirm}>Confirm</button>
+        {/* Stage */}
+        <div style={{ position: "relative", overflow: "hidden", background: "#000" }}>
+          <div style={styleStage}>
+            {src && <img src={src} alt="" draggable={false} />}
+            {/* Overlay: 5x5 grid lines */}
+            <svg
+              width={imgSize.w}
+              height={imgSize.h}
+              style={{ position: "absolute", inset: 0, pointerEvents: "none" }}
+            >
+              {Array.from({ length: 6 }).map((_, i) => {
+                const x = imgSize.w * (i / 5);
+                const y = imgSize.h * (i / 5);
+                return (
+                  <React.Fragment key={i}>
+                    <line
+                      x1={x}
+                      y1={0}
+                      x2={x}
+                      y2={imgSize.h}
+                      stroke="rgba(0,255,255,0.6)"
+                      strokeWidth={stroke}
+                    />
+                    <line
+                      x1={0}
+                      y1={y}
+                      x2={imgSize.w}
+                      y2={y}
+                      stroke="rgba(0,255,255,0.6)"
+                      strokeWidth={stroke}
+                    />
+                  </React.Fragment>
+                );
+              })}
+              {/* Fractions rect */}
+              {frac && (
+                <rect
+                  x={imgSize.w * (frac.left || 0)}
+                  y={imgSize.h * (frac.top || 0)}
+                  width={imgSize.w * (frac.width || 1)}
+                  height={imgSize.h * (frac.height || 1)}
+                  fill="rgba(255,255,0,0.15)"
+                  stroke="rgba(255,255,0,0.9)"
+                  strokeWidth={stroke}
+                />
+              )}
+            </svg>
+          </div>
         </div>
       </div>
-    </div>,
-    document.body
+    </div>
   );
 }

@@ -1,16 +1,15 @@
 // src/components/Sidebar.jsx
 import React, { useState } from "react";
 import { getSpriteIndex } from "../utils/sprites";
+import SidebarTuning from "./SidebarTuning.jsx";
 
 export default function Sidebar({
   cards = [],
   currentIndex = 0,
   onSelect,
   onNewCard,
-  onGetSprites,          // parent callback receives the loaded meta (or full index if you prefer)
-  // spritesLoaded,      // no longer used (preloading removed)
-  // spritesTotal,       // no longer used (preloading removed)
-  spritesReady = false,  // parent can still reflect readiness if desired
+  onGetSprites,
+  spritesReady = false,
 }) {
   const [loading, setLoading] = useState(false);
   const [ready, setReady] = useState(!!spritesReady);
@@ -20,8 +19,6 @@ export default function Sidebar({
     setError("");
     setLoading(true);
     try {
-      // Load CLIP index (vectors + meta). Matching uses vectors internally;
-      // Sidebar only needs meta for listing, so we forward meta by default.
       const index = await getSpriteIndex();
       const meta = index?.meta || [];
 
@@ -31,7 +28,6 @@ export default function Sidebar({
         return;
       }
 
-      // Notify parent (keep old prop name). If your parent wants full index, pass `index`.
       onGetSprites?.(meta);
       setReady(true);
     } catch (e) {
@@ -45,15 +41,8 @@ export default function Sidebar({
 
   return (
     <aside className="sidebar">
+      <SidebarTuning />
       <div className="panel">
-
-        <div className="row small">
-          {ready ? (
-            <div>Sprites ready ✔</div>
-          ) : (
-            <div style={{ color: "#fbbf24" }}>Sprites not loaded</div>
-          )}
-        </div>
 
         <div className="row">
           <button className="btn" onClick={onNewCard}>New Card</button>

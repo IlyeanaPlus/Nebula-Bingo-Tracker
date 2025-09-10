@@ -1,0 +1,7 @@
+[quantize_bat] Start 2025-09-09 14:49:38.77 
+[quantize_bat] Working dir: C:\Users\sailb\Nebula-Bingo-Tracker
+[quantize_bat] Using Python via: py
+[quantize_bat] Installing deps (this may take a minute) …
+Could not find platform independent libraries <prefix>
+C:\Python313\python.exe: No module named pip
+❌ Failed to install Python dependencies. See tools\quantize_log.txt for details.

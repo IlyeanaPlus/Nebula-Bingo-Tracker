@@ -1,54 +1,55 @@
 // src/utils/matchers.js
-// Cosine similarity against pre-normalized index vectors.
+import { tuning } from "../tuning/tuningStore";
 
-function dot(a, b) {
-  let s = 0;
-  for (let i = 0; i < a.length; i++) s += a[i] * b[i];
-  return s;
+function pickSpriteUrl(ref) {
+  if (!ref) return null;
+  return (
+    ref.drive_cache ||  // your cached path
+    ref.sprite ||
+    ref.url ||
+    ref.image ||
+    ref.thumb ||
+    ref.path ||
+    null
+  );
 }
 
 /**
- * tensorData: Float32Array (single 512-d embedding) or ort tensor-like {data: Float32Array}
- * index: { vectors: Float32Array[], meta: [{key,name,url}] }
- * returns: { score, index, key, name, url, matchUrl, label }
+ * @param {Float32Array|number[]} embed
+ * @param {{vectors: Float32Array[], meta: any[]}} index
+ * @param {number=} threshold  // if omitted, uses tuning.scoreThreshold
+ * @returns {{idx:number, score:number, ref:any, spriteUrl:string}|null}
  */
-export function findBestMatch(tensorData, index) {
-  if (!tensorData) return null;
-  const vec = tensorData.data instanceof Float32Array ? tensorData.data : tensorData;
-
+export function findBestMatch(embed, index, threshold) {
+  const thr = (threshold ?? tuning.get().scoreThreshold) || 0.28;
   const V = index?.vectors || [];
   const M = index?.meta || [];
   if (!V.length || V.length !== M.length) {
-    console.warn("[matchers] index missing or malformed");
+    console.warn("[matchers] bad index sizes", V.length, M.length);
     return null;
   }
 
-  // Normalize query (index vectors are already normalized)
-  let s = 0;
-  for (let i = 0; i < vec.length; i++) s += vec[i] * vec[i];
-  const inv = s > 0 ? 1 / Math.sqrt(s) : 0;
-  const q = new Float32Array(vec.length);
-  for (let i = 0; i < vec.length; i++) q[i] = vec[i] * inv;
+  const q = embed instanceof Float32Array ? embed : new Float32Array(embed);
 
-  let bestI = -1;
-  let bestS = -1;
+  let bestIdx = -1;
+  let bestScore = -Infinity;
   for (let i = 0; i < V.length; i++) {
-    const d = dot(q, V[i]); // cosine because both normalized
-    if (d > bestS) {
-      bestS = d;
-      bestI = i;
-    }
+    const v = V[i];
+    let s = 0.0;
+    for (let k = 0; k < q.length; k++) s += q[k] * v[k]; // dot
+    if (s > bestScore) { bestScore = s; bestIdx = i; }
   }
+  if (bestIdx < 0) return null;
 
-  if (bestI < 0) return null;
-  const m = M[bestI] || {};
-  return {
-    score: bestS,
-    index: bestI,
-    key: m.key || "",
-    name: m.name || m.key || "",
-    url: m.url || "",
-    matchUrl: m.url || "",   // your view reads matchUrl/url/ref.url
-    label: m.name || m.key || "",
-  };
+  const ref = M[bestIdx] || null;
+  const spriteUrl = pickSpriteUrl(ref);
+  const score = Math.max(0, bestScore);
+
+  if (!spriteUrl) {
+    console.warn("[matchers] best match has no sprite url", { bestIdx, score, ref });
+    return null; // do not fill; UI will show “no match” after run
+  }
+  if (score < thr) return null;
+
+  return { idx: bestIdx, score, ref, spriteUrl };
 }
