@@ -1,72 +1,125 @@
-// src/components/BingoCard.jsx
-import React, { useMemo } from "react";
-import useBingoCard from "../hooks/useBingoCard";
-import BingoCardView from "./BingoCardView";
-import GridTunerModal from "./GridTunerModal";
+// src/components/BingoCardView.jsx
+import React from "react";
 
-export default function BingoCard({ card, manifest, onChange, onRemove }) {
-  const h = useBingoCard({ card, manifest, onChange, onRemove });
+export default function BingoCardView({
+  /* title / rename */
+  title,
+  renaming,
+  onRenameStart,
+  onTitleChange,
+  onRenameSubmit,
 
-  // Build the hidden <input type="file"> and bind it to the hook.
-  // This is required for browsers without showOpenFilePicker (e.g. GH Pages tests).
-  const fileInputEl = useMemo(
-    () => (
-      <input
-        ref={h.bindFileInputRef}
-        type="file"
-        accept="image/*"
-        style={{ display: "none" }}
-        data-nbt="file"
-      />
-    ),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [] // create once; the ref callback stays valid
-  );
+  /* analyze / fill */
+  analyzing,
+  progress,
+  onPickImage,
+  fileInput, // <input type="file" .../> element passed by container
 
+  /* grid */
+  cells = [],
+  analyzedOnce = false,
+  checked = [],
+  onToggleCell,
+
+  /* remove */
+  onRemove,
+}) {
   return (
-    <>
-      <BingoCardView
-        /* title / rename */
-        title={h.title}
-        renaming={h.titleEditing?.renaming ?? h.renaming}
-        onRenameStart={h.titleEditing?.onTitleClick ?? h.startRenaming}
-        onTitleChange={h.titleEditing?.onTitleInputChange ?? ((e) => h.setTitle(e.target.value))}
-        onRenameSubmit={(e) => {
-          e?.preventDefault?.();
-          const next = e?.currentTarget?.elements?.[0]?.value ?? h.title;
-          if (h.titleEditing?.onTitleInputBlur) {
-            // Use the hook’s preferred blur/commit path
-            h.titleEditing.onTitleInputBlur({ currentTarget: { value: next } });
-          } else {
-            h.commitRenaming(next);
-          }
-        }}
+    <div className="card-wrap">
+      {/* Header */}
+      <header className="card-header">
+        <div className="card-title">
+          {renaming ? (
+            <form onSubmit={onRenameSubmit}>
+              <input
+                autoFocus
+                defaultValue={title || ""}
+                onChange={onTitleChange}
+                className="title-input"
+              />
+            </form>
+          ) : (
+            <h2 className="title" onClick={onRenameStart} role="button" tabIndex={0}>
+              {title || "Card"}
+            </h2>
+          )}
+        </div>
 
-        /* fill / analyze */
-        analyzing={h.analyzing}
-        progress={h.progress}
-        onPickImage={h.fillCard}
-        fileInput={fileInputEl}
+        <div className="card-actions">
+          <button className="btn" onClick={onPickImage} disabled={analyzing}>
+            {analyzing ? "Analyzing…" : "Fill"}
+          </button>
+          <button className="btn btn-danger" onClick={onRemove} disabled={analyzing}>
+            Remove
+          </button>
+        </div>
+      </header>
 
-        /* grid */
-        cells={h.results}          // 25 results from CLIP matching
-        analyzedOnce={h.analyzedOnce}
-        checked={h.checked}
-        onToggleCell={h.toggleChecked}
+      {/* Hidden file input lives here so it’s in the DOM */}
+      {fileInput}
 
-        /* remove */
-        onRemove={h.onRemove}
-      />
-
-      {/* Tuner modal */}
-      {h.showTuner && (
-        <GridTunerModal
-          imageSrc={h.tunerImage?.src || null}    // hook provides an <img>; modal wants src
-          initialFractions={h.tunerFractions}     // live fractions edited in the tuner
-          onConfirm={h.confirmTuner}
-          onCancel={h.cancelTuner}
-        />
+      {/* Progress / analyzing indicator */}
+      {analyzing && (
+        <div className="analyze-bar" aria-live="polite">
+          <div className="analyze-bar__label">Analyzing…</div>
+          <div className="analyze-bar__track">
+            <div
+              className="analyze-bar__fill"
+              style={{ width: `${Math.max(0, Math.min(100, progress || 0))}%` }}
+            />
+          </div>
+        </div>
       )}
-    </>
+
+      {/* 5x5 grid */}
+      <main className="main-content">
+        <div className="cards-grid">
+          {(cells.length ? cells : Array.from({ length: 25 }, (_, i) => ({ idx: i }))).map(
+            (cell, i) => {
+              const isChecked = !!checked[i];
+              const hasSprite = !!cell?.spriteUrl;
+              const showNoMatch = analyzedOnce && cell?.noMatch && !hasSprite;
+
+              return (
+                <button
+                  key={i}
+                  type="button"
+                  className={
+                    "bingo-cell" +
+                    (isChecked ? " bingo-cell--checked" : "") +
+                    (showNoMatch ? " bingo-cell--no-match" : "")
+                  }
+                  onClick={() => onToggleCell?.(i)}
+                  title={hasSprite ? "" : undefined}
+                >
+                  {hasSprite ? (
+                    // Sprite only — no label/title/name
+                    <img
+                      src={cell.spriteUrl}
+                      alt=""
+                      draggable={false}
+                      className="bingo-sprite"
+                    />
+                  ) : showNoMatch ? (
+                    // Only after a run completed with no match
+                    <div className="no-match">no match</div>
+                  ) : (
+                    // Blank numbered cell before any run
+                    <div className="cell-index">{i + 1}</div>
+                  )}
+                </button>
+              );
+            }
+          )}
+        </div>
+
+        {/* Optional helper text when nothing has run yet */}
+        {!analyzing && !analyzedOnce && !cells.some(c => c?.spriteUrl) && (
+          <div className="empty-hint">
+            Click <strong>Fill</strong> and choose an image to analyze the grid.
+          </div>
+        )}
+      </main>
+    </div>
   );
 }
