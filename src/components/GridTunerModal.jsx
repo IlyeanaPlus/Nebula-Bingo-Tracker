@@ -7,7 +7,7 @@ import React, { useEffect, useMemo, useState } from "react";
  *   - imageSrc (string URL/data URL) OR
  *   - image (HTMLImageElement)
  * Also accepts:
- *   - initialFractions or fractions (back-compat): { left, top, width, height }
+ *   - initialFractions or fractions: { left, top, width, height }
  */
 export default function GridTunerModal({
   image,
@@ -19,12 +19,10 @@ export default function GridTunerModal({
   onConfirm,
   onCancel,
 }) {
-  // Normalize props
   const src = imageSrc ?? image?.src ?? null;
   const [imgSize, setImgSize] = useState({ w: 1000, h: 1000 });
   const [frac, setFrac] = useState(initialFractions ?? fractions ?? { left: 0, top: 0, width: 1, height: 1 });
 
-  // Load intrinsic size when src changes
   useEffect(() => {
     if (!src) return;
     const i = new Image();
@@ -32,7 +30,7 @@ export default function GridTunerModal({
     i.src = src;
   }, [src]);
 
-  // allow parent to observe changes
+  // notify parent whenever frac changes
   useEffect(() => {
     onChange?.(frac);
   }, [frac, onChange]);
@@ -40,7 +38,6 @@ export default function GridTunerModal({
   const [zoom, setZoom] = useState(1.5);
   const [fitToken, setFitToken] = useState(0);
 
-  // Fit to viewport
   useEffect(() => {
     const fit = () => {
       const vw = Math.max(320, window.innerWidth * 0.8);
@@ -89,7 +86,7 @@ export default function GridTunerModal({
           />
           <div style={{ flex: 1 }} />
           <button onClick={onCancel} style={btn}>Cancel</button>
-          <button onClick={onConfirm} style={{ ...btn, background: "#2b6", color: "#000" }}>Confirm</button>
+          <button onClick={() => onConfirm?.(frac)} style={{ ...btn, background: "#2b6", color: "#000" }}>Confirm</button>
         </div>
 
         {/* Stage */}

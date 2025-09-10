@@ -1,7 +1,7 @@
 // src/hooks/useBingoCard.js
 import { useRef, useState } from "react";
 import { fileToImage, computeCrops25, loadFractions, saveFractions } from "../utils/image";
-import { prepareRefIndex, findBestMatch } from "../utils/matchers";
+import { findBestMatch } from "../utils/matchers";
 
 /**
  * useBingoCard()
@@ -21,7 +21,7 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     onChange?.({ ...card, title: t });
   }
 
-  // Compatibility shim for older consumers (BingoCard.jsx checks titleEditing?)
+  // Compatibility shim for older consumers
   const titleEditing = {
     renaming,
     onTitleClick: startRenaming,
@@ -60,25 +60,31 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     if (!file) return;
     const img = await fileToImage(file);
     setTunerImage(img);
+
+    const BYPASS_TUNER = false;
+    if (BYPASS_TUNER) {
+      const chosen = fractions || loadFractions();
+      await analyzeFromImage(img, chosen);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
     setTunerFractions(fractions || loadFractions());
-    setShowTuner(true);           // <-- open tuner BEFORE analyzing
+    setShowTuner(true);
   }
 
   function cancelTuner() {
     setShowTuner(false);
     setTunerImage(null);
-    // clear the input so picking the same file again still triggers change
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
-  async function confirmTuner() {
-    // Save chosen fractions and run analyze
-    const chosen = tunerFractions || fractions || loadFractions();
+  async function confirmTuner(nextFractions) {
+    const chosen = nextFractions || tunerFractions || fractions || loadFractions();
     saveFractions(chosen);
     setFractions(chosen);
     setShowTuner(false);
     await analyzeFromImage(tunerImage, chosen);
-    // don't clear tunerImage until analyze kicks off safely
     setTunerImage(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
@@ -92,15 +98,10 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     setAnalyzing(true);
     setProgress(1);
     try {
-      // Prepare reference index (vectors + meta). No-op if already prepped.
-      await prepareRefIndex();
-      setProgress(5);
-
-      // Compute crops (data URLs) from the provided image and fractions.
+      // If your matcher requires async warmup, ensure it inside findBestMatch() or do a lazy init there.
       const crops = await computeCrops25(img, fracs);
       setProgress(15);
 
-      // For each crop, find best match. Update progress along the way.
       const nextResults = new Array(25);
       for (let i = 0; i < 25; i++) {
         const crop = crops?.[i];
@@ -117,7 +118,6 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       setResults((prev) => prev?.length === 25 ? prev : Array(25).fill(null));
       setProgress(0);
     } finally {
-      // brief delay so users can see 100%
       setTimeout(() => setAnalyzing(false), 150);
     }
   }
