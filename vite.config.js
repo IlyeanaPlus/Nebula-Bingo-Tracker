@@ -13,18 +13,17 @@ export default defineConfig({
   base: isPages ? `/${REPO}/` : "/",
   plugins: [react()],
   build: {
-    // We’re now ALLOWING ORT’s JSEP loader + sibling .wasm to be bundled under /assets/.
-    sourcemap: true,               // helpful if we need to trace initiators
-    chunkSizeWarningLimit: 1200,   // quiet down warnings for ORT-sized chunks
+    // Allow ORT’s JSEP loader + sibling .wasm to be bundled under /assets/.
+    sourcemap: true,
+    chunkSizeWarningLimit: 1200,
   },
-  // No aliasing of "onnxruntime-web" and no forbid-JSEP plugin in bundled mode.
   resolve: {
     alias: {
-      // (optional) if you want to FORCE all imports to go through your env wrapper anyway:
+      // (optional): force all imports through your env wrapper
       // "onnxruntime-web": "/src/utils/ortEnv.js",
     },
   },
   optimizeDeps: {
-    // defaults are fine; we’re not excluding the JSEP loader anymore
+    // defaults are fine
   },
 });

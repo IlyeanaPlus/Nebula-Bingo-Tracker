@@ -1,6 +1,8 @@
 // src/main.jsx
-import "./utils/ortEnv"; // must be first
-import "./ensureOrtAsset";     // then force emit the wasm asset
+import "./ensureOrtAsset";  // First
+import "./utils/ortEnv"; // Second
+import { prewarmOrtRuntime } from "./utils/ortPrewarm";
+if (import.meta.env.DEV) prewarmOrtRuntime();
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";

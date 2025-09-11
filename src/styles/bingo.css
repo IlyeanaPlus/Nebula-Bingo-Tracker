@@ -11,6 +11,13 @@
   --muted: #b6b6b6;
 }
 
+/* Make widths include padding & border globally */
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 /* --- Base --- */
 body {
   margin: 0;
@@ -19,36 +26,29 @@ body {
   font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
 }
 
-/* --- Global buttons --- */
+/* --- Global buttons (baseline) --- */
 .btn {
-  display: inline-flex;
+  display: flex;
+  flex: 1 1 0%;
+  gap: 8px;
+  margin-top: 10px;
   align-items: center;
   justify-content: center;
   height: 32px;
-  padding: 0 12px;
+  padding: 8px 10px;
   border-radius: 8px;
   border: 1px solid #444;
   background: #1e1e1e;
   color: #eee;
-  font-size: 14px;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  font-size: 12px;
   cursor: pointer;
   user-select: none;
 }
-.btn:hover {
-  background: #262626;
-}
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.btn--primary {
-  background: #3aa76d;
-  color: #000;
-  border-color: #3aa76d;
-}
-.btn--primary:hover {
-  background: #2b6;
-}
+.btn:hover { background: #262626; }
+.btn:disabled { opacity: .6; cursor: not-allowed; }
+.btn--primary { background: #3aa76d; color: #000; border-color: #3aa76d; }
+.btn--primary:hover { background: #2b6; }
 
 /* --- App header --- */
 .app-header {
@@ -64,9 +64,7 @@ body {
   border-bottom: 1px solid #222;
   color: var(--fg);
 }
-.app-header .title {
-  font-weight: 600;
-}
+.app-header .title { font-weight: 600; }
 .app-header .btn {
   padding: 6px 10px;
   background: #242424;
@@ -75,14 +73,10 @@ body {
   color: #eee;
   cursor: pointer;
 }
-.app-header .btn:hover {
-  background: #2b2b2b;
-}
+.app-header .btn:hover { background: #2b2b2b; }
 
 /* --- Layout: sidebar + main --- */
-.app-body {
-  display: block; /* sidebar is fixed; main flows */
-}
+.app-body { display: block; }
 .sidebar {
   position: fixed;
   top: 44px;
@@ -95,47 +89,17 @@ body {
   overflow: auto;
 }
 .main-content {
-  margin-left: 260px;
+  /* Sidebar is 260 + 12 + 12 = 284 total */
+  margin-left: 284px;
   padding: 16px;
   min-height: calc(100vh - 44px);
 }
 
 /* --- Sidebar panels --- */
-.sidebar .panel {
-  margin-bottom: 16px;
-}
-.sidebar .panel-title {
-  font-weight: 600;
-  margin-bottom: 8px;
-  opacity: .85;
-}
-.sidebar .row {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-.sidebar .btn {
-  flex: 1;
-  height: 28px;  /* match card action/tuner control height */
-  padding: 0 10px;
-  background: #1e1e1e;
-  border: 1px solid #2c2c2c;
-  border-radius: 8px;
-  color: #eee;
-  cursor: pointer;
-}
-.sidebar .btn:hover {
-  background: #262626;
-}
-.sidebar .meta {
-  font-size: 12px;
-  opacity: .7;
-  margin: 6px 0 8px;
-}
-.sidebar .list {
-  display: grid;
-  gap: 6px;
-}
+.sidebar .panel { margin-bottom: 16px; }
+.sidebar .panel-title { font-weight: 600; margin-bottom: 8px; opacity: .85; }
+.sidebar .row { display: flex; gap: 8px; margin-bottom: 10px; }
+.sidebar .list { display: grid; gap: 6px; }
 .sidebar .list-item {
   display: flex;
   align-items: center;
@@ -148,9 +112,7 @@ body {
   color: #ddd;
   cursor: pointer;
 }
-.sidebar .list-item:hover {
-  background: #1a1a1a;
-}
+.sidebar .list-item:hover { background: #1a1a1a; }
 .sidebar .list-item.active {
   border-color: #3aa76d;
   box-shadow: 0 0 0 1px #3aa76d inset;
@@ -167,12 +129,12 @@ body {
 .cards-grid {
   display: grid;
   gap: 16px;
-  grid-template-columns: repeat(auto-fill, 450px);
-  justify-content: start; /* align cards left, wrap to new row */
+  grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
+  justify-content: start;
 }
 
 .bingo-card {
-  width: 450px; /* fixed width */
+  width: 100%; /* fills its grid track */
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
@@ -181,21 +143,14 @@ body {
 }
 .bingo-card .card-header {
   display: flex;
-  flex-direction: row; /* title inline with buttons */
+  flex-direction: row;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   margin-bottom: 12px;
 }
-.bingo-card .card-title {
-  font-weight: 600;
-  text-align: left; /* inline with buttons */
-}
-.bingo-card .card-actions {
-  display: flex;
-  gap: 8px;
-  justify-content: flex-end; /* buttons on the right */
-}
+.bingo-card .card-title { font-weight: 600; text-align: left; }
+.bingo-card .card-actions { display: flex; gap: 8px; justify-content: flex-end; }
 .bingo-card .card-actions button {
   height: 28px;
   padding: 0 10px;
@@ -205,9 +160,7 @@ body {
   color: #e8e8e8;
   cursor: pointer;
 }
-.bingo-card .card-actions button:hover {
-  background: #232323;
-}
+.bingo-card .card-actions button:hover { background: #232323; }
 
 /* --- Grid inside card --- */
 .grid-5x5 {
@@ -251,9 +204,7 @@ body {
 }
 
 /* --- Progress bar --- */
-.progress-wrap {
-  margin: 10px 2px 8px;
-}
+.progress-wrap { margin: 10px 2px 8px; }
 .progress-bar {
   width: 100%;
   height: 6px;
@@ -268,11 +219,7 @@ body {
   background: #3aa76d;
   transition: width .2s linear;
 }
-.progress-meta {
-  margin-top: 6px;
-  font-size: 12px;
-  opacity: .8;
-}
+.progress-meta { margin-top: 6px; font-size: 12px; opacity: .8; }
 
 /* --- Modal (grid tuner/fill overlay) --- */
 .fill-overlay {
@@ -297,17 +244,15 @@ body {
 
 /* Rename input inside card header */
 .rename-form input {
-  background: #0b0b0b;   /* dark background */
-  color: #e8e8e8;        /* light text */
+  background: #0b0b0b;
+  color: #e8e8e8;
   border: 1px solid var(--border);
   border-radius: 6px;
   padding: 4px 8px;
 }
-
-/* Optional: tweak focus outline */
 .rename-form input:focus {
   outline: none;
-  border-color: var(--accent); /* use your theme accent color */
+  border-color: var(--accent);
 }
 
 .cell .no-match {
@@ -323,4 +268,65 @@ body {
   font-size: 12px;
   border-radius: 6px;
   user-select: none;
+}
+
+:root {
+  --btn-w: 120px;   /* unify New Card + tuner controls */
+  --header-h: 48px; /* card header height for alignment */
+}
+.btn { min-width: var(--btn-w); }
+.card-header { min-height: var(--header-h); }
+
+
+/* --- Card header tweaks --- */
+.card-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px; /* space between title and buttons */
+}
+
+.card-header .card-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: bold;
+}
+
+.card-actions.row {
+  display: flex;
+  gap: 6px;
+}
+
+/* Unify Fill + Remove buttons */
+.card-btn {
+  min-width: 80px;   /* guide width */
+  padding: 4px 8px;   /* tighter padding */
+  text-align: center;
+}
+
+/* === Card header layout freeze === */
+.bingo-card .card-header {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px; /* space between title and buttons */
+}
+
+.bingo-card .card-header .card-title {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: bold;
+}
+
+/* Actions row under the title */
+.bingo-card .card-header .card-actions {
+  display: flex;
+  gap: 4px;
+}
+
+/* Unify Fill + Remove buttons: same width, tighter padding */
+.bingo-card .card-header .card-actions .card-btn {
+  min-width: 120px;
+  padding: 4px 8px;
+  text-align: center;
 }

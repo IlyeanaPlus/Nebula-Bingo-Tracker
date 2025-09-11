@@ -1,145 +1,124 @@
 // src/components/TuningPanel.jsx
-import React, { useEffect, useState } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { tuning } from "../tuning/tuningStore";
+import CropPreviewModal from "./CropPreviewModal"; // ensure this file exists
 
-export default function TuningPanel() {
-  const [open, setOpen] = useState(false);
-  const [vals, setVals] = useState(tuning.get());
+const DEFAULTS = Object.freeze({
+  scoreThreshold: 0.30, // cosine cutoff for accepting a match
+  unboardPct: 0.12,     // trim uniform border before embedding
+  jitterFrac: 0.04,     // +/- jitter as fraction of crop side
+  multiCrop: 5,         // center + 4 jitters
+});
 
-  // keep in sync if other tabs/components change it
-  useEffect(() => tuning.subscribe(setVals), []);
+function useTuningSnapshot() {
+  return useSyncExternalStore(tuning.subscribe, tuning.get, tuning.get);
+}
 
-  // global hotkey “T” to toggle
-  useEffect(() => {
-    const onKey = (e) => {
-      if (e.key?.toLowerCase() === "t" && !e.ctrlKey && !e.metaKey && !e.altKey) {
-        setOpen(o => !o);
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, []);
+function Row({ label, children }) {
+  return (
+    <div className="flex items-center justify-between gap-3 py-1">
+      <div className="text-sm opacity-80">{label}</div>
+      <div className="flex items-center gap-2">{children}</div>
+    </div>
+  );
+}
 
-  const apply = (next) => tuning.set(next);
+export default function TuningPanel({ open = true, onClose }) {
+  const snap = useTuningSnapshot();
+  const values = useMemo(() => ({ ...DEFAULTS, ...(snap || {}) }), [snap]);
+  const [showPreview, setShowPreview] = useState(false);
+
+  const setVal = (patch) => tuning.set(patch);
 
   return (
-    <div
-      style={{
-        position: "fixed",
-        right: 12,
-        bottom: 12,
-        zIndex: 9999,
-        fontFamily: "system-ui, sans-serif",
-      }}
-    >
-      {/* Toggle button */}
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          padding: "8px 10px",
-          borderRadius: 8,
-          border: "1px solid #999",
-          background: "#111",
-          color: "#eee",
-          cursor: "pointer",
-        }}
-        title="Tuning (press T)"
-      >
-        {open ? "Close Tuning" : "Open Tuning"}
-      </button>
-
-      {/* Panel */}
-      {open && (
-        <div
-          style={{
-            marginTop: 8,
-            padding: 12,
-            width: 280,
-            borderRadius: 12,
-            border: "1px solid #666",
-            background: "rgba(20,20,20,0.95)",
-            color: "#eee",
-            boxShadow: "0 8px 24px rgba(0,0,0,0.35)",
-          }}
-        >
-          <div style={{ fontWeight: 700, marginBottom: 8 }}>Tuning</div>
-
-          {/* Score threshold */}
-          <label style={{ display: "block", marginBottom: 8 }}>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>
-              Score threshold: <b>{vals.scoreThreshold.toFixed(3)}</b>
-            </div>
-            <input
-              type="range"
-              min={0.1}
-              max={0.95}
-              step={0.005}
-              value={vals.scoreThreshold}
-              onChange={(e) => apply({ scoreThreshold: Number(e.target.value) })}
-              style={{ width: "100%" }}
-            />
-          </label>
-
-          {/* Unboarding epsilon */}
-          <div style={{ marginTop: 10, marginBottom: 8, fontSize: 12, opacity: 0.8 }}>
-            Unboarding ε (background removal)
-          </div>
-          <div style={{ display: "flex", gap: 6, marginBottom: 8 }}>
-            {[0, 0.02, 0.06].map(eps => (
-              <button
-                key={eps}
-                onClick={() => apply({ unboardEps: eps })}
-                style={{
-                  flex: 1,
-                  padding: "6px 0",
-                  borderRadius: 8,
-                  border: "1px solid #777",
-                  background: vals.unboardEps === eps ? "#2b6" : "#222",
-                  color: vals.unboardEps === eps ? "#000" : "#ddd",
-                  cursor: "pointer",
-                }}
-              >
-                {eps}
-              </button>
-            ))}
-          </div>
-
-          {/* Crop drift */}
-          <label style={{ display: "block", marginBottom: 8 }}>
-            <div style={{ fontSize: 12, opacity: 0.8 }}>
-              Crop drift (px): <b>{vals.cropJitter}</b>
-            </div>
-            <input
-              type="range"
-              min={0}
-              max={4}
-              step={1}
-              value={vals.cropJitter}
-              onChange={(e) => apply({ cropJitter: Number(e.target.value) })}
-              style={{ width: "100%" }}
-            />
-          </label>
-
-          <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-            <button
-              onClick={() => tuning.reset()}
-              style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid #999", background: "#222", color: "#ddd", cursor: "pointer" }}
-            >
+    <div role="dialog" aria-modal="true" className="fixed inset-0 z-40 flex items-center justify-center">
+      {/* Backdrop */}
+      <div className="absolute inset-0 bg-black/50" onClick={onClose} aria-hidden />
+      {/* Card */}
+      <div className="relative z-10 w-[420px] max-w-[95vw] rounded-xl border border-white/10 bg-[#121212] p-4 shadow-2xl">
+        <div className="mb-2 flex items-center justify-between">
+          <h2 className="text-base font-semibold">Matching Tuner</h2>
+          <div className="flex items-center gap-2">
+            <button type="button" className="btn btn-sm" onClick={() => tuning.set({ ...DEFAULTS })}>
               Reset
             </button>
-            <button
-              onClick={() => setOpen(false)}
-              style={{ flex: 1, padding: "8px 10px", borderRadius: 8, border: "1px solid #999", background: "#333", color: "#ddd", cursor: "pointer" }}
-            >
+            <button type="button" className="btn btn-sm" onClick={() => setShowPreview(true)}>
+              Preview crops
+            </button>
+            <button type="button" className="btn btn-sm" onClick={onClose}>
               Close
             </button>
           </div>
-
-          <div style={{ marginTop: 10, fontSize: 11, opacity: 0.6 }}>
-            Tip: press <b>T</b> to toggle this panel.
-          </div>
         </div>
-      )}
+
+        <div className="space-y-3">
+          {/* Score threshold */}
+          <Row label={`Score Threshold: ${values.scoreThreshold.toFixed(2)}`}>
+            <input
+              type="range" min="0.20" max="0.50" step="0.01"
+              value={values.scoreThreshold}
+              onChange={(e) => setVal({ scoreThreshold: parseFloat(e.target.value) })}
+            />
+            <input
+              type="number" step="0.01" min="0.20" max="0.50"
+              value={values.scoreThreshold}
+              onChange={(e) => setVal({ scoreThreshold: Number(e.target.value || 0) })}
+              className="w-20 text-right"
+            />
+          </Row>
+
+          {/* Unboard */}
+          <Row label={`Unboard %: ${(values.unboardPct * 100).toFixed(0)}%`}>
+            <input
+              type="range" min="0" max="0.40" step="0.01"
+              value={values.unboardPct}
+              onChange={(e) => setVal({ unboardPct: parseFloat(e.target.value) })}
+            />
+            <input
+              type="number" step="0.01" min="0" max="0.4"
+              value={values.unboardPct}
+              onChange={(e) => setVal({ unboardPct: Number(e.target.value || 0) })}
+              className="w-20 text-right"
+            />
+          </Row>
+
+          {/* Jitter */}
+          <Row label={`Jitter: ${(values.jitterFrac * 100).toFixed(1)}%`}>
+            <input
+              type="range" min="0" max="0.15" step="0.005"
+              value={values.jitterFrac}
+              onChange={(e) => setVal({ jitterFrac: parseFloat(e.target.value) })}
+            />
+            <input
+              type="number" step="0.005" min="0" max="0.15"
+              value={values.jitterFrac}
+              onChange={(e) => setVal({ jitterFrac: Number(e.target.value || 0) })}
+              className="w-20 text-right"
+            />
+          </Row>
+
+          {/* Multi-crop */}
+          <Row label={`Multi-crop: ${values.multiCrop}×`}>
+            <input
+              type="range" min="1" max="9" step="1"
+              value={values.multiCrop}
+              onChange={(e) => setVal({ multiCrop: parseInt(e.target.value, 10) })}
+            />
+            <input
+              type="number" step="1" min="1" max="9"
+              value={values.multiCrop}
+              onChange={(e) => setVal({ multiCrop: parseInt(e.target.value || "1", 10) })}
+              className="w-16 text-right"
+            />
+          </Row>
+        </div>
+
+        <p className="mt-4 text-xs opacity-70">
+          Tip: start with Unboard 10–14%, Jitter 2–6%, Multi-crop 5, Threshold 0.30–0.34.
+        </p>
+      </div>
+
+      {showPreview && <CropPreviewModal onClose={() => setShowPreview(false)} />}
     </div>
   );
 }

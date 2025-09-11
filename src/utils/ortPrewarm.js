@@ -1,22 +1,19 @@
 // src/utils/ortPrewarm.js
 export async function prewarmOrtRuntime() {
-  const dbg = window.__ORTDBG__;
-  console.log("[ORT prewarm] config:", dbg);
+  if (window.__ORT_PREWARMED__) return;
+  window.__ORT_PREWARMED__ = true;
 
-  const base = (typeof dbg?.wasmPaths === "string")
-    ? dbg.wasmPaths
-    : ""; // if you used the object map version, you can skip base here
+  const mjs  = window.__ORT_JSEP_MJS_EMITTED__ || "";
+  const wasm = window.__ORT_WASM_EMITTED__ || "";
+  console.log("[ORT prewarm] emitted:", { mjs, wasm });
 
-  // If you're on the "map" version of wasmPaths, fetch explicit filenames:
-  const urls = [
-    "/Nebula-Bingo-Tracker/ort-wasm/ort-wasm-simd-threaded.jsep.mjs",
-    "/Nebula-Bingo-Tracker/ort-wasm/ort-wasm-simd-threaded.jsep.wasm",
-  ];
-
-  const results = await Promise.allSettled(urls.map(u => fetch(u, { cache: "no-store" })));
-  results.forEach((r, i) => {
-    const u = urls[i];
-    if (r.status === "fulfilled") console.log("[ORT prewarm]", u, "→", r.value.status);
-    else console.warn("[ORT prewarm]", u, "→ failed", r.reason);
-  });
+  const urls = [mjs ? mjs + "?import" : null, wasm].filter(Boolean);
+  for (const u of urls) {
+    try {
+      const r = await fetch(u, { cache: "no-store" });
+      console.log("[ORT prewarm]", u, "→", r.status, r.headers.get("content-type"));
+    } catch (err) {
+      console.warn("[ORT prewarm] failed:", u, err);
+    }
+  }
 }

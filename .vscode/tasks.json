@@ -9,13 +9,7 @@
       "type": "shell",
       "command": "git add -A && (git diff --cached --quiet || git commit -m \"${input:msg}\") && git push",
       "options": {
-        "shell": {
-          "executable": "C:\\Windows\\System32\\cmd.exe",
-          "args": [
-            "/d",
-            "/c"
-          ]
-        }
+        "shell": { "executable": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c"] }
       },
       "problemMatcher": []
     },
@@ -24,16 +18,61 @@
       "type": "shell",
       "command": "git add -A && git commit --amend --no-edit && git push -f",
       "options": {
-        "shell": {
-          "executable": "C:\\Windows\\System32\\cmd.exe",
-          "args": [
-            "/d",
-            "/c"
-          ]
-        }
+        "shell": { "executable": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c"] }
       },
       "problemMatcher": []
+    },
+
+    {
+      "label": "vite:dev",
+      "type": "shell",
+      "command": "npm run dev",
+      "isBackground": true,
+      "options": {
+        "shell": { "executable": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c"] }
+      },
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": [{ "regexp": ".+" }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Local:\\s+http://",
+          "endsPattern": "ready in\\s+\\d+\\s*ms"
+        }
+      },
+      "group": "build"
+    },
+    {
+      "label": "vite:build",
+      "type": "shell",
+      "command": "npm run build",
+      "options": {
+        "shell": { "executable": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c"] }
+      },
+      "group": "build"
+    },
+    {
+      "label": "vite:preview",
+      "type": "shell",
+      "command": "npm run preview",
+      "isBackground": true,
+      "options": {
+        "shell": { "executable": "C:\\Windows\\System32\\cmd.exe", "args": ["/d", "/c"] }
+      },
+      "problemMatcher": {
+        "owner": "vite",
+        "pattern": [{ "regexp": ".+" }],
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "Local:\\s+http://",
+          "endsPattern": "ready in\\s+\\d+\\s*ms"
+        }
+      }
+    },
+    {
+      "label": "app:prod-local",
+      "dependsOn": ["vite:build", "vite:preview"],
+      "dependsOrder": "sequence"
     }
   ]
 }
-

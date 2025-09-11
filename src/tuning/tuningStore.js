@@ -11,6 +11,11 @@ const defaults = {
 
   // +/- pixel drift allowance applied by your cropper (if supported)
   cropJitter: 0,          // in pixels, 0..4
+
+  // new (index control):
+  embedDim: 512,
+  indexSlice: [0, 512],          // pick the 512-wide window inside vectors
+  // indexKeyCandidates: []      // not used when vectors[] is present
 };
 
 let data = defaults;

@@ -2,21 +2,20 @@
 import * as ort from "onnxruntime-web";
 
 /**
- * Bundled-mode configuration:
- * - We let Vite/Rollup bundle ORT’s JSEP loader and its sibling .wasm into /assets/.
- * - We keep strict runtime parameters to avoid COOP/COEP headaches on GitHub Pages.
+ * Known-good bundled-mode baseline (from your working snapshot):
+ * - Let ORT/JSEP resolve its own loader + wasm relative to the bundle (no wasmPaths).
+ * - Keep conservative runtime to avoid COOP/COEP friction.
  */
 ort.env.debug = false;
 
 // Strict, GH Pages–safe defaults
-ort.env.wasm.numThreads = 1;  // single-thread only
-ort.env.wasm.proxy = false;   // no worker proxy
-ort.env.wasm.simd = false;    // conservative; flip to true later if you want
+ort.env.wasm.numThreads = 1;   // single-thread
+ort.env.wasm.proxy = false;    // no worker proxy
+ort.env.wasm.simd = false;     // baseline (flip to true later if desired)
 
-// IMPORTANT: Do NOT set ort.env.wasm.wasmPaths in bundled mode.
-// Leaving it undefined makes ORT resolve the loader + wasm relative to the bundled module (i.e., /assets/...).
+// IMPORTANT: do NOT set ort.env.wasm.wasmPaths here in bundled mode.
 
-// Tiny debug surface so you can verify at runtime
+// Tiny debug surface (unchanged from your repo)
 window.__ORTDBG__ = {
   wasmPaths: ort.env.wasm.wasmPaths, // should be undefined in bundled mode
   settings: {

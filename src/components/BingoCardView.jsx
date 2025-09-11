@@ -1,118 +1,147 @@
 // src/components/BingoCardView.jsx
-import React from "react";
+import React, { useRef } from "react";
 
-export default function BingoCardView({
-  title,
-  renaming,
-  onRenameStart,
-  onRenameSubmit,
-  onTitleChange,
-  analyzing,
-  progress,
-  cells,
-  checked,
-  onToggleCell,
-  onPickImage,
-  onRemove,
-  analyzedOnce,     // used to show "no match" only after a run
-  fileInput,        // hidden <input type="file"> from container
-}) {
-  const safeCells =
-    Array.isArray(cells) && cells.length === 25 ? cells : Array(25).fill(null);
-  const safeChecked =
-    Array.isArray(checked) && checked.length === 25 ? checked : Array(25).fill(false);
+/**
+ * Pure UI view — consumes the frozen View Contract (V1).
+ * Props (exact):
+ * - title, renaming, onRenameStart, onTitleChange, onRenameSubmit, onRemove
+ * - analyzing, progress
+ * - cells[25], checked[25], onToggleCell(index)
+ * - onPickImage(), fileInput (hidden input element)
+ * - analyzedOnce
+ */
+export default function BingoCardView(props) {
+  const {
+    title,
+    renaming,
+    onRenameStart,
+    onTitleChange,
+    onRenameSubmit,
+    onRemove,
 
-  // Prefer explicit spriteUrl, otherwise try common url keys for backward compat.
-  const cellThumb = (r) =>
-    r?.spriteUrl || r?.matchUrl || r?.url || r?.ref?.url || null;
+    analyzing,
+    progress,
 
-  const cellLabel = (r) =>
-    r?.label ?? r?.name ?? r?.key ?? (r?.empty ? "No match" : "");
+    cells,
+    checked,
+    onToggleCell,
+
+    onPickImage,
+    fileInput,
+
+    analyzedOnce,
+  } = props;
+
+  const renameInputRef = useRef(null);
+
+  // Submit rename on Enter; blur also submits (handled below)
+  const onRenameFormSubmit = (e) => {
+    e.preventDefault();
+    const val = renameInputRef.current?.value ?? "";
+    onRenameSubmit?.(val.trim());
+  };
+
+  const onRenameBlur = () => {
+    const val = renameInputRef.current?.value ?? "";
+    onRenameSubmit?.(val.trim());
+  };
 
   return (
     <div className="bingo-card" aria-busy={!!analyzing}>
       {/* Header */}
       <div className="card-header">
         {renaming ? (
-          <form onSubmit={onRenameSubmit} className="rename-form">
+          <form className="rename-form" onSubmit={onRenameFormSubmit}>
             <input
-              autoFocus
+              ref={renameInputRef}
               type="text"
-              value={title}
-              onBlur={onRenameSubmit}
+              defaultValue={title || ""}
               onChange={onTitleChange}
+              onBlur={onRenameBlur}
+              autoFocus
+              aria-label="Rename card title"
             />
           </form>
         ) : (
           <h3
             className="card-title"
-            onClick={onRenameStart}
             title="Click to rename"
+            onClick={onRenameStart}
+            role="button"
+            tabIndex={0}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") onRenameStart?.();
+            }}
           >
-            {title}
+            {title || "New Card"}
           </h3>
         )}
 
-        <div className="card-actions">
-          <button
-            className="btn"
-            type="button"
-            onClick={onPickImage}
-            disabled={analyzing}
-            aria-label="Fill from screenshot"
-            title="Fill"
-          >
+        {/* Actions row sits below the title */}
+        <div className="card-actions row">
+          <button className="btn card-btn" type="button" onClick={onPickImage}>
             Fill
           </button>
           <button
-            className="btn danger"
+            className="btn btn--primary card-btn"
             type="button"
             onClick={onRemove}
-            disabled={analyzing}
             aria-label="Remove card"
           >
             Remove
           </button>
-          {/* Hidden file input element */}
-          {fileInput}
         </div>
       </div>
 
+
+      {/* Hidden file input element is provided by the adapter */}
+      {fileInput}
+
       {/* Progress HUD */}
-      {analyzing && (
-        <div className="fill-hud" role="status" aria-live="polite">
+      {analyzing ? (
+        <div className="fill-hud" aria-live="polite">
           <div className="fill-box">
             <div className="fill-title">Analyzing…</div>
-            <div className="fill-bar" aria-hidden="true">
-              <div className="fill-bar-inner" style={{ width: `${progress}%` }} />
+            <div className="fill-bar">
+              <div
+                className="fill-bar-inner"
+                style={{ width: `${Math.max(0, Math.min(100, progress || 0))}%` }}
+              />
             </div>
-            <div className="fill-meta">{progress}%</div>
+            <div className="fill-meta">{Math.round(progress || 0)}%</div>
           </div>
         </div>
-      )}
+      ) : null}
 
-      {/* 5x5 grid */}
+      {/* Grid */}
       <div className="grid-5x5">
-        {safeCells.map((result, i) => {
-          const src = cellThumb(result);
-          const alt = cellLabel(result) || String(i + 1);
-          const noMatch = analyzedOnce && result?.noMatch && !src;
+        {Array.from({ length: 25 }).map((_, i) => {
+          const cell = cells?.[i] ?? null;
+          const isChecked = !!checked?.[i];
+          const hasImg =
+            !!(cell && (cell.spriteUrl || cell.matchUrl || cell.url || cell?.ref?.url));
+          const caption =
+            (cell && (cell.label || cell.name || cell.key)) ||
+            (cell?.noMatch ? "No match" : "");
+
+        const imgSrc =
+            (cell && (cell.spriteUrl || cell.matchUrl || cell.url || cell?.ref?.url)) ||
+            "";
 
           return (
             <div
               key={i}
-              className={`cell${safeChecked[i] ? " complete" : ""}`}
-              onClick={() => onToggleCell?.(i)}
-              title={safeChecked[i] ? "Checked" : "Click to mark as done"}
+              className={`cell${isChecked ? " complete" : ""}${
+                !hasImg && analyzedOnce ? " no-match" : ""
+              }`}
+              onClick={() => props.onToggleCell?.(i)}
             >
-              {src ? (
-                <img src={src} alt="" draggable={false} className="bingo-sprite" />
-              ) : noMatch ? (
-                <div className="no-match">no match</div>
+              {hasImg ? (
+                <img className="bingo-sprite" src={imgSrc} alt={caption || `Cell ${i + 1}`} />
               ) : (
-                <></>
+                <div className="bingo-sprite" />
               )}
-              <div className="caption">{alt}</div>
+              <div className="caption">{caption}</div>
             </div>
           );
         })}

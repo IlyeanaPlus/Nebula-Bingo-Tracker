@@ -1,0 +1,9 @@
+*** PATCH: Append to src/styles/bingo.css (non-destructive) ***
+/* --- Contract V1 tokens (safe to append) --- */
+:root {
+  --btn-w: 148px;   /* unify New Card + tuner controls */
+  --header-h: 48px; /* card header height for alignment */
+}
+.btn { min-width: var(--btn-w); }
+.card-header { min-height: var(--header-h); }
+/* --- End Contract V1 tokens --- */

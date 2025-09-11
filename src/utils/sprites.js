@@ -1,111 +1,94 @@
 // src/utils/sprites.js
-// Single source of truth for loading the CLIP sprite index.
-// Uses Vite/GitHub-Pages–safe path resolution (no "/public" at runtime).
+// Robust sprite index loader (supports rows format and legacy vectors/meta).
+// Prefers local /sprites/*.png URLs; falls back to any drive_cache if needed.
 
-import { resolvePublic } from "./publicPath"; // same helper you use elsewhere
+const BASE = (import.meta?.env?.BASE_URL || "/").replace(/\/+$/, ""); // "" or "/Nebula-Bingo-Tracker"
+const CANDIDATES = [
+  `${BASE}/sprite_index_clip.json`,
+  `${BASE}/sprites/sprite_index_clip.json`,
+  `${BASE}/assets/sprite_index_clip.json`,
+];
 
-// Default index lives at public/sprite_index_clip.json → served at /<base>/sprite_index_clip.json
-let SPRITE_INDEX_URL = resolvePublic("sprite_index_clip.json");
 let _indexPromise = null;
 
-/** Optionally point to a different index path (relative names are resolved via resolvePublic). */
-export function setSpriteIndexUrl(url) {
-  if (!url) return;
-  // Allow absolute http(s)://, absolute-from-origin (/foo), or relative ("foo/bar.json")
-  if (/^https?:\/\//i.test(url)) {
-    SPRITE_INDEX_URL = url;
-  } else if (url.startsWith("/")) {
-    // Keep absolute-from-origin as-is (useful for testing)
-    SPRITE_INDEX_URL = url;
-  } else {
-    SPRITE_INDEX_URL = resolvePublic(url.replace(/^public\//, "")); // tolerate "public/..." inputs
-  }
-  _indexPromise = null; // reset cache
-}
-
-/** Decode a base64 string into Float32Array */
 function b64ToFloat32(b64) {
   const bin = atob(b64);
-  const buf = new ArrayBuffer(bin.length);
+  const len = bin.length;
+  const buf = new ArrayBuffer(len);
   const bytes = new Uint8Array(buf);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
   return new Float32Array(buf);
 }
 
-/** L2-normalize vector */
-function l2(v) {
-  let s = 0;
-  for (let i = 0; i < v.length; i++) s += v[i] * v[i];
-  const inv = s > 0 ? 1 / Math.sqrt(s) : 0;
-  const out = new Float32Array(v.length);
-  for (let i = 0; i < v.length; i++) out[i] = v[i] * inv;
-  return out;
+async function fetchFirstOk(urls) {
+  let lastErr;
+  for (const url of urls) {
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
+      const j = await r.json();
+      console.log("[sprites] loaded index:", url, "entries=", (j?.items?.length ?? j?.meta?.length ?? 0));
+      return j;
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  throw lastErr || new Error("No candidate index URL succeeded");
 }
 
-/** Load and cache the CLIP index (vectors + meta). */
+function normalizeIndex(json) {
+  // New format:
+  // { dim: 512, items: [{ key, name, drive_cache, sprite, vector_b64 }] }
+  if (Array.isArray(json?.items)) {
+    const dim = Number(json?.dim) || 512;
+    const items = json.items;
+    const vectors = new Array(items.length);
+    const meta = new Array(items.length);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i] || {};
+      const v = it.vector_b64 ? b64ToFloat32(it.vector_b64) : new Float32Array(dim);
+      // prefer local sprite path if present; otherwise fall back to drive_cache
+      const localSprite = it.sprite ? `${BASE}/sprites/${it.sprite}` : "";
+      const url = localSprite || it.drive_cache || "";
+      vectors[i] = v;
+      meta[i] = { key: it.key || String(i), name: it.name || it.key || String(i), url };
+    }
+    return { dim, count: items.length, vectors, meta, normalized: true };
+  }
+
+  // Legacy format:
+  // { vectors: ["base64...", ...], meta: [{key,name,url}], (optional) dim }
+  if (Array.isArray(json?.vectors) && Array.isArray(json?.meta)) {
+    const vectors = json.vectors.map(b64ToFloat32);
+    const dim = vectors[0]?.length || Number(json?.dim) || 512;
+    // Prefer local sprite if meta has 'sprite' or name→filename pattern
+    const meta = json.meta.map((m, i) => {
+      const spr =
+        m.sprite ? `${BASE}/sprites/${m.sprite}` :
+        (m.key ? `${BASE}/sprites/${m.key}.png` : "");
+      const url = spr || m.url || m.drive_cache || "";
+      return { key: m.key || String(i), name: m.name || m.key || String(i), url };
+    });
+    return { dim, count: vectors.length, vectors, meta, normalized: true };
+  }
+
+  throw new Error("Unrecognized sprite index format");
+}
+
 export async function getSpriteIndex() {
   if (_indexPromise) return _indexPromise;
-
   _indexPromise = (async () => {
-    const tried = [];
-    const candidates = [
-      SPRITE_INDEX_URL,                            // explicit/default
-      resolvePublic("sprite_index_clip.json"),     // safety: recompute
-      "/sprite_index_clip.json",                   // last-resort absolute (useful locally)
-    ];
-
-    let raw = null, lastErr;
-    for (const u of candidates) {
-      if (tried.includes(u)) continue;
-      tried.push(u);
-      try {
-        const res = await fetch(u, { cache: "no-store" });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        raw = await res.json();
-        console.log("[sprites] loaded index:", u, "entries=", raw?.meta?.length || raw?.length || 0);
-        break;
-      } catch (e) {
-        lastErr = e;
+    try {
+      const json = await fetchFirstOk(CANDIDATES);
+      const idx = normalizeIndex(json);
+      if (!idx.count || !idx.dim) {
+        console.warn("[sprites] Empty/invalid index shape:", idx);
       }
+      return idx;
+    } catch (err) {
+      console.warn("[sprites] failed to load index:", err);
+      throw new Error(`Failed to load sprite index: ${err.message}`);
     }
-    if (!raw) {
-      throw new Error(`[sprites] failed to load sprite index (${tried.join(" → ")}): ${lastErr?.message || "unknown"}`);
-    }
-
-    // Accept either {vectors:[], meta:[]} or legacy array form (meta-only)
-    const meta = raw.meta || (Array.isArray(raw) ? raw : []);
-    const V = raw.vectors || [];
-    const vectors = new Array(meta.length);
-
-    if (Array.isArray(V) && V.length === meta.length) {
-      for (let i = 0; i < V.length; i++) {
-        const vi = V[i];
-        let f32;
-        if (typeof vi === "string") f32 = b64ToFloat32(vi);
-        else if (Array.isArray(vi)) f32 = new Float32Array(vi);
-        else if (vi instanceof Float32Array) f32 = vi;
-        else throw new Error("Unsupported vector entry type");
-        vectors[i] = l2(f32); // normalize for cosine sims
-      }
-    } else if (V.length && V.length !== meta.length) {
-      console.warn("[sprites] vector/meta length mismatch:", V.length, meta.length);
-    } else if (!V.length) {
-      console.warn("[sprites] no vectors in index; matching will not work!");
-    }
-
-    return { vectors, meta }; // N-length arrays
   })();
-
   return _indexPromise;
-}
-
-/** Legacy helper: return only meta list. */
-export async function getSprites() {
-  const { meta } = await getSpriteIndex();
-  return meta;
-}
-
-/** No-op preload (kept for API compatibility). */
-export async function preloadSprites(/* countOrIndex, onProgress, opts */) {
-  return [];
 }

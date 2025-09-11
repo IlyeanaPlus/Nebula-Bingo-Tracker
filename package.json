@@ -6,10 +6,10 @@
   "engines": { "node": "20.19.0" },
   "scripts": {
     "preinstall": "node ./scripts/ci-only.cjs",
-    "dev": "vite",
+    "dev": "vite --host --port 5173",
     "build": "vite build && node ./scripts/prune-ort.mjs && node ./scripts/verify-dist.cjs",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview --host --port 4173"
   },
   "dependencies": {
     "onnxruntime-web": "1.22.0",

@@ -1,0 +1,25 @@
+*** PATCH: Edit src/components/BingoCard.jsx ***
+1) Add this helper near the top (below imports):
+------------------------------------------------
+function ensure25(arr, fill=false) {
+  const out = Array.isArray(arr) ? arr.slice(0, 25) : [];
+  while (out.length < 25) out.push(!!fill && false);
+  return out.map(Boolean);
+}
+------------------------------------------------
+
+2) When building view props, replace your `checked` binding with:
+------------------------------------------------
+checked: ensure25(h.checked),
+------------------------------------------------
+
+3) (Dev only) After composing `viewProps` (and `modalProps` if used), validate:
+------------------------------------------------
+if (import.meta.env.DEV) {
+  try {
+    const { validateBingoCardViewProps, validateGridTunerModalProps } = await import("../contracts/validateAdapter");
+    validateBingoCardViewProps(viewProps);
+    if (h.showTuner) validateGridTunerModalProps(modalProps);
+  } catch {}
+}
+------------------------------------------------
