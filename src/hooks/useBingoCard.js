@@ -51,12 +51,12 @@ async function tileToCanvas(tile) {
   return tileToCanvasSync(tile);
 }
 
-// Test-time augmentation: average N crops per tile, then L2-norm
-async function embedWithAug(canvas, session, times = 5) {
-  const crops = [canvas]; // (we can add offsets later if needed)
+// Test-time augmentation (simple): average N crops per tile, then L2-norm
+async function embedWithAug(canvas, session, times = 1) {
+  const crops = [canvas]; // room for jittered crops later
   let acc = null, used = 0;
   for (const c of crops) {
-    const out = await embedImage(c, session); // respects tuning.unboardEps internally
+    const out = await embedImage(c, session);
     const vec =
       (out && out.data && out.data instanceof Float32Array && out.data) ||
       (out instanceof Float32Array ? out : new Float32Array(out?.data || []));
@@ -67,8 +67,8 @@ async function embedWithAug(canvas, session, times = 5) {
   }
   if (!acc || used === 0) return null;
   // L2-norm
-  let sum = 0.0; for (let i = 0; i < acc.length; i++) sum += acc[i] * acc[i];
-  const inv = sum > 0 ? 1 / Math.sqrt(sum) : 0;
+  let s = 0.0; for (let i = 0; i < acc.length; i++) s += acc[i] * acc[i];
+  const inv = s > 0 ? 1 / Math.sqrt(s) : 0;
   for (let i = 0; i < acc.length; i++) acc[i] *= inv;
   return acc;
 }
@@ -90,7 +90,7 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
     onTitleInputBlur: (e) => commitRenaming(e?.currentTarget?.value ?? title),
   };
 
-  // ---- preview state for CropPreviewModal (optional) ----
+  // Make preview modal able to read current state (optional)
   if (typeof window !== "undefined") {
     window.__BINGO_PREVIEW_STATE__ = {
       getImage: () => tunerImage,
@@ -145,7 +145,6 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   const onTunerConfirm = async (finalFractions) => {
     const f = finalFractions || tunerFractions || fractions || { left: 0, top: 0, width: 1, height: 1 };
 
-    // Show HUD immediately so user sees progress even as modal closes
     setAnalyzing(true);
     setProgress(5);
     setFractions(f);
@@ -164,8 +163,8 @@ export default function useBingoCard({ card, manifest, onChange, onRemove }) {
       const session = await getClipSession();
       setProgress(30);
 
-      // 3) Sprite index (512-D rows)
-      const index = await ensureSpriteIndex(); // { dim, count, vectors, meta, normalized:true }
+      // 3) Sprite index (512-D)
+      const index = await ensureSpriteIndex(); // { dim, count, vectors/meta, normalized:true }
       log("[useBingoCard] index shape:", { dim: index?.dim || 0, count: index?.count || 0 });
       setProgress(35);
 

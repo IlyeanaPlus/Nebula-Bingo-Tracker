@@ -1,10 +1,20 @@
-// Expose stable URLs (no ?url) for ORT’s JSEP loader + wasm in dev & prod.
-// No dynamic imports; no HMR noise.
+// src/ensureOrtAsset.js
+import ort from "./utils/ortEnv";
 
-const MJS_HREF  = new URL("./vendor/ort/ort-wasm-simd-threaded.jsep.mjs",  import.meta.url).href;
-const WASM_HREF = new URL("./vendor/ort/ort-wasm-simd-threaded.jsep.wasm", import.meta.url).href;
+export default function ensureOrtAsset() {
+  const DEV = import.meta.env.DEV;
+  const base = DEV ? "/src/vendor/ort/" : "/ort/";
+  const variant = "simd-threaded";
 
-window.__ORT_JSEP_MJS_EMITTED__ = MJS_HREF;
-window.__ORT_WASM_EMITTED__     = WASM_HREF;
+  const mjs  = `${base}ort-wasm-${variant}.jsep.mjs`;
+  const wasm = `${base}ort-wasm-${variant}.jsep.wasm`;
 
-console.log("[ensureOrtAsset] mjs:", MJS_HREF, "wasm:", WASM_HREF);
+  // Record for logs / optional prewarm.
+  window.__ORT_WASM_EMITTED__ = { mjs, wasm };
+
+  // Ensure ORT sees the same base (string, not an object).
+  ort.env.wasm.wasmPaths = base;
+
+  console.log("[ensureOrtAsset] mjs:", mjs, "wasm:", wasm);
+  return { mjs, wasm };
+}

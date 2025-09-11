@@ -5,7 +5,7 @@
 const BASE = (import.meta?.env?.BASE_URL || "/").replace(/\/+$/, ""); // "" or "/Nebula-Bingo-Tracker"
 const CANDIDATES = [
   `${BASE}/sprite_index_clip.json`,
-  `${BASE}/sprites/sprite_index_clip.json`,
+  `${BASE}/public/sprite_index_clip.json`,
   `${BASE}/assets/sprite_index_clip.json`,
 ];
 
