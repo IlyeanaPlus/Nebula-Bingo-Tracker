@@ -330,3 +330,148 @@ body {
   padding: 4px 8px;
   text-align: center;
 }
+
+/* ===== Mobile-first helpers (non-destructive) ===== */
+:root {
+  --gap: 12px;
+  --card-max: 540px;         /* keeps cards from growing too wide on desktop */
+  --tap: 44px;               /* minimum touch target */
+}
+
+html, body, #root {
+  height: calc(var(--vh, 1vh) * 100);
+}
+
+.app,
+.app-root {
+  min-height: calc(var(--vh, 1vh) * 100);
+  display: flex;
+  flex-direction: column;
+}
+
+/* Main layout splits sidebar + content on wide screens; stacks on mobile */
+.layout {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  gap: var(--gap);
+  padding: var(--gap);
+}
+
+@media (max-width: 840px) {
+  .layout {
+    grid-template-columns: 1fr;
+  }
+  .sidebar {
+    order: -1;               /* show sidebar first on narrow screens */
+  }
+}
+
+/* Sidebar buttons stack on mobile */
+.sidebar .btn-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+@media (max-width: 600px) {
+  .sidebar .btn-row {
+    flex-direction: column;
+  }
+  .sidebar .btn-row .btn {
+    width: 100%;
+    min-height: var(--tap);
+  }
+}
+
+/* Bingo cards scale fluidly */
+.bingo-card {
+  width: 100%;
+  max-width: var(--card-max);
+  margin-inline: auto;
+}
+
+/* Ensure grid cells remain square while the card shrinks */
+.bingo-card .grid {
+  width: 100%;
+  /* If you explicitly set a height elsewhere, prefer using aspect-ratio on cells instead */
+}
+
+.bingo-card .cell {
+  position: relative;
+  aspect-ratio: 1 / 1;       /* keeps perfect squares */
+  overflow: hidden;
+}
+
+.bingo-card .cell img,
+.bingo-card .cell canvas {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+/* Larger tap targets for core actions */
+button,
+.button,
+input[type="file"] + label,
+[role="button"] {
+  min-height: var(--tap);
+  padding: 10px 14px;
+}
+
+/* Make card header controls wrap nicely */
+.card-header .controls {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.card-header .controls .btn {
+  flex: 1 0 auto;
+  min-height: var(--tap);
+}
+
+/* Typography clamps for mobile readability */
+.card-header .title {
+  font-size: clamp(14px, 2.3vw, 18px);
+  line-height: 1.2;
+}
+
+/* Modal should fill small screens comfortably */
+.modal,
+.grid-tuner-modal {
+  max-width: min(100vw - 24px, 960px);
+  width: 100%;
+  margin: 12px auto;
+}
+@media (max-width: 600px) {
+  .modal,
+  .grid-tuner-modal {
+    height: auto;
+    max-height: calc(var(--vh, 1vh) * 100 - 24px);
+    overflow: auto;
+  }
+}
+
+/* Avoid tiny file input; make its label look tappable */
+input[type="file"] {
+  /* visually hidden pattern if you’re using a styled label */
+  position: absolute;
+  width: 1px; height: 1px;
+  padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0);
+  white-space: nowrap; border: 0;
+}
+input[type="file"] + label {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 10px 14px;
+  border: 1px solid var(--border, #333);
+  border-radius: 8px;
+  cursor: pointer;
+}
+
+/* Show the sidebar toggle only on small screens */
+.sidebar-toggle { display: none; margin: 8px; }
+@media (max-width: 840px) {
+  .sidebar-toggle { display: block; }
+}
