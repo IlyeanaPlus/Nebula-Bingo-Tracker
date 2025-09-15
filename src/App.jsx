@@ -83,6 +83,9 @@ export default function App() {
     setCards((prev) => prev.map((c, i) => (i === currentIndex ? nextCard : c)));
   }
 
+    // Mobile: show/hide sidebar
+  const [showSidebar, setShowSidebar] = useState(true);
+
   function handleRemoveCard() {
     if (currentIndex < 0) return;
     setCards((prev) => {
@@ -96,18 +99,31 @@ export default function App() {
     });
   }
 
-  return (
-    <div className="app-root">
-      <Header />
       <div className="app-body">
-        <Sidebar
-          cards={cards}
-          currentIndex={currentIndex}
-          onSelect={handleSelectCard}
-          onNewCard={handleNewCard}
-          onGetSprites={handleGetSprites}
-          spritesReady={!!manifest && Object.keys(manifest || {}).length > 0}
-        />
+        {/* Mobile-only toggle; CSS will hide on wide screens */}
+        <div className="sidebar-toggle" style={{ margin: 8 }}>
+          <button
+            className="btn"
+            onClick={() => setShowSidebar((s) => !s)}
+            aria-expanded={showSidebar}
+            aria-controls="app-sidebar"
+            type="button"
+          >
+            {showSidebar ? "Hide tools" : "Show tools"}
+          </button>
+        </div>
+
+        {/* Sidebar wrapped in <aside> so we can hide it on phones without unmounting */}
+        <aside id="app-sidebar" style={{ display: showSidebar ? "" : "none" }}>
+          <Sidebar
+            cards={cards}
+            currentIndex={currentIndex}
+            onSelect={handleSelectCard}
+            onNewCard={handleNewCard}
+            onGetSprites={handleGetSprites}
+            spritesReady={!!manifest && Object.keys(manifest || {}).length > 0}
+          />
+        </aside>
 
         <main className="main-content">
           {cards.length > 0 ? (
@@ -138,6 +154,4 @@ export default function App() {
           )}
         </main>
       </div>
-    </div>
-  );
 }
