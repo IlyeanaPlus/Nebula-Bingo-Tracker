@@ -8,7 +8,7 @@ const WASM_BASE = DEV ? "/src/vendor/ort/" : "/ort/";
 ort.env.wasm.wasmPaths = WASM_BASE;
 
 // Safe defaults; you can tune later.
-ort.env.wasm.simd = false;
+ort.env.wasm.simd = true;
 ort.env.wasm.numThreads = 1;
 ort.env.wasm.proxy = false;
 

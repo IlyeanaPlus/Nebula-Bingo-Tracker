@@ -1,94 +1,112 @@
 // src/utils/sprites.js
-// Robust sprite index loader (supports rows format and legacy vectors/meta).
-// Prefers local /sprites/*.png URLs; falls back to any drive_cache if needed.
+// Loads sprite_index_clip.json (rows+base64 preferred) and prepares:
+//   - vecs:   Array<Float32Array(512)>
+//   - shapes: Array<Float32Array(64) | null>
+//   - refs:   [{ key, name, spriteUrl }]
+// Works with GitHub Pages (BASE_URL aware).
 
-const BASE = (import.meta?.env?.BASE_URL || "/").replace(/\/+$/, ""); // "" or "/Nebula-Bingo-Tracker"
-const CANDIDATES = [
-  `${BASE}/sprite_index_clip.json`,
-  `${BASE}/public/sprite_index_clip.json`,
-  `${BASE}/assets/sprite_index_clip.json`,
-];
+const BASE = (import.meta?.env?.BASE_URL || "/").replace(/\/+$/, "");
 
-let _indexPromise = null;
-
-function b64ToFloat32(b64) {
+// --- Decoders ---
+function b64ToF32(b64) {
   const bin = atob(b64);
-  const len = bin.length;
-  const buf = new ArrayBuffer(len);
-  const bytes = new Uint8Array(buf);
-  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  const len = bin.length / 4;
+  const buf = new ArrayBuffer(len * 4);
+  const view = new DataView(buf);
+  for (let i = 0; i < len; i++) {
+    view.setUint8(i * 4 + 0, bin.charCodeAt(i * 4 + 0));
+    view.setUint8(i * 4 + 1, bin.charCodeAt(i * 4 + 1));
+    view.setUint8(i * 4 + 2, bin.charCodeAt(i * 4 + 2));
+    view.setUint8(i * 4 + 3, bin.charCodeAt(i * 4 + 3));
+  }
   return new Float32Array(buf);
 }
 
-async function fetchFirstOk(urls) {
-  let lastErr;
-  for (const url of urls) {
-    try {
-      const r = await fetch(url, { cache: "no-store" });
-      if (!r.ok) throw new Error(`${r.status} ${r.statusText}`);
-      const j = await r.json();
-      console.log("[sprites] loaded index:", url, "entries=", (j?.items?.length ?? j?.meta?.length ?? 0));
-      return j;
-    } catch (e) {
-      lastErr = e;
-    }
-  }
-  throw lastErr || new Error("No candidate index URL succeeded");
+function b64ToU8(b64) {
+  const bin = atob(b64);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
 }
 
-function normalizeIndex(json) {
-  // New format:
-  // { dim: 512, items: [{ key, name, drive_cache, sprite, vector_b64 }] }
-  if (Array.isArray(json?.items)) {
-    const dim = Number(json?.dim) || 512;
-    const items = json.items;
-    const vectors = new Array(items.length);
-    const meta = new Array(items.length);
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i] || {};
-      const v = it.vector_b64 ? b64ToFloat32(it.vector_b64) : new Float32Array(dim);
-      // prefer local sprite path if present; otherwise fall back to drive_cache
-      const localSprite = it.sprite ? `${BASE}/sprites/${it.sprite}` : "";
-      const url = localSprite || it.drive_cache || "";
-      vectors[i] = v;
-      meta[i] = { key: it.key || String(i), name: it.name || it.key || String(i), url };
-    }
-    return { dim, count: items.length, vectors, meta, normalized: true };
+function decodeShape64(b64) {
+  if (!b64) return null;
+  const u = b64ToU8(b64);
+  if (u.length < 64) return null;
+  const f = new Float32Array(64);
+  let s = 0;
+  for (let i = 0; i < 64; i++) {
+    const v = u[i] / 255;
+    f[i] = v;
+    s += v * v;
   }
-
-  // Legacy format:
-  // { vectors: ["base64...", ...], meta: [{key,name,url}], (optional) dim }
-  if (Array.isArray(json?.vectors) && Array.isArray(json?.meta)) {
-    const vectors = json.vectors.map(b64ToFloat32);
-    const dim = vectors[0]?.length || Number(json?.dim) || 512;
-    // Prefer local sprite if meta has 'sprite' or name→filename pattern
-    const meta = json.meta.map((m, i) => {
-      const spr =
-        m.sprite ? `${BASE}/sprites/${m.sprite}` :
-        (m.key ? `${BASE}/sprites/${m.key}.png` : "");
-      const url = spr || m.url || m.drive_cache || "";
-      return { key: m.key || String(i), name: m.name || m.key || String(i), url };
-    });
-    return { dim, count: vectors.length, vectors, meta, normalized: true };
-  }
-
-  throw new Error("Unrecognized sprite index format");
+  s = Math.sqrt(Math.max(s, 1e-12));
+  for (let i = 0; i < 64; i++) f[i] /= s;
+  return f;
 }
+
+// --- Loader ---
+let _indexPromise = null;
 
 export async function getSpriteIndex() {
   if (_indexPromise) return _indexPromise;
+
   _indexPromise = (async () => {
-    try {
-      const json = await fetchFirstOk(CANDIDATES);
-      const idx = normalizeIndex(json);
-      if (!idx.count || !idx.dim) {
-        console.warn("[sprites] Empty/invalid index shape:", idx);
+    const url = `${BASE}/sprite_index_clip.json`;
+    const r = await fetch(url, { cache: "no-store" });
+    if (!r.ok) throw new Error(`Failed to load ${url}: ${r.status}`);
+    const j = await r.json();
+
+    // New format: { dim, items:[{ key,name,drive_cache,sprite,vector_b64,shape64_b64? }] }
+    if (Array.isArray(j.items)) {
+      const n = j.items.length;
+      const dim = j.dim || 512;
+
+      const vecs = new Array(n);
+      const shapes = new Array(n);
+      const refs = new Array(n);
+
+      for (let i = 0; i < n; i++) {
+        const it = j.items[i];
+        vecs[i] = b64ToF32(it.vector_b64);
+        shapes[i] = decodeShape64(it.shape64_b64);
+        const spriteUrl = it.sprite
+          ? `${BASE}/sprites/${encodeURIComponent(it.sprite)}`
+          : (it.drive_cache || "");
+        refs[i] = { key: it.key, name: it.name, spriteUrl };
       }
-      return idx;
-    } catch (err) {
-      console.warn("[sprites] failed to load index:", err);
-      throw new Error(`Failed to load sprite index: ${err.message}`);
+
+      console.log("[sprites] loaded index:", url, "entries=", n);
+      return { dim, count: n, vecs, shapes, refs, normalized: true };
     }
+
+    // Fallback: old format { dim?, vectors: base64[] or flat[], meta: [...] }
+    // Try to decode best-effort.
+    if (Array.isArray(j.vectors) && Array.isArray(j.meta)) {
+      const n = j.meta.length;
+      const dim = j.dim || 512;
+
+      const vecs = new Array(n);
+      const shapes = new Array(n).fill(null);
+      const refs = new Array(n);
+
+      // vectors might already be base64 per-row; support both
+      for (let i = 0; i < n; i++) {
+        const v = j.vectors[i];
+        vecs[i] = typeof v === "string" ? b64ToF32(v) : new Float32Array(v);
+        const m = j.meta[i] || {};
+        const spriteUrl = m.sprite
+          ? `${BASE}/sprites/${encodeURIComponent(m.sprite)}`
+          : (m.url || m.drive_cache || "");
+        refs[i] = { key: m.key || String(i), name: m.name || m.key || String(i), spriteUrl };
+      }
+
+      console.log("[sprites] loaded legacy index:", url, "entries=", n);
+      return { dim, count: n, vecs, shapes, refs, normalized: true };
+    }
+
+    throw new Error("Unrecognized sprite index format.");
   })();
+
   return _indexPromise;
 }

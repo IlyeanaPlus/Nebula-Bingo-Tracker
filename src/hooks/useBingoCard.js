@@ -3,6 +3,7 @@ import { useRef, useState } from "react";
 import { fileToImage, computeCrops25 } from "../utils/image";
 import { getClipSession, embedImage } from "../utils/clipSession";
 import { getSpriteIndex } from "../utils/sprites";
+import { prepForClip } from "../utils/cropFx";
 import { findBestMatch } from "../utils/matchers";
 import { tuning } from "../tuning/tuningStore";
 import { spriteUrlFromMeta } from "../utils/imageHosts";
@@ -51,27 +52,100 @@ async function tileToCanvas(tile) {
   return tileToCanvasSync(tile);
 }
 
-// Test-time augmentation (simple): average N crops per tile, then L2-norm
+// Test-time augmentation: average N jittered crops, then L2-norm.
+// times=1 means "no jitter" (just the original).
 async function embedWithAug(canvas, session, times = 1) {
-  const crops = [canvas]; // room for jittered crops later
-  let acc = null, used = 0;
-  for (const c of crops) {
-    const out = await embedImage(c, session);
+  // tiny jitter helper (±1 px grid)
+  function jitterCanvas(src, j) {
+    if (j === 0) return src;
+    const dx = ((j % 3) - 1);        // -1, 0, +1
+    const dy = (((j / 3) | 0) - 1);  // -1, 0, +1 (for up to 9)
+    const c = document.createElement("canvas");
+    c.width = src.width; c.height = src.height;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(src, dx, dy);
+    return c;
+  }
+
+  const N = Math.max(1, times);
+  let acc = null, used = 0, dim = 0;
+
+  for (let i = 0; i < N; i += 1) {
+    const c = jitterCanvas(canvas, i);                 // <-- use c (not canvas)
+    const fx = prepForClip(c, (tuning.get?.() || {})); // <-- prep c (not canvas)
+    const out = await embedImage(fx.embedCanvas, session); // <-- only (canvas, session)
+    // Test-time augmentation: average N jittered crops, then L2-norm.
+// times=1 means "no jitter" (just the original).
+async function embedWithAug(canvas, session, times = 1) {
+  // tiny jitter helper (±1 px grid)
+  function jitterCanvas(src, j) {
+    if (j === 0) return src;
+    const dx = ((j % 3) - 1);        // -1, 0, +1
+    const dy = (((j / 3) | 0) - 1);  // -1, 0, +1 (for up to 9)
+    const c = document.createElement("canvas");
+    c.width = src.width; c.height = src.height;
+    const ctx = c.getContext("2d");
+    ctx.drawImage(src, dx, dy);
+    return c;
+  }
+
+  const N = Math.max(1, times);
+  let acc = null, used = 0, dim = 0;
+
+  for (let i = 0; i < N; i += 1) {
+    const c = jitterCanvas(canvas, i);                 // <-- use c (not canvas)
+    const fx = prepForClip(c, (tuning.get?.() || {})); // <-- prep c (not canvas)
+    const out = await embedImage(fx.embedCanvas, session); // <-- only (canvas, session)
+
     const vec =
-      (out && out.data && out.data instanceof Float32Array && out.data) ||
+      (out && out.data instanceof Float32Array && out.data) ||
       (out instanceof Float32Array ? out : new Float32Array(out?.data || []));
+
     if (!vec || !vec.length) continue;
-    if (!acc) acc = new Float32Array(vec.length);
-    for (let i = 0; i < vec.length; i++) acc[i] += vec[i];
+    if (!acc) { acc = new Float32Array(vec.length); dim = vec.length; }
+    for (let k = 0; k < dim; k++) acc[k] += vec[k];
     used++;
   }
+
   if (!acc || used === 0) return null;
-  // L2-norm
-  let s = 0.0; for (let i = 0; i < acc.length; i++) s += acc[i] * acc[i];
-  const inv = s > 0 ? 1 / Math.sqrt(s) : 0;
-  for (let i = 0; i < acc.length; i++) acc[i] *= inv;
+
+  // average
+  for (let k = 0; k < acc.length; k++) acc[k] /= used;
+
+  // L2-normalize
+  let s = 0.0; for (let k = 0; k < acc.length; k++) s += acc[k] * acc[k];
+  if (s > 0) {
+    const inv = 1 / Math.sqrt(s);
+    for (let k = 0; k < acc.length; k++) acc[k] *= inv;
+  }
   return acc;
 }
+
+
+    const vec =
+      (out && out.data instanceof Float32Array && out.data) ||
+      (out instanceof Float32Array ? out : new Float32Array(out?.data || []));
+
+    if (!vec || !vec.length) continue;
+    if (!acc) { acc = new Float32Array(vec.length); dim = vec.length; }
+    for (let k = 0; k < dim; k++) acc[k] += vec[k];
+    used++;
+  }
+
+  if (!acc || used === 0) return null;
+
+  // average
+  for (let k = 0; k < acc.length; k++) acc[k] /= used;
+
+  // L2-normalize
+  let s = 0.0; for (let k = 0; k < acc.length; k++) s += acc[k] * acc[k];
+  if (s > 0) {
+    const inv = 1 / Math.sqrt(s);
+    for (let k = 0; k < acc.length; k++) acc[k] *= inv;
+  }
+  return acc;
+}
+
 
 export default function useBingoCard({ card, manifest, onChange, onRemove }) {
   // --- Title / rename ---

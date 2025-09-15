@@ -1,203 +1,132 @@
 // src/utils/matchers.js
-// Verbose cosine-similarity matcher with deep logging.
-// Works with indices where vectors are Float32Array[] or base64 Float32 strings.
-// Reads default threshold from tuningStore but allows an override.
+// Re-ranking matcher: CLIP cosine (512-D) blended with 64-D shape similarity.
+// Usage:
+//   const match = findBestMatch(vec, index, { threshold: 0.34, canvas, topK: 200, shapeWeight: 0.25 });
+// or keep legacy:
+//   const match = findBestMatch(vec, index, 0.34);
 
-import { tuning } from "../tuning/tuningStore";
+function dot(a, b) { let s = 0; for (let i = 0; i < a.length; i++) s += a[i] * b[i]; return s; }
+function argsortDesc(arr) { return Array.from(arr.keys()).sort((i, j) => arr[j] - arr[i]); }
 
-const log  = (...a) => console.log("[matchers]", ...a);
-const warn = (...a) => console.warn("[matchers]", ...a);
+// ---- 64-D shape signature from a canvas (Sobel -> 8x8 pooled -> L2) ----
+function computeShape64(canvas) {
+  const w = 32, h = 32;
+  const tmp = document.createElement("canvas");
+  tmp.width = w; tmp.height = h;
+  const tctx = tmp.getContext("2d");
+  tctx.drawImage(canvas, 0, 0, w, h);
+  const { data } = tctx.getImageData(0, 0, w, h);
 
-// --- helpers --------------------------------------------------------------
+  // grayscale
+  const gray = new Float32Array(w * h);
+  for (let i = 0, p = 0; i < data.length; i += 4, p++) {
+    gray[p] = (0.2989 * data[i] + 0.5870 * data[i + 1] + 0.1140 * data[i + 2]) / 255;
+  }
 
-function l2NormalizeInPlace(v) {
-  if (!v || !v.length) return v;
-  let s = 0.0;
-  for (let i = 0; i < v.length; i++) s += v[i] * v[i];
-  const inv = s > 0 ? 1 / Math.sqrt(s) : 0;
-  for (let i = 0; i < v.length; i++) v[i] *= inv;
+  // Sobel gradients
+  const gx = new Float32Array(w * h), gy = new Float32Array(w * h);
+  const Kx = [1,0,-1, 2,0,-2, 1,0,-1];
+  const Ky = [1,2, 1, 0,0,0, -1,-2,-1];
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      let sx = 0, sy = 0, k = 0;
+      for (let yy = -1; yy <= 1; yy++) {
+        for (let xx = -1; xx <= 1; xx++) {
+          const v = gray[(y + yy) * w + (x + xx)];
+          sx += v * Kx[k]; sy += v * Ky[k]; k++;
+        }
+      }
+      const i = y * w + x;
+      gx[i] = sx; gy[i] = sy;
+    }
+  }
+
+  // 8x8 average pool over 32x32 (blocks of 4x4)
+  const v = new Float32Array(64);
+  for (let gyc = 0; gyc < 8; gyc++) {
+    for (let gxc = 0; gxc < 8; gxc++) {
+      let sum = 0;
+      for (let yy = 0; yy < 4; yy++) {
+        for (let xx = 0; xx < 4; xx++) {
+          const x = gxc * 4 + xx, y = gyc * 4 + yy, i = y * w + x;
+          sum += Math.hypot(gx[i], gy[i]);
+        }
+      }
+      v[gyc * 8 + gxc] = sum / 16;
+    }
+  }
+  // L2
+  let s = 0; for (let i = 0; i < 64; i++) s += v[i] * v[i];
+  s = Math.sqrt(Math.max(s, 1e-12));
+  for (let i = 0; i < 64; i++) v[i] /= s;
   return v;
 }
 
-function l2NormalizedCopy(v) {
-  if (!v || !v.length) return v;
-  let s = 0.0;
-  for (let i = 0; i < v.length; i++) s += v[i] * v[i];
-  const inv = s > 0 ? 1 / Math.sqrt(s) : 0;
-  const out = new Float32Array(v.length);
-  for (let i = 0; i < v.length; i++) out[i] = v[i] * inv;
+// Main API
+export function findBestMatch(vec, index, opts = {}) {
+  const isNumber = typeof opts === "number";
+  const threshold   = isNumber ? opts : (opts.threshold ?? 0.1);
+  const topK        = isNumber ? 200 : (opts.topK ?? 200);
+  const shapeWeight = isNumber ? 0.3 : (opts.shapeWeight ?? 0.3);
+  const canvas      = isNumber ? null  : (opts.canvas ?? null);
+
+  // 1) CLIP cosines
+  const sims = new Float32Array(index.count);
+  for (let i = 0; i < index.count; i++) sims[i] = dot(vec, index.vecs[i]);
+
+  // 2) Preselect by CLIP
+  const order = argsortDesc(sims).slice(0, topK);
+
+  // 3) Optional shape re-rank
+  let cropShape = null;
+  const useShape = !!(canvas && shapeWeight > 0 && index.shapes && index.shapes.length);
+  if (useShape) {
+    try { cropShape = computeShape64(canvas); }
+    catch { /* ignore */ }
+  }
+
+  let bestI = -1, bestScore = -1;
+  for (const i of order) {
+    let s = sims[i];
+    if (useShape && index.shapes[i]) {
+      const ss = dot(cropShape, index.shapes[i]); // 0..1
+      s = (1 - shapeWeight) * s + shapeWeight * ss;
+    }
+    if (s > bestScore) { bestScore = s; bestI = i; }
+  }
+
+  if (bestI < 0 || bestScore < threshold) {
+    // Debug breadcrumbs (comment out if noisy)
+    console.debug("[matchers] no acceptable match; best=", bestScore?.toFixed?.(3));
+    return null;
+  }
+
+  const ref = index.refs[bestI];
+  const out = { id: ref.key, ref, score: bestScore, spriteUrl: ref.spriteUrl };
+  console.debug("[matchers] best:", out.ref?.name, "score=", bestScore.toFixed(3));
   return out;
 }
 
-function decodeVecB64(b64) {
-  // Assume little-endian float32 (typical on x86 where the file was generated).
-  const bin = atob(b64);
-  const buf = new ArrayBuffer(bin.length);
-  const u8  = new Uint8Array(buf);
-  for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
-  return new Float32Array(buf);
-}
+// Optional: get top K with blended scores (handy for debugging)
+export function findTopK(vec, index, { canvas = null, topK = 10, shapeWeight = 0.25 } = {}) {
+  const sims = new Float32Array(index.count);
+  for (let i = 0; i < index.count; i++) sims[i] = dot(vec, index.vecs[i]);
 
-// Ensure index.vectors = Float32Array[] and index.dim is set
-function normalizeIndexLayout(index) {
-  if (!index) return index;
-  if (Array.isArray(index.vectors) && typeof index.vectors[0] === "string") {
-    log("decoding base64 vectors → Float32Array…");
-    index.vectors = index.vectors.map(decodeVecB64);
+  const order = argsortDesc(sims).slice(0, Math.max(topK, 10));
+  let cropShape = null;
+  if (canvas && shapeWeight > 0) {
+    try { cropShape = computeShape64(canvas); } catch {}
   }
-  if (!index.dim && Array.isArray(index.vectors) && index.vectors[0]) {
-    index.dim = index.vectors[0].length | 0;
-  }
-  index.count = index.count ?? (index.vectors?.length | 0);
-  return index;
-}
 
-// L2-normalize every row of the index if not already done
-function ensureIndexNormalized(index) {
-  if (!index || !Array.isArray(index.vectors)) return index;
-  if (index.normalized) return index;
-  let changed = 0;
-  for (let i = 0; i < index.vectors.length; i++) {
-    const row = index.vectors[i];
-    if (row && row.length) {
-      l2NormalizeInPlace(row);
-      changed++;
+  const rows = [];
+  for (const i of order) {
+    let s = sims[i];
+    if (cropShape && index.shapes[i]) {
+      const ss = dot(cropShape, index.shapes[i]);
+      s = (1 - shapeWeight) * s + shapeWeight * ss;
     }
+    rows.push({ i, score: s, ref: index.refs[i] });
   }
-  index.normalized = true;
-  log(`normalized ${changed} index vectors`);
-  return index;
-}
-
-// Compute cosine sim (dot of normalized vectors)
-function cosineDot(a, b) {
-  const n = Math.min(a.length, b.length);
-  let s = 0.0;
-  for (let i = 0; i < n; i++) s += a[i] * b[i];
-  return s;
-}
-
-// --- main API -------------------------------------------------------------
-
-/**
- * Find best match from a 512-D CLIP index.
- * @param {Float32Array} queryVec - raw or normalized (we'll normalize)
- * @param {object} index - { vectors: Float32Array[], meta:[], dim, count, normalized? }
- * @param {number} [overrideThreshold]
- * @returns {null | {bestIdx:number, score:number, ref:object, spriteUrl?:string, top5:Array}}
- */
-export function findBestMatch(queryVec, index, overrideThreshold) {
-  const store = (tuning.get?.() || {});
-  const threshold = (overrideThreshold ?? store.scoreThreshold ?? 0.28);
-
-  if (!queryVec || !queryVec.length) {
-    warn("empty query vector");
-    return null;
-  }
-  if (!index || !Array.isArray(index.vectors) || !index.vectors.length) {
-    warn("empty index or vectors missing");
-    return null;
-  }
-
-  normalizeIndexLayout(index);
-  const D = index.dim || queryVec.length;
-  if (queryVec.length !== D) {
-    warn(`dim mismatch: query=${queryVec.length} vs index=${D} (will compare over min len)`);
-  }
-
-  // Normalize once (both query and index).
-  ensureIndexNormalized(index);
-  const q = l2NormalizedCopy(queryVec);
-
-  log("running", {
-    qLen: q.length,
-    indexDim: D,
-    indexCount: index.count,
-    threshold,
-  });
-
-  // First pass: best only
-  let bestIdx = -1;
-  let bestScore = -2.0; // cosine in [-1, 1]
-  const N = index.vectors.length;
-  for (let i = 0; i < N; i++) {
-    const row = index.vectors[i];
-    if (!row || !row.length) continue;
-    const s = cosineDot(q, row);
-    if (s > bestScore) { bestScore = s; bestIdx = i; }
-  }
-
-  // Second pass: top-5 for logging/inspection
-  const top = [];
-  for (let i = 0; i < N; i++) {
-    const row = index.vectors[i];
-    if (!row || !row.length) continue;
-    const s = cosineDot(q, row);
-    if (top.length < 5) {
-      top.push([i, s]);
-      top.sort((a, b) => b[1] - a[1]);
-    } else if (s > top[top.length - 1][1]) {
-      top[top.length - 1] = [i, s];
-      top.sort((a, b) => b[1] - a[1]);
-    }
-  }
-
-  const prettyTop = top.map(([i, s]) => ({
-    i,
-    score: +s.toFixed(4),
-    key: index.meta?.[i]?.key,
-    name: index.meta?.[i]?.name,
-    hasUrl: !!(index.meta?.[i]?.url || index.meta?.[i]?.sprite || index.meta?.[i]?.drive_cache),
-  }));
-  log("candidates (top5):", prettyTop);
-
-  if (bestIdx < 0) {
-    warn("no candidate produced a score");
-    return null;
-  }
-
-  const bestMeta = index.meta?.[bestIdx] || {};
-  const spriteUrl =
-    bestMeta.url ||
-    bestMeta.sprite ||
-    bestMeta.drive_cache ||
-    bestMeta.image ||
-    bestMeta.thumb ||
-    bestMeta.path ||
-    bestMeta?.ref?.url ||
-    "";
-
-  if (!(bestScore >= threshold)) {
-    warn("best below threshold", {
-      bestIdx,
-      bestScore: +bestScore.toFixed(4),
-      threshold,
-      ref: bestMeta,
-    });
-    return null;
-  }
-
-  if (!spriteUrl) {
-    warn("best match has no sprite url", {
-      bestIdx,
-      score: +bestScore.toFixed(4),
-      ref: bestMeta,
-    });
-  } else {
-    log("BEST", {
-      bestIdx,
-      score: +bestScore.toFixed(4),
-      key: bestMeta.key,
-      name: bestMeta.name,
-      spriteUrl,
-    });
-  }
-
-  return {
-    bestIdx,
-    score: bestScore,
-    ref: bestMeta,
-    spriteUrl,
-    top5: prettyTop,
-  };
+  rows.sort((a, b) => b.score - a.score);
+  return rows.slice(0, topK);
 }
