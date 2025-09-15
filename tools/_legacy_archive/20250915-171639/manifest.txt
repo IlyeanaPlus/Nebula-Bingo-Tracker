@@ -1,0 +1,36 @@
+Legacy archive manifest — 2025-09-15T21:16:39.821Z
+Mode: move
+List: tools\legacy_list.txt
+Archive root: tools\_legacy_archive\20250915-171639
+
+Processed (0):
+
+Skipped (26):
+ - src/App.css (missing)
+ - src/assets/react.svg (missing)
+ - src/components/Cards.jsx (missing)
+ - src/components/Controls.jsx (missing)
+ - src/components/CropPreviewModal.jsx (missing)
+ - src/components/Diagnostics.jsx (missing)
+ - src/components/ReferencePanel.jsx (missing)
+ - src/hooks/useCards.js (missing)
+ - src/index.css (missing)
+ - src/services/drive.js (missing)
+ - src/services/drive_oauth.js (missing)
+ - src/utils/bgNeutralize.js (missing)
+ - src/utils/cache.js (missing)
+ - src/utils/cardBuilder.js (missing)
+ - src/utils/clip.js (missing)
+ - src/utils/clipMatcher.js (missing)
+ - src/utils/hashing.js (missing)
+ - src/utils/match.js (missing)
+ - src/utils/names.js (missing)
+ - src/utils/net.js (missing)
+ - src/utils/onnx.js (missing)
+ - src/utils/phash.js (missing)
+ - src/utils/publicPath.js (missing)
+ - src/utils/spriteMatch.js (missing)
+ - tools/extract_drive_public.mjs (missing)
+ - tools/mirror_drive_sprites.mjs (missing)
+
+Errors (0):

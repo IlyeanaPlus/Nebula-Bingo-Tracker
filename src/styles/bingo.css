@@ -82,7 +82,7 @@ body {
   top: 44px;
   bottom: 0;
   left: 0;
-  width: 260px;
+  width: 360px;
   padding: 12px;
   background: #111;
   border-right: 1px solid #222;
@@ -90,7 +90,7 @@ body {
 }
 .main-content {
   /* Sidebar is 260 + 12 + 12 = 284 total */
-  margin-left: 284px;
+  margin-left: 384px;
   padding: 16px;
   min-height: calc(100vh - 44px);
 }
@@ -331,64 +331,6 @@ body {
   text-align: center;
 }
 
-/* ===== Mobile-first helpers (non-destructive) ===== */
-:root {
-  --gap: 12px;
-  --card-max: 540px;         /* keeps cards from growing too wide on desktop */
-  --tap: 44px;               /* minimum touch target */
-}
-
-html, body, #root {
-  height: calc(var(--vh, 1vh) * 100);
-}
-
-.app,
-.app-root {
-  min-height: calc(var(--vh, 1vh) * 100);
-  display: flex;
-  flex-direction: column;
-}
-
-/* Main layout splits sidebar + content on wide screens; stacks on mobile */
-.layout {
-  display: grid;
-  grid-template-columns: 280px 1fr;
-  gap: var(--gap);
-  padding: var(--gap);
-}
-
-@media (max-width: 840px) {
-  .layout {
-    grid-template-columns: 1fr;
-  }
-  .sidebar {
-    order: -1;               /* show sidebar first on narrow screens */
-  }
-}
-
-/* Sidebar buttons stack on mobile */
-.sidebar .btn-row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-@media (max-width: 600px) {
-  .sidebar .btn-row {
-    flex-direction: column;
-  }
-  .sidebar .btn-row .btn {
-    width: 100%;
-    min-height: var(--tap);
-  }
-}
-
-/* Bingo cards scale fluidly */
-.bingo-card {
-  width: 100%;
-  max-width: var(--card-max);
-  margin-inline: auto;
-}
-
 /* Ensure grid cells remain square while the card shrinks */
 .bingo-card .grid {
   width: 100%;
@@ -435,21 +377,6 @@ input[type="file"] + label,
   line-height: 1.2;
 }
 
-/* Modal should fill small screens comfortably */
-.modal,
-.grid-tuner-modal {
-  max-width: min(100vw - 24px, 960px);
-  width: 100%;
-  margin: 12px auto;
-}
-@media (max-width: 600px) {
-  .modal,
-  .grid-tuner-modal {
-    height: auto;
-    max-height: calc(var(--vh, 1vh) * 100 - 24px);
-    overflow: auto;
-  }
-}
 
 /* Avoid tiny file input; make its label look tappable */
 input[type="file"] {
@@ -470,8 +397,6 @@ input[type="file"] + label {
   cursor: pointer;
 }
 
-/* Show the sidebar toggle only on small screens */
-.sidebar-toggle { display: none; margin: 8px; }
-@media (max-width: 840px) {
-  .sidebar-toggle { display: block; }
-}
+
+
+

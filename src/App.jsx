@@ -8,7 +8,6 @@ import "./utils/gridBox.js";
 import { prewarmOrtRuntime } from "./utils/ortPrewarm";
 import TuningPanel from "./components/TuningPanel.jsx";
 
-// ---- constants & helpers (outside component) ----
 const LS_KEYS = {
   CARDS: "nbt.cards.v1",
   CURRENT: "nbt.currentIndex.v1",
@@ -16,7 +15,6 @@ const LS_KEYS = {
 
 const makeBlankCard = (title = "New Card") => ({
   title,
-  // kept for compatibility; safe to remove later if unused
   saved: false,
   cells: Array.from({ length: 25 }, () => ({
     label: "",
@@ -26,9 +24,7 @@ const makeBlankCard = (title = "New Card") => ({
   lastImage: null,
 });
 
-// ---- component ----
 export default function App() {
-  // Pre-warm ORT runtime once at startup (does not create a session)
   useEffect(() => {
     prewarmOrtRuntime().catch(console.warn);
   }, []);
@@ -38,16 +34,15 @@ export default function App() {
       const raw = localStorage.getItem(LS_KEYS.CARDS);
       if (raw) return JSON.parse(raw);
     } catch {}
-    return []; // start with no cards
+    return [];
   });
 
   const [currentIndex, setCurrentIndex] = useState(() => {
     const raw = localStorage.getItem(LS_KEYS.CURRENT);
-    const idx = raw ? Number(raw) : -1; // -1 means “no selection”
+    const idx = raw ? Number(raw) : -1;
     return Number.isFinite(idx) ? idx : -1;
   });
 
-  // Persist cards & current index
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEYS.CARDS, JSON.stringify(cards));
@@ -56,11 +51,10 @@ export default function App() {
 
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEYS.CURRENT, String(currentIndex)); // -1 allowed
+      localStorage.setItem(LS_KEYS.CURRENT, String(currentIndex));
     } catch {}
   }, [currentIndex]);
 
-  // Manifest (sprites index) is stored at app level
   const [manifest, setManifest] = useState(null);
   function handleGetSprites(indexObj) {
     setManifest(indexObj);
@@ -69,7 +63,7 @@ export default function App() {
   function handleNewCard() {
     setCards((prev) => {
       const next = [...prev, makeBlankCard(`Card ${prev.length + 1}`)];
-      setCurrentIndex(next.length - 1); // select newly created
+      setCurrentIndex(next.length - 1);
       return next;
     });
   }
@@ -83,24 +77,23 @@ export default function App() {
     setCards((prev) => prev.map((c, i) => (i === currentIndex ? nextCard : c)));
   }
 
-    // Mobile: show/hide sidebar
   const [showSidebar, setShowSidebar] = useState(true);
 
   function handleRemoveCard() {
     if (currentIndex < 0) return;
     setCards((prev) => {
       const next = [...prev.slice(0, currentIndex), ...prev.slice(currentIndex + 1)];
-      if (next.length === 0) {
-        setCurrentIndex(-1); // nothing selected
-      } else {
-        setCurrentIndex(Math.min(currentIndex, next.length - 1));
-      }
+      if (next.length === 0) setCurrentIndex(-1);
+      else setCurrentIndex(Math.min(currentIndex, next.length - 1));
       return next;
     });
   }
 
+  // 👇 The missing return
+  return (
+    <div className="app-root">
+      <Header />
       <div className="app-body">
-        {/* Mobile-only toggle; CSS will hide on wide screens */}
         <div className="sidebar-toggle" style={{ margin: 8 }}>
           <button
             className="btn"
@@ -113,7 +106,6 @@ export default function App() {
           </button>
         </div>
 
-        {/* Sidebar wrapped in <aside> so we can hide it on phones without unmounting */}
         <aside id="app-sidebar" style={{ display: showSidebar ? "" : "none" }}>
           <Sidebar
             cards={cards}
@@ -154,4 +146,6 @@ export default function App() {
           )}
         </main>
       </div>
+    </div>
+  );
 }

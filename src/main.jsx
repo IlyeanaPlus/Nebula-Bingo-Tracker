@@ -2,7 +2,7 @@
 import ensureOrtAsset from "./ensureOrtAsset";
 import prewarmOrtRuntime from "./utils/ortPrewarm";
 import "./utils/ortEnv"; // sets env + wasm base
-
+import { initIndex } from "./initIndex";
 import React from "react";
 import { createRoot } from "react-dom/client";
 import App from "./App";
@@ -11,6 +11,7 @@ import "./styles/bingo.css";
 // Set base + announce URLs, then optionally warm the wasm.
 ensureOrtAsset();
 prewarmOrtRuntime();
+initIndex();
 
 // Fix mobile 100vh: set --vh to 1% of the viewport height
 function setVHVar() {

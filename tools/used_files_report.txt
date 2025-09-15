@@ -1,0 +1,69 @@
+# Used files report — 2025-09-15T20:40:11.453Z
+Project: C:\Users\sailb\Nebula-Bingo-Tracker
+
+Entry: src/main.jsx
+Total considered: 58
+Used in bundle:  27
+Maybe unused:    31
+
+== USED ==
+src/App.jsx
+src/components/BingoCard.jsx
+src/components/BingoCardView.jsx
+src/components/GridTunerModal.jsx
+src/components/Header.jsx
+src/components/Sidebar.jsx
+src/components/SidebarTuning.jsx
+src/components/TuningPanel.jsx
+src/contracts/validateAdapter.js
+src/ensureOrtAsset.js
+src/hooks/useBingoCard.js
+src/initIndex.js
+src/main.jsx
+src/styles/bingo.css
+src/tuning/tuningStore.js
+src/utils/clipSession.js
+src/utils/computeCrops25Squares.js
+src/utils/cropAssist.js
+src/utils/cropFx.js
+src/utils/gridBox.js
+src/utils/gridRefine.js
+src/utils/image.js
+src/utils/imageHosts.js
+src/utils/matchers.js
+src/utils/ortEnv.js
+src/utils/ortPrewarm.js
+src/utils/sprites.js
+src/vendor/ort/ort-wasm-simd-threaded.jsep.mjs
+src/vendor/ort/ort-wasm-simd-threaded.jsep.wasm
+src/hooks/useRefIndex.js
+src/utils/shapeSig.js
+tools/findUsedFiles.mjs
+
+== MAYBE UNUSED ==
+src/App.css
+src/assets/react.svg
+src/components/Cards.jsx
+src/components/Controls.jsx
+src/components/CropPreviewModal.jsx
+src/components/Diagnostics.jsx
+src/components/ReferencePanel.jsx
+src/hooks/useCards.js
+src/index.css
+src/services/drive.js
+src/services/drive_oauth.js
+src/utils/bgNeutralize.js
+src/utils/cache.js
+src/utils/cardBuilder.js
+src/utils/clip.js
+src/utils/clipMatcher.js
+src/utils/hashing.js
+src/utils/match.js
+src/utils/names.js
+src/utils/net.js
+src/utils/onnx.js
+src/utils/phash.js
+src/utils/publicPath.js
+src/utils/spriteMatch.js
+tools/extract_drive_public.mjs
+tools/mirror_drive_sprites.mjs
