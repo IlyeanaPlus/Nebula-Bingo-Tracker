@@ -1,154 +1,149 @@
 // src/utils/sprites.js
-// Loads /sprite_index_clip.json (root-served from public/),
-// builds the index for matchers, and auto-loads optional /sprite_head.json.
-// Includes legacy export getSpriteIndex for back-compat.
+// v4/v3 loader + legendary filtering at runtime.
 
-import { loadCosineHead } from "./matchers.js"; // explicit extension for ESM
+let _indexPromise;
+let _index;
 
-// ---- Base64 decoders --------------------------------------------------------
-
-function b64ToFloat32(b64) {
-  if (!b64) return new Float32Array(0);
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return new Float32Array(bytes.buffer); // float32 LE
+function decodeBase64F32(b64) {
+  const bin = atob(b64 || "");
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  return new Float32Array(bytes.buffer);
 }
 
-function b64ToUint8(b64) {
-  if (!b64) return new Uint8Array(0);
-  const bin = atob(b64);
-  const bytes = new Uint8Array(bin.length);
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
-  return bytes;
+// ---------------- legendary/ultra blocklist ----------------
+let _legendary = new Set([
+  // Kanto
+  "articuno","zapdos","moltres","mewtwo","mew",
+  // Johto
+  "raikou","entei","suicune","lugia","ho-oh","celebi",
+  // Hoenn
+  "regirock","regice","registeel","latias","latios","kyogre","groudon","rayquaza","jirachi","deoxys",
+  // Sinnoh
+  "uxie","mesprit","azelf","dialga","palkia","giratina","heatran","regigigas","cresselia","darkrai","shaymin","arceus",
+  // Unova
+  "cobalion","terrakion","virizion","tornadus","thundurus","landorus","kyurem","keldeo","meloetta","genesect",
+  // Kalos
+  "xerneas","yveltal","zygarde","diancie","hoopa","volcanion",
+  // Alola
+  "tapu-koko","tapu-lele","tapu-bulu","tapu-fini","cosmog","cosmoem","solgaleo","lunala","nihilego","buzzwole","pheromosa","xurkitree","celesteela","kartana","guzzlord","necrozma","magearna","marshadow","poipole","naganadel","stakataka","blacephalon","zeraora",
+  // Galar
+  "zacian","zamazenta","eternatus","kubfu","urshifu","zarude","regieleki","regidrago","glastrier","spectrier","calyrex",
+  // Hisui/Paldea + DLC
+  "enamorus","koraidon","miraidon","walking-wake","iron-leaves","ogerpon","okidogi","munkidori","fezandipiti","gouging-fire","raging-bolt","iron-boulder","iron-crown","terapagos","pecharunt",
+]);
+export function setLegendaryBlocklist(names = []) {
+  _legendary = new Set(names.map((s) => String(s).toLowerCase()));
 }
 
-function l2Normalize(vec) {
-  let s = 0.0;
-  for (let i = 0; i < vec.length; i++) s += vec[i] * vec[i];
-  s = Math.sqrt(Math.max(s, 1e-12));
-  for (let i = 0; i < vec.length; i++) vec[i] /= s;
-  return vec;
+function _tokenizeName(item) {
+  const tok = (item.slug || item.name || item.key || "")
+    .toString()
+    .toLowerCase()
+    .replace(/\s+/g, "-");
+  return tok;
 }
 
-// Decode 64-D shape: Uint8 → Float32 [0..1] → L2
-function decodeShape64(b64) {
-  const u8 = b64ToUint8(b64);
-  if (u8.length !== 64) return null;
-  const f = new Float32Array(64);
-  for (let i = 0; i < 64; i++) f[i] = u8[i] / 255.0;
-  return l2Normalize(f);
-}
-
-// ---- URL helpers ------------------------------------------------------------
-
-function joinUrl(...parts) {
-  return parts
-    .filter(Boolean)
-    .map((p, i) =>
-      i === 0
-        ? String(p).replace(/\/+$/g, "")
-        : String(p).replace(/^\/+/g, "").replace(/\/+$/g, "")
-    )
-    .join("/");
-}
-
-function resolveSpriteUrl(item) {
-  // Files under /public are served at /
-  if (item.drive_cache) return item.drive_cache; // external URL wins
-  if (item.sprite) return joinUrl("/sprites", item.sprite); // NOT /public/sprites
-  if (item.key) return joinUrl("/sprites", `${item.key}.png`);
-  return "";
-}
-
-// ---- Loader / Cache ---------------------------------------------------------
-
-let _index = null;    // { dim, count, vecs[], shapes[], refs[] }
-let _loading = null;  // Promise to de-dupe loads
-
-export function getRefIndex() {
-  return _index;
-}
-
-/**
- * Loads and prepares the reference index from /sprite_index_clip.json,
- * then tries to load /sprite_head.json (optional).
- * Safe: on failure, throws (so your UI can show an error) but won’t break the module.
- */
-export async function prepareRefIndex(url = "/sprite_index_clip.json") {
-  if (_index) return _index;
-  if (_loading) return _loading;
-
-  _loading = (async () => {
-    // Fetch JSON with no-store so local rebuilds are visible
-    const res = await fetch(url, { cache: "no-store" });
-    if (!res.ok) {
-      // Don’t hard-crash the app — throw a readable error
-      throw new Error(`Failed to load ${url}: HTTP ${res.status}`);
+function _applyLegendaryFilter(idx) {
+  const keepItems = [];
+  const keptRowIdx = [];
+  for (let i = 0; i < idx.items.length; i++) {
+    const it = idx.items[i];
+    const tok = _tokenizeName(it);
+    if (!_legendary.has(tok)) {
+      keptRowIdx.push(i);
+      keepItems.push(it);
     }
+  }
+  if (keepItems.length === idx.items.length) return idx; // nothing filtered
+
+  const dim = idx.dim;
+  const src = idx.vectors; // Float32Array (packed)
+  const dst = new Float32Array(keepItems.length * dim);
+  for (let j = 0; j < keepItems.length; j++) {
+    const i = keptRowIdx[j];
+    dst.set(src.subarray(i * dim, i * dim + dim), j * dim);
+  }
+
+  return {
+    ...idx,
+    items: keepItems,
+    count: keepItems.length,
+    vectors: dst,
+    getVector: (k) => dst.subarray(k * dim, k * dim + dim),
+  };
+}
+// -----------------------------------------------------------
+
+export async function loadSpriteIndex() {
+  if (_index) return _index;
+  if (_indexPromise) return _indexPromise;
+
+  _indexPromise = (async () => {
+    const res = await fetch("/sprite_index_clip.json");
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const json = await res.json();
 
-    const dim = Number(json.dim || json.D || 512);
-    const items = Array.isArray(json.items) ? json.items : [];
-    if (!dim || !items.length) {
-      throw new Error(`Malformed sprite index (dim=${dim}, items=${items.length})`);
-    }
-
-    const vecs = new Array(items.length);
-    const shapes = new Array(items.length);
-    const refs = new Array(items.length);
-
-    for (let i = 0; i < items.length; i++) {
-      const it = items[i] || {};
-      const key = it.key ?? it.id ?? `row_${i}`;
-      const name = it.name ?? key;
-      const spriteUrl = resolveSpriteUrl(it);
-
-      // Vectors: Float32 dim, L2
-      const v = b64ToFloat32(it.vector_b64);
-      if (v.length !== dim) {
-        throw new Error(`vector length mismatch for ${key}: got ${v.length}, want ${dim}`);
-      }
-      vecs[i] = l2Normalize(v);
-
-      // Shapes: optional 64-D
-      shapes[i] = decodeShape64(it.shape64_b64) || null;
-
-      refs[i] = {
-        key,
-        name,
-        spriteUrl,
-        dex: it.dex ?? null,
-        slug: it.slug ?? null,
+    // v4 preferred
+    if (json.version === 4 && Array.isArray(json.items) && json.vectors_b64) {
+      const vectors = decodeBase64F32(json.vectors_b64);
+      const idx = {
+        version: 4,
+        dim: json.dim,
+        count: json.count,
+        normalized: !!json.normalized,
+        items: json.items.map((it, i) => ({
+          idx: i,
+          key: it.key,
+          dex: it.dex,
+          slug: it.slug,
+          name: it.name,
+          path: it.path,
+          url: it.url || `/${it.path || ""}`,
+        })),
+        vectors,
+        getVector: (i) => vectors.subarray(i * json.dim, i * json.dim + json.dim),
       };
+      _index = _applyLegendaryFilter(idx);
+      return _index;
     }
 
-    _index = { dim, count: items.length, vecs, shapes, refs };
-
-    // Try to load cosine head at /sprite_head.json (optional)
-    try {
-      await loadCosineHead(_index, "/sprite_head.json");
-    } catch {
-      // ignore — head is optional
+    // v3 fallback (lift to v4-like)
+    if ((json.version === 3 || json.version == null) && Array.isArray(json.items || json.meta)) {
+      const items = json.items || json.meta;
+      const vectors = json.vectors
+        ? new Float32Array(json.vectors) // already decoded
+        : decodeBase64F32(json.vectors_b64);
+      const dim = json.dim || json.vector_dim || 512;
+      const lifted = {
+        version: 4,
+        dim,
+        count: items.length,
+        normalized: !!json.normalized,
+        items: items.map((m, i) => ({
+          idx: i,
+          key: m.key,
+          dex: m.dex,
+          slug: m.slug,
+          name: m.name,
+          path: m.path || m.sprite,
+          url: m.url || `/${m.path || m.sprite || ""}`,
+        })),
+        vectors,
+        getVector: (i) => vectors.subarray(i * dim, i * dim + dim),
+      };
+      _index = _applyLegendaryFilter(lifted);
+      return _index;
     }
 
-    return _index;
+    throw new Error(`Unsupported index schema at /sprite_index_clip.json`);
   })();
 
-  return _loading;
+  return _indexPromise;
 }
 
-/**
- * Back-compat alias some codebases import:
- * `getSpriteIndex()` → same as prepareRefIndex().
- */
-export async function getSpriteIndex(url = "/sprite_index_clip.json") {
-  return prepareRefIndex(url);
+export function getSpriteIndex() {
+  if (!_index) throw new Error("Index not loaded yet");
+  return _index;
 }
-
-// Optional default export (helps mixed import styles)
-export default {
-  prepareRefIndex,
-  getRefIndex,
-  getSpriteIndex,
-};

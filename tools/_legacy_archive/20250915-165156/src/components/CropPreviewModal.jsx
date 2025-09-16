@@ -1,6 +1,6 @@
 // src/components/CropPreviewModal.jsx
 import { useEffect, useMemo, useState } from "react";
-import { computeCrops25 } from "../utils/image";
+import { computeCrops25Squares } from "../utils/image";
 
 // ——— tiny helpers ———
 function tileToCanvas(tile) {
@@ -89,7 +89,7 @@ export default function CropPreviewModal({ onClose }) {
       const fr = api?.getFractions?.();
       if (!img) return;
 
-      const raw = computeCrops25(img, fr || { left:0, top:0, width:1, height:1 }) || [];
+      const raw = computeCrops25Squares(img, fr || { left:0, top:0, width:1, height:1 }) || [];
       const canv = [];
       for (const t of raw) canv.push(await tileToCanvas(t));
       setTiles(canv);

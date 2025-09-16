@@ -5,13 +5,17 @@ import Sidebar from "./components/Sidebar.jsx";
 import BingoCard from "./components/BingoCard.jsx";
 import "./styles/bingo.css";
 import "./utils/gridBox.js";
-import { prewarmOrtRuntime } from "./utils/ortPrewarm";
-import TuningPanel from "./components/TuningPanel.jsx";
+import GridTunerHost from "./components/GridTunerHost.jsx";
+
+
+// NOTE: Boot (ORT prewarm + sprite index load) moved to main.jsx.
 
 const LS_KEYS = {
-  CARDS: "nbt.cards.v1",
-  CURRENT: "nbt.currentIndex.v1",
+  CARDS: "nbt.cards.v2",
+  CURRENT: "nbt.currentIndex.v2",
 };
+
+const STORAGE_KEY = import.meta.env.DEV ? null : "nbt.cards.v2";
 
 const makeBlankCard = (title = "New Card") => ({
   title,
@@ -25,10 +29,6 @@ const makeBlankCard = (title = "New Card") => ({
 });
 
 export default function App() {
-  useEffect(() => {
-    prewarmOrtRuntime().catch(console.warn);
-  }, []);
-
   const [cards, setCards] = useState(() => {
     try {
       const raw = localStorage.getItem(LS_KEYS.CARDS);
@@ -89,24 +89,11 @@ export default function App() {
     });
   }
 
-  // 👇 The missing return
   return (
     <div className="app-root">
       <Header />
       <div className="app-body">
-        <div className="sidebar-toggle" style={{ margin: 8 }}>
-          <button
-            className="btn"
-            onClick={() => setShowSidebar((s) => !s)}
-            aria-expanded={showSidebar}
-            aria-controls="app-sidebar"
-            type="button"
-          >
-            {showSidebar ? "Hide tools" : "Show tools"}
-          </button>
-        </div>
-
-        <aside id="app-sidebar" style={{ display: showSidebar ? "" : "none" }}>
+        <aside id="app-sidebar">
           <Sidebar
             cards={cards}
             currentIndex={currentIndex}
@@ -146,6 +133,7 @@ export default function App() {
           )}
         </main>
       </div>
+       <GridTunerHost />
     </div>
   );
 }

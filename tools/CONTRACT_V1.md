@@ -142,7 +142,7 @@ type Match = {
 - `loadFractions(): Fractions | null`
 - `saveFractions(f: Fractions): void`
 - `fileToImage(file: File): Promise<HTMLImageElement>`
-- `computeCrops25(img: HTMLImageElement|ImageBitmap, fractions?: Fractions): ImageData[]|HTMLCanvasElement[]`
+- `computeCrops25Squares(img: HTMLImageElement|ImageBitmap, fractions?: Fractions): ImageData[]|HTMLCanvasElement[]`
   - Must return **25 square tiles**, row‑major, deterministic.
 
 ---

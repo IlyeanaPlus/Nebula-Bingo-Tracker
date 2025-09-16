@@ -1,170 +1,122 @@
 /* src/styles/bingo.css */
 
-/* --- Theme variables --- */
-:root {
+/* ===== Tokens ===== */
+:root{
   --bg: #121212;
   --fg: #e8e8e8;
   --panel: #1a1a1a;
-  --panel-2: #181818;
   --border: #2a2a2a;
-  --accent: #8ab4f8;
+  --accent: #3aa76d;
   --muted: #b6b6b6;
+
+  --sidebar-w: 360px;  /* fixed sidebar width (content area) */
+  --header-h: 44px;    /* sticky header height */
+  --gutter: 18px;      /* single source of truth for spacing */
+  --gap: 12px;         /* smaller internal gaps */
+  --tap: 36px;         /* min button height */
 }
 
-/* Make widths include padding & border globally */
-*,
-*::before,
-*::after {
-  box-sizing: border-box;
-}
-
-/* --- Base --- */
+/* ===== Base ===== */
+*, *::before, *::after { box-sizing: border-box; }
+html, body, #root { height: 100%; }
 body {
   margin: 0;
   background: var(--bg);
   color: var(--fg);
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
+  font: 14px/1.4 system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
 }
 
-/* --- Global buttons (baseline) --- */
-.btn {
-  display: flex;
-  flex: 1 1 0%;
-  gap: 8px;
-  margin-top: 10px;
-  align-items: center;
-  justify-content: center;
-  height: 32px;
-  padding: 8px 10px;
-  border-radius: 8px;
-  border: 1px solid #444;
-  background: #1e1e1e;
-  color: #eee;
-  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif;
-  font-size: 12px;
-  cursor: pointer;
-  user-select: none;
+/* ===== Header ===== */
+.app-header{
+  position: sticky; top: 0; z-index: 1000;
+  height: var(--header-h);
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 var(--gutter);
+  background: #111; border-bottom: 1px solid #222;
 }
-.btn:hover { background: #262626; }
-.btn:disabled { opacity: .6; cursor: not-allowed; }
-.btn--primary { background: #3aa76d; color: #000; border-color: #3aa76d; }
-.btn--primary:hover { background: #2b6; }
+.app-header .title{ font-weight: 600; }
 
-/* --- App header --- */
-.app-header {
-  position: sticky;
-  top: 0;
-  z-index: 1000;
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  height: 44px;
-  padding: 0 12px;
-  background: #111;
-  border-bottom: 1px solid #222;
-  color: var(--fg);
-}
-.app-header .title { font-weight: 600; }
-.app-header .btn {
-  padding: 6px 10px;
-  background: #242424;
-  border: 1px solid #333;
-  border-radius: 8px;
-  color: #eee;
-  cursor: pointer;
-}
-.app-header .btn:hover { background: #2b2b2b; }
-
-/* --- Layout: sidebar + main --- */
-.app-body { display: block; }
-.sidebar {
+/* ===== Layout ===== */
+/* Fixed sidebar */
+.sidebar{
   position: fixed;
-  top: 44px;
+  top: var(--header-h);
   bottom: 0;
   left: 0;
-  width: 360px;
-  padding: 12px;
+  width: var(--sidebar-w);
+  padding: var(--gutter);
   background: #111;
   border-right: 1px solid #222;
   overflow: auto;
 }
-.main-content {
-  /* Sidebar is 260 + 12 + 12 = 284 total */
-  margin-left: 384px;
-  padding: 16px;
-  min-height: calc(100vh - 44px);
+
+/* Main content: equal top & left spacing = --gutter */
+.main-content{
+  /* distance from sidebar edge to card == --gutter */
+  margin-left: calc(var(--sidebar-w) + var(--gutter));
+  /* distance from header to card == --gutter */
+  padding: var(--gutter);
+  min-height: calc(100vh - var(--header-h));
+  background: transparent;
 }
 
-/* --- Sidebar panels --- */
-.sidebar .panel { margin-bottom: 16px; }
-.sidebar .panel-title { font-weight: 600; margin-bottom: 8px; opacity: .85; }
-.sidebar .row { display: flex; gap: 8px; margin-bottom: 10px; }
-.sidebar .list { display: grid; gap: 6px; }
-.sidebar .list-item {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  padding: 8px 10px;
-  background: #151515;
-  border: 1px solid #262626;
-  border-radius: 8px;
-  color: #ddd;
-  cursor: pointer;
+/* ===== Sidebar pieces ===== */
+.sidebar .panel{ margin-bottom: var(--gap); }
+.sidebar .panel-title{ font-weight: 600; margin-bottom: 6px; opacity: .85; }
+.sidebar .row{ display:flex; gap: 8px; margin-bottom: 10px; }
+.sidebar .list{ display:grid; gap: 6px; }
+.sidebar .list-item{
+  display:flex; align-items:center; justify-content:space-between; gap:8px;
+  padding: 8px 10px; color:#ddd; cursor:pointer;
+  background:#151515; border:1px solid #262626; border-radius:8px;
 }
-.sidebar .list-item:hover { background: #1a1a1a; }
-.sidebar .list-item.active {
-  border-color: #3aa76d;
-  box-shadow: 0 0 0 1px #3aa76d inset;
-}
-.sidebar .list-item .tag {
-  font-size: 11px;
-  opacity: .8;
-  background: #223225;
-  padding: 2px 6px;
-  border-radius: 999px;
-}
+.sidebar .list-item:hover{ background:#1a1a1a; }
+.sidebar .list-item.active{ border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.sidebar .list-item .tag{ font-size:11px; opacity:.8; background:#223225; padding:2px 6px; border-radius:999px; }
 
-/* --- Card layout --- */
-.cards-grid {
-  display: grid;
-  gap: 16px;
+/* ===== Buttons ===== */
+.btn{
+  display:inline-flex; align-items:center; justify-content:center; gap:8px;
+  min-height: var(--tap); padding: 8px 12px;
+  border:1px solid #444; border-radius:8px; background:#1e1e1e; color:#eee; cursor:pointer;
+}
+.btn:hover{ background:#262626; }
+.btn:disabled{ opacity:.6; cursor:not-allowed; }
+.btn--primary{ background: var(--accent); color:#000; border-color: var(--accent); }
+.btn--primary:hover{ filter: brightness(1.06); }
+
+/* ===== Cards container ===== */
+.cards-grid{
+  display:grid; gap: 16px;
   grid-template-columns: repeat(auto-fill, minmax(450px, 1fr));
-  justify-content: start;
+  justify-content:start;
 }
 
-.bingo-card {
-  width: 100%; /* fills its grid track */
+/* ===== Bingo card ===== */
+.bingo-card{
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 14px;
   padding: 14px;
   box-shadow: 0 2px 0 #1a1a1a inset, 0 0 0 1px rgba(255,255,255,0.02);
 }
-.bingo-card .card-header {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  margin-bottom: 12px;
-}
-.bingo-card .card-title { font-weight: 600; text-align: left; }
-.bingo-card .card-actions { display: flex; gap: 8px; justify-content: flex-end; }
-.bingo-card .card-actions button {
-  height: 28px;
-  padding: 0 10px;
-  background: #1d1d1d;
-  border: 1px solid #2a2a2a;
-  border-radius: 8px;
-  color: #e8e8e8;
-  cursor: pointer;
-}
-.bingo-card .card-actions button:hover { background: #232323; }
 
-/* --- Grid inside card --- */
-.grid-5x5 {
-  display: grid;
+/* Header area inside card */
+.bingo-card .card-header{
+  display:flex; flex-direction:column; align-items:flex-start; gap:6px;
+  margin-bottom: 12px; min-height: 32px;
+}
+.bingo-card .card-title{ margin:0; font-weight:600; font-size:1.05rem; }
+.bingo-card .card-actions{ display:flex; flex-wrap:wrap; gap:8px; }
+.bingo-card .card-actions .card-btn{
+  height: var(--tap); padding: 4px 10px; text-align:center;
+  background:#1d1d1d; border:1px solid #2a2a2a; border-radius:8px; color:#e8e8e8;
+}
+.bingo-card .card-actions .card-btn:hover{ background:#232323; }
+
+/* 5×5 inner grid */
+.grid-5x5{
+  display:grid;
   grid-template-columns: repeat(5, 1fr);
   gap: 10px;
   padding: 12px;
@@ -172,229 +124,89 @@ body {
   border-radius: 10px;
   background: #0f0f0f;
 }
-.cell {
-  aspect-ratio: 1 / 1;
+
+/* Cells remain square and centered */
+.cell{
+  position:relative;
+  aspect-ratio: 1/1;
   border-radius: 10px;
-  background: #141414;
-  border: 1px solid #252525;
-  display: grid;
-  place-items: center;
-  cursor: pointer;
-  box-shadow:
-    0 1px 0 rgba(255,255,255,0.02) inset,
-    0 -1px 0 rgba(0,0,0,0.4) inset;
+  background:#141414;
+  border:1px solid #252525;
+  display:grid; place-items:center;
+  cursor:pointer;
+  box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset, 0 -1px 0 rgba(0,0,0,0.4) inset;
 }
-.cell img {
-  max-width: 95%;
-  max-height: 95%;
-  object-fit: contain;
-  image-rendering: pixelated;
+.cell img{
+  max-width:95%; max-height:95%;
+  object-fit: contain; image-rendering: pixelated;
 }
-.cell.complete {
-  background: #2a4;
-  border-color: #3c6;
-  outline: 2px solid #3aa76d;
+.cell.complete, .cell.checked{
+  outline: 2px solid var(--accent);
   outline-offset: -1px;
 }
-.cell .caption {
-  font-size: 12px;
-  opacity: .75;
-  text-align: center;
-  margin-top: 2px;
+.cell .caption{
+  position:absolute; left:6px; bottom:6px;
+  font-size:12px; color:#ddd; opacity:.8;
+  background: rgba(0,0,0,.35); padding:2px 6px; border-radius:6px;
+}
+.cell .no-match{
+  display:flex; align-items:center; justify-content:center;
+  width:100%; height:100%;
+  background: repeating-linear-gradient(45deg,#f2f2f2,#f2f2f2 8px,#e6e6e6 8px,#e6e6e6 16px);
+  color:#777; font-size:12px; border-radius:6px; user-select:none;
 }
 
-/* --- Progress bar --- */
-.progress-wrap { margin: 10px 2px 8px; }
-.progress-bar {
-  width: 100%;
-  height: 6px;
-  border-radius: 999px;
-  background: #1a1a1a;
-  border: 1px solid #262626;
-  overflow: hidden;
+/* ===== Progress ===== */
+.progress-wrap{ margin: 10px 2px 8px; }
+.progress-bar{
+  width:100%; height:6px; border-radius:999px;
+  background:#1a1a1a; border:1px solid #262626; overflow:hidden;
 }
-.progress-fill {
-  height: 100%;
-  width: 0%;
-  background: #3aa76d;
+.progress-fill{
+  height:100%; width:0%; background: var(--accent);
   transition: width .2s linear;
 }
-.progress-meta { margin-top: 6px; font-size: 12px; opacity: .8; }
+.progress-meta{ margin-top:6px; font-size:12px; color: var(--muted); }
 
-/* --- Modal (grid tuner/fill overlay) --- */
-.fill-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0,0,0,.5);
-  display: grid;
-  place-items: center;
+/* ===== Modal / overlay (e.g., tuner) ===== */
+.fill-overlay{
+  position:fixed; inset:0; display:grid; place-items:center;
+  background: rgba(0,0,0,.5); z-index: 9999;
 }
-.fill-box {
-  width: min(460px, 90vw);
-  background: #121212;
-  border: 1px solid #2a2a2a;
-  border-radius: 12px;
-  padding: 16px;
-  color: #eee;
+.fill-box{
+  width:min(460px,90vw);
+  background:#121212; color:#eee;
+  border:1px solid #2a2a2a; border-radius:12px; padding:16px;
 }
-.fill-title { font-weight: 600; margin-bottom: 10px; }
-.fill-bar { height: 8px; background: #222; border-radius: 999px; overflow: hidden; }
-.fill-bar-inner { height: 100%; background: #3aa76d; width: 0%; transition: width .2s linear; }
-.fill-meta { margin-top: 8px; font-size: 12px; opacity: .85; }
+.fill-title{ font-weight:600; margin-bottom:10px; }
+.fill-bar{ height:8px; background:#222; border-radius:999px; overflow:hidden; }
+.fill-bar-inner{ height:100%; background: var(--accent); width:0%; transition:width .2s linear; }
+.fill-meta{ margin-top:8px; font-size:12px; color: var(--muted); }
 
-/* Rename input inside card header */
-.rename-form input {
-  background: #0b0b0b;
-  color: #e8e8e8;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  padding: 4px 8px;
+/* ===== File input (visually hidden) ===== */
+input[type="file"]{
+  position:absolute; width:1px; height:1px; padding:0; margin:-1px; overflow:hidden;
+  clip: rect(0 0 0 0); white-space:nowrap; border:0;
 }
-.rename-form input:focus {
-  outline: none;
-  border-color: var(--accent);
+input[type="file"] + label{
+  display:inline-flex; align-items:center; justify-content:center;
+  min-height: var(--tap);
+  padding:10px 14px;
+  border:1px solid var(--border);
+  border-radius:8px; cursor:pointer;
+  background:#151515; color: var(--fg);
 }
+input[type="file"] + label:hover{ background:#1b1b1b; }
 
-.cell .no-match {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  background: repeating-linear-gradient(
-    45deg, #f2f2f2, #f2f2f2 8px, #e6e6e6 8px, #e6e6e6 16px
-  );
-  color: #888;
-  font-size: 12px;
-  border-radius: 6px;
-  user-select: none;
-}
-
-:root {
-  --btn-w: 120px;   /* unify New Card + tuner controls */
-  --header-h: 48px; /* card header height for alignment */
-}
-.btn { min-width: var(--btn-w); }
-.card-header { min-height: var(--header-h); }
-
-
-/* --- Card header tweaks --- */
-.card-header {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 4px; /* space between title and buttons */
-}
-
-.card-header .card-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: bold;
-}
-
-.card-actions.row {
-  display: flex;
-  gap: 6px;
-}
-
-/* Unify Fill + Remove buttons */
-.card-btn {
-  min-width: 80px;   /* guide width */
-  padding: 4px 8px;   /* tighter padding */
-  text-align: center;
-}
-
-/* === Card header layout freeze === */
-.bingo-card .card-header {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 2px; /* space between title and buttons */
-}
-
-.bingo-card .card-header .card-title {
-  margin: 0;
-  font-size: 1.1rem;
-  font-weight: bold;
-}
-
-/* Actions row under the title */
-.bingo-card .card-header .card-actions {
-  display: flex;
-  gap: 4px;
-}
-
-/* Unify Fill + Remove buttons: same width, tighter padding */
-.bingo-card .card-header .card-actions .card-btn {
-  min-width: 120px;
-  padding: 4px 8px;
-  text-align: center;
-}
-
-/* Ensure grid cells remain square while the card shrinks */
-.bingo-card .grid {
-  width: 100%;
-  /* If you explicitly set a height elsewhere, prefer using aspect-ratio on cells instead */
-}
-
-.bingo-card .cell {
+/* Force sprites to be visible and on top */
+.grid-5x5 .cell .bingo-sprite {
+  opacity: 1 !important;
+  visibility: visible !important;
+  mix-blend-mode: normal !important;
+  filter: none !important;
+  transform: none !important;
   position: relative;
-  aspect-ratio: 1 / 1;       /* keeps perfect squares */
-  overflow: hidden;
-}
-
-.bingo-card .cell img,
-.bingo-card .cell canvas {
-  width: 100%;
-  height: 100%;
-  object-fit: contain;
-  display: block;
-}
-
-/* Larger tap targets for core actions */
-button,
-.button,
-input[type="file"] + label,
-[role="button"] {
-  min-height: var(--tap);
-  padding: 10px 14px;
-}
-
-/* Make card header controls wrap nicely */
-.card-header .controls {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-.card-header .controls .btn {
-  flex: 1 0 auto;
-  min-height: var(--tap);
-}
-
-/* Typography clamps for mobile readability */
-.card-header .title {
-  font-size: clamp(14px, 2.3vw, 18px);
-  line-height: 1.2;
-}
-
-
-/* Avoid tiny file input; make its label look tappable */
-input[type="file"] {
-  /* visually hidden pattern if you’re using a styled label */
-  position: absolute;
-  width: 1px; height: 1px;
-  padding: 0; margin: -1px;
-  overflow: hidden; clip: rect(0 0 0 0);
-  white-space: nowrap; border: 0;
-}
-input[type="file"] + label {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  padding: 10px 14px;
-  border: 1px solid var(--border, #333);
-  border-radius: 8px;
-  cursor: pointer;
+  z-index: 1;
 }
 
 

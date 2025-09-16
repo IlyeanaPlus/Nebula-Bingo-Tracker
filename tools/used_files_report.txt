@@ -23,7 +23,7 @@ src/main.jsx
 src/styles/bingo.css
 src/tuning/tuningStore.js
 src/utils/clipSession.js
-src/utils/computeCrops25Squares.js
+src/utils/computeCrops25SquaresSquares.js
 src/utils/cropAssist.js
 src/utils/cropFx.js
 src/utils/gridBox.js
