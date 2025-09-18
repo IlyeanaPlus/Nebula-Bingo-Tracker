@@ -42,34 +42,6 @@ export default function TuningPanel() {
         </CtrlCol>
       </Row>
 
-      <Row label="Background Attenuation" hint="soften BG toward gray">
-        <CtrlCol single>
-          <label style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
-            <input
-              type="checkbox"
-              checked={!!state.bgAtten}
-              onChange={(e) => patch({ [TuningKeys.BgAtten]: !!e.target.checked })}
-            />
-            <span>{state.bgAtten ? "On" : "Off"}</span>
-          </label>
-        </CtrlCol>
-      </Row>
-
-      <Row label="BG Sigma" hint="higher = softer">
-        <CtrlCol>
-          <input
-            type="range" min={6} max={32} step={1} disabled={!state.bgAtten}
-            value={state.bgSigma}
-            onChange={(e) => patch({ [TuningKeys.BgSigma]: Math.round(Number(e.target.value)) })}
-          />
-          <Num
-            value={state.bgSigma}
-            onChange={(n) => patch({ [TuningKeys.BgSigma]: clampInt(n, 6, 32) })}
-            min={6} max={32} step={1} disabled={!state.bgAtten}
-          />
-        </CtrlCol>
-      </Row>
-
       <Row label="Jitter Level" hint="1× / 2×2 / 3×3 avg">
         <CtrlCol single>
           <select
@@ -84,20 +56,6 @@ export default function TuningPanel() {
         </CtrlCol>
       </Row>
 
-      <Row label="Top-K (debug)" hint="alternatives shown">
-        <CtrlCol>
-          <input
-            type="range" min={1} max={10} step={1}
-            value={state.debugTopK}
-            onChange={(e) => patch({ [TuningKeys.DebugTopK]: Math.round(Number(e.target.value)) })}
-          />
-          <Num
-            value={state.debugTopK}
-            onChange={(n) => patch({ [TuningKeys.DebugTopK]: clampInt(n, 1, 10) })}
-            min={1} max={10} step={1}
-          />
-        </CtrlCol>
-      </Row>
     </div>
   );
 }
@@ -137,18 +95,17 @@ function parseJitter(val) { const n = Number(val); return [0, 0.5, 1].includes(n
 /* ---------- styles (anti-squish) ---------- */
 const panelStyle = {
   border: "1px solid var(--border-color, #333)",
-  borderRadius: 10,
+  borderRadius: 8,
   padding: 12,
   background: "var(--panel-bg, #151515)",
   display: "grid",
   gap: 10,
-  minWidth: 340,               // ⬅️ prevents squish
 };
 
 const rowStyle = {
-  display: "grid",
-  // label column won’t shrink below 140px, controls won’t shrink below 220px
-  gridTemplateColumns: "minmax(140px, 1fr) minmax(220px, 1.4fr)",
+  display: "flex",
+  // label column won’t shrink below 10px, controls won’t shrink below 220px
+  gridTemplateColumns: "minmax(10px, 1fr) minmax(100px, 1.4fr)",
   alignItems: "center",
   gap: 10,
 };
@@ -158,9 +115,8 @@ const smallStyle = { fontWeight: 400, opacity: 0.7, fontSize: 12 };
 
 // For rows with slider + number
 const ctrlColStyle = {
-  display: "grid",
-  gridTemplateColumns: "1fr 84px",
-  gap: 8,
+  width: 20,
+  gap: 4,
   alignItems: "center",
 };
 // For single control rows (checkbox/select)

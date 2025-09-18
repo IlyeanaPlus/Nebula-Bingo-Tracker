@@ -7,6 +7,8 @@ import "./styles/bingo.css";
 import "./utils/gridBox.js";
 import GridTunerHost from "./components/GridTunerHost.jsx";
 
+// Dev-only: clear stale nbt.* keys so cards/tuner don’t persist between refreshes
+import "./utils/devResetNbt.js";
 
 // NOTE: Boot (ORT prewarm + sprite index load) moved to main.jsx.
 
@@ -43,6 +45,9 @@ export default function App() {
     return Number.isFinite(idx) ? idx : -1;
   });
 
+  // 🔌 NEW: hold dev previews pushed by the controller hook (no need to touch BingoCard.jsx)
+  const [devResults, setDevResults] = useState([]);
+
   useEffect(() => {
     try {
       localStorage.setItem(LS_KEYS.CARDS, JSON.stringify(cards));
@@ -54,6 +59,16 @@ export default function App() {
       localStorage.setItem(LS_KEYS.CURRENT, String(currentIndex));
     } catch {}
   }, [currentIndex]);
+
+  // Listen for previews from the hook
+  useEffect(() => {
+    function onDebugResults(e) {
+      // e.detail is the results[] array from useBingoCard
+      setDevResults(Array.isArray(e.detail) ? e.detail : []);
+    }
+    window.addEventListener("nbt:debugResults", onDebugResults);
+    return () => window.removeEventListener("nbt:debugResults", onDebugResults);
+  }, []);
 
   const [manifest, setManifest] = useState(null);
   function handleGetSprites(indexObj) {
@@ -89,18 +104,26 @@ export default function App() {
     });
   }
 
+  function handleRemoveAll() {
+    setCards([]);
+    setCurrentIndex(-1);
+    try {
+      localStorage.removeItem(LS_KEYS.CARDS);
+      localStorage.setItem(LS_KEYS.CURRENT, String(-1));
+    } catch {}
+  }
+
   return (
     <div className="app-root">
       <Header />
       <div className="app-body">
         <aside id="app-sidebar">
           <Sidebar
-            cards={cards}
-            currentIndex={currentIndex}
-            onSelect={handleSelectCard}
             onNewCard={handleNewCard}
-            onGetSprites={handleGetSprites}
-            spritesReady={!!manifest && Object.keys(manifest || {}).length > 0}
+            onRemoveAll={handleRemoveAll}
+            cardsCount={cards.length}
+            // ⬇️ forward previews to the DevDebugPanel through Sidebar
+            debugResults={devResults}
           />
         </aside>
 
@@ -133,7 +156,7 @@ export default function App() {
           )}
         </main>
       </div>
-       <GridTunerHost />
+      <GridTunerHost />
     </div>
   );
 }
